@@ -1689,6 +1689,27 @@ export async function fetchChannelDetail(id: string): Promise<import("./types.js
   return res.json() as Promise<import("./types.js").ChannelDetail>;
 }
 
+export interface ChannelOpsLogEntry {
+  ts: string;
+  level: "debug" | "info" | "warn" | "error";
+  component: string;
+  msg: string;
+}
+
+export async function fetchChannelOpsLog(
+  id: string,
+  limit = 200,
+): Promise<{ entries: ChannelOpsLogEntry[] }> {
+  const res = await fetch(
+    `/api/channels/${encodeURIComponent(id)}/ops-log?limit=${String(limit)}`,
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ entries: ChannelOpsLogEntry[] }>;
+}
+
 export async function startChannel(id: string): Promise<{ ok: boolean }> {
   const res = await fetch(`/api/channels/${encodeURIComponent(id)}/start`, { method: "POST" });
   if (!res.ok) {

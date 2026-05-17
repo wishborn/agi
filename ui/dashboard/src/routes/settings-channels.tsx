@@ -20,6 +20,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DevNote } from "@/components/ui/dev-notes";
+import { cn } from "@/lib/utils";
 import {
   fetchChannels,
   fetchChannelDetail,
@@ -28,14 +29,17 @@ import {
   startChannel,
   stopChannel,
   restartChannel,
+  fetchCommsLog,
+  fetchChannelOpsLog,
   listWorkflowBindings,
   addWorkflowBinding,
   deleteWorkflowBinding,
   type ChannelListEntry,
   type ChannelConfigResponse,
   type ChannelWorkflowBinding,
+  type ChannelOpsLogEntry,
 } from "@/api.js";
-import type { ChannelDetail } from "@/types.js";
+import type { ChannelDetail, CommsLogEntry } from "@/types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -207,6 +211,221 @@ function WorkflowBindingsBlock({ channelId }: { channelId: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// ChannelLogTab — live operational log for a channel
+// ---------------------------------------------------------------------------
+
+function levelColor(level: string): string {
+  if (level === "error") return "text-red";
+  if (level === "warn") return "text-yellow";
+  if (level === "debug") return "text-muted-foreground";
+  return "text-foreground";
+}
+
+function ChannelLogTab({ channelId }: { channelId: string }) {
+  const [entries, setEntries] = useState<ChannelOpsLogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetchChannelOpsLog(channelId, 200);
+      setEntries(res.entries);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [channelId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    if (!autoRefresh) {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      intervalRef.current = null;
+      return;
+    }
+    intervalRef.current = setInterval(() => { void load(); }, 5_000);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [autoRefresh, load]);
+
+  return (
+    <Card className="p-4">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[13px] font-semibold text-foreground">Operations Log</span>
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1.5 cursor-pointer select-none">
+            <button
+              type="button"
+              onClick={() => setAutoRefresh((v) => !v)}
+              className={cn(
+                "relative w-8 h-4 rounded-full transition-colors",
+                autoRefresh ? "bg-emerald-500" : "bg-secondary",
+              )}
+              aria-label="Toggle auto-refresh"
+            >
+              <span
+                className={cn(
+                  "absolute top-0.5 w-3 h-3 rounded-full transition-all",
+                  autoRefresh ? "left-[18px] bg-white" : "left-0.5 bg-muted-foreground",
+                )}
+              />
+            </button>
+            <span className="text-[11px] text-muted-foreground">Live</span>
+          </label>
+          <Button variant="outline" size="xs" onClick={() => void load()}>Refresh</Button>
+        </div>
+      </div>
+
+      {error !== null && (
+        <div className="text-[12px] text-red mb-2">{error}</div>
+      )}
+
+      {loading && entries.length === 0 ? (
+        <div className="text-[13px] text-muted-foreground py-8 text-center">Loading…</div>
+      ) : entries.length === 0 ? (
+        <div className="text-[13px] text-muted-foreground py-8 text-center">
+          No log entries yet. Entries appear when the channel starts, receives messages, or errors.
+        </div>
+      ) : (
+        <div className="font-mono text-[11px] space-y-0.5 max-h-[480px] overflow-y-auto">
+          {entries.map((e, i) => (
+            <div
+              key={`${e.ts}-${String(i)}`}
+              className="flex gap-2 items-start hover:bg-secondary/30 px-1 py-0.5 rounded"
+            >
+              <span className="text-muted-foreground shrink-0 whitespace-nowrap">
+                {new Date(e.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+              </span>
+              <span className={cn("shrink-0 uppercase w-10", levelColor(e.level))}>{e.level}</span>
+              <span className="text-muted-foreground shrink-0 truncate max-w-[140px]" title={e.component}>[{e.component}]</span>
+              <span className={cn("flex-1 break-all", levelColor(e.level))}>{e.msg}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ChannelChatsTab — conversation history for a channel
+// ---------------------------------------------------------------------------
+
+function formatChatTime(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  if (isToday) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " +
+    d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+const CHATS_PAGE = 50;
+
+function ChannelChatsTab({ channelId }: { channelId: string }) {
+  const [entries, setEntries] = useState<CommsLogEntry[]>([]);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async (off: number) => {
+    setLoading(true);
+    try {
+      const res = await fetchCommsLog({ channel: channelId, limit: CHATS_PAGE, offset: off });
+      setEntries(res.entries);
+      setTotal(res.total);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [channelId]);
+
+  useEffect(() => { void load(offset); }, [load, offset]);
+
+  const hasMore = offset + CHATS_PAGE < total;
+
+  return (
+    <Card className="p-4">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[13px] font-semibold text-foreground">Chat History</span>
+        <span className="text-[12px] text-muted-foreground">{total} message{total !== 1 ? "s" : ""}</span>
+      </div>
+
+      {error !== null && <div className="text-[12px] text-red mb-2">{error}</div>}
+
+      {loading && entries.length === 0 ? (
+        <div className="text-[13px] text-muted-foreground py-8 text-center">Loading…</div>
+      ) : entries.length === 0 ? (
+        <div className="text-[13px] text-muted-foreground py-8 text-center">
+          No messages yet. Start the channel to begin receiving messages.
+        </div>
+      ) : (
+        <div className="space-y-2 max-h-[520px] overflow-y-auto">
+          {entries.map((entry) => {
+            const isInbound = entry.direction === "inbound";
+            return (
+              <div
+                key={entry.id}
+                className={cn(
+                  "flex flex-col max-w-[80%] gap-0.5",
+                  isInbound ? "items-start self-start" : "items-end self-end ml-auto",
+                )}
+              >
+                <div className="flex items-center gap-1.5 px-1">
+                  <span className="text-[10px] text-muted-foreground">
+                    {isInbound ? (entry.senderName ?? entry.senderId) : "Aion"}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">·</span>
+                  <span className="text-[10px] text-muted-foreground">{formatChatTime(entry.createdAt)}</span>
+                </div>
+                <div
+                  className={cn(
+                    "px-3 py-2 rounded-xl text-[12px] leading-snug",
+                    isInbound
+                      ? "bg-secondary text-foreground rounded-tl-sm"
+                      : "bg-primary text-primary-foreground rounded-tr-sm",
+                  )}
+                >
+                  {entry.subject !== null && (
+                    <div className="font-medium text-[11px] mb-0.5 opacity-80">{entry.subject}</div>
+                  )}
+                  {entry.preview}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {(offset > 0 || hasMore) && (
+        <div className="flex gap-2 justify-center mt-3">
+          <Button variant="outline" size="xs" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - CHATS_PAGE))}>
+            Previous
+          </Button>
+          <span className="text-[11px] text-muted-foreground self-center">
+            {offset + 1}–{Math.min(offset + CHATS_PAGE, total)} of {total}
+          </span>
+          <Button variant="outline" size="xs" disabled={!hasMore} onClick={() => setOffset(offset + CHATS_PAGE)}>
+            Next
+          </Button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // ChannelTab — config + controls for one channel
 // ---------------------------------------------------------------------------
 
@@ -307,8 +526,8 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
     : [];
 
   return (
-    <div className="space-y-5">
-      {/* Status + controls */}
+    <div className="space-y-4">
+      {/* Status + controls — always visible above the inner tabs */}
       <Card className="p-4">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2">
@@ -347,70 +566,91 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
         </div>
       </Card>
 
-      {/* Config form */}
-      <Card className="p-5 space-y-4">
-        <div className="flex items-center justify-between mb-1">
-          <h3 className="text-[13px] font-semibold text-foreground">Configuration</h3>
-          {/* Enabled toggle */}
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <button
-              type="button"
-              onClick={() => setEnabled((v) => !v)}
-              className={`relative w-9 h-5 rounded-full transition-colors ${enabled ? "bg-emerald-500" : "bg-secondary"}`}
-              aria-label="Toggle channel enabled"
-            >
-              <span
-                className={`absolute top-0.5 ${enabled ? "left-[18px] bg-white" : "left-0.5 bg-muted-foreground"} w-4 h-4 rounded-full transition-all`}
-              />
-            </button>
-            <span className="text-[12px] text-muted-foreground">{enabled ? "Enabled" : "Disabled"}</span>
-          </label>
-        </div>
+      {/* Inner tabs: Settings / Chats / Log */}
+      <Tabs defaultValue="settings">
+        <TabsList className="mb-3">
+          <TabsTrigger value="settings">Settings</TabsTrigger>
+          <TabsTrigger value="chats">Chats</TabsTrigger>
+          <TabsTrigger value="log">Log</TabsTrigger>
+        </TabsList>
 
-        {cfgResponse === null ? (
-          <p className="text-[13px] text-muted-foreground">Loading configuration…</p>
-        ) : fieldKeys.length === 0 ? (
-          <p className="text-[13px] text-muted-foreground">No configuration fields for this channel.</p>
-        ) : (
-          <div className="grid grid-cols-1 gap-3">
-            {fieldKeys.map((key) => (
-              <div key={key} className="flex flex-col gap-1">
-                <label className="text-[12px] font-medium text-muted-foreground">{fieldLabel(key)}</label>
-                <input
-                  type={isSensitive(key) ? "password" : "text"}
-                  value={form[key] ?? ""}
-                  onChange={(e) => setForm((prev) => ({ ...prev, [key]: e.target.value }))}
-                  autoComplete="off"
-                  className="h-8 px-3 rounded-lg border border-input bg-background text-[13px] text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                  placeholder={isSensitive(key) ? "••••••••" : ""}
-                />
+        <TabsContent value="settings">
+          <div className="space-y-5">
+            {/* Config form */}
+            <Card className="p-5 space-y-4">
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-[13px] font-semibold text-foreground">Configuration</h3>
+                {/* Enabled toggle */}
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <button
+                    type="button"
+                    onClick={() => setEnabled((v) => !v)}
+                    className={`relative w-9 h-5 rounded-full transition-colors ${enabled ? "bg-emerald-500" : "bg-secondary"}`}
+                    aria-label="Toggle channel enabled"
+                  >
+                    <span
+                      className={`absolute top-0.5 ${enabled ? "left-[18px] bg-white" : "left-0.5 bg-muted-foreground"} w-4 h-4 rounded-full transition-all`}
+                    />
+                  </button>
+                  <span className="text-[12px] text-muted-foreground">{enabled ? "Enabled" : "Disabled"}</span>
+                </label>
               </div>
-            ))}
+
+              {cfgResponse === null ? (
+                <p className="text-[13px] text-muted-foreground">Loading configuration…</p>
+              ) : fieldKeys.length === 0 ? (
+                <p className="text-[13px] text-muted-foreground">No configuration fields for this channel.</p>
+              ) : (
+                <div className="grid grid-cols-1 gap-3">
+                  {fieldKeys.map((key) => (
+                    <div key={key} className="flex flex-col gap-1">
+                      <label className="text-[12px] font-medium text-muted-foreground">{fieldLabel(key)}</label>
+                      <input
+                        type={isSensitive(key) ? "password" : "text"}
+                        value={form[key] ?? ""}
+                        onChange={(e) => setForm((prev) => ({ ...prev, [key]: e.target.value }))}
+                        autoComplete="off"
+                        className="h-8 px-3 rounded-lg border border-input bg-background text-[13px] text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder={isSensitive(key) ? "••••••••" : ""}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex items-center gap-3 pt-1">
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="px-4 py-1.5 rounded-lg text-[13px] font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {saving ? "Saving…" : "Save"}
+                </button>
+                {saveMsg && (
+                  <span className={`text-[12px] ${saveMsg.startsWith("Error") ? "text-destructive" : "text-emerald-400"}`}>
+                    {saveMsg}
+                  </span>
+                )}
+                {currentStatus === "running" && !saveMsg && (
+                  <span className="text-[11px] text-muted-foreground">
+                    Saving will restart the channel to apply new credentials.
+                  </span>
+                )}
+              </div>
+            </Card>
+
+            <WorkflowBindingsBlock channelId={id} />
           </div>
-        )}
+        </TabsContent>
 
-        <div className="flex items-center gap-3 pt-1">
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-4 py-1.5 rounded-lg text-[13px] font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {saving ? "Saving…" : "Save"}
-          </button>
-          {saveMsg && (
-            <span className={`text-[12px] ${saveMsg.startsWith("Error") ? "text-destructive" : "text-emerald-400"}`}>
-              {saveMsg}
-            </span>
-          )}
-          {currentStatus === "running" && !saveMsg && (
-            <span className="text-[11px] text-muted-foreground">
-              Saving will restart the channel to apply new credentials.
-            </span>
-          )}
-        </div>
-      </Card>
+        <TabsContent value="chats">
+          <ChannelChatsTab channelId={id} />
+        </TabsContent>
 
-      <WorkflowBindingsBlock channelId={id} />
+        <TabsContent value="log">
+          <ChannelLogTab channelId={id} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -450,6 +690,12 @@ export default function SettingsChannelsPage() {
           WorkflowBindingsBlock migrated from the old Gateway → Channels tab (removed).
           Every channel tab now shows its own workflow bindings below the config form.
           The Gateway settings Channels tab has been removed — this page is the canonical home.
+        </DevNote.Item>
+        <DevNote.Item kind="info" heading="Cycle 270 — Log + Chats tabs per channel">
+          Each channel now has Settings / Chats / Log inner tabs. Log shows live gateway
+          operational entries filtered to the channel (auto-refreshes every 5s). Chats shows
+          the conversation history as chat bubbles (inbound left, outbound right) with pagination.
+          Backend: GET /api/channels/:id/ops-log backed by an in-process log ring buffer.
         </DevNote.Item>
       </DevNote>
 

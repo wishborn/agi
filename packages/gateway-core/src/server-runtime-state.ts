@@ -987,6 +987,53 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // Per-channel ops-log ring buffer.
+  //
+  // Captures gateway log entries relevant to each channel so the dashboard
+  // can show a live operations log without reading log files.
+  //
+  // Filtering heuristic: an entry is attributed to channel C if
+  //   - entry.component contains C (e.g. "channel-v2:discord", "channel:discord")
+  //   - OR entry.message contains "[C]" (e.g. "[inbound] discord: ...")
+  //
+  // Buffer is capped at CHANNEL_LOG_MAX entries (most-recent-first).
+  // One global buffer is shared; the endpoint filters on read so new
+  // channels discovered after boot are covered without re-subscribing.
+  // -----------------------------------------------------------------------
+
+  const CHANNEL_LOG_MAX = 1000;
+  interface ChannelOpsEntry { ts: string; level: string; component: string; msg: string }
+  const channelOpsBuffer: ChannelOpsEntry[] = [];
+
+  deps.logger?.onEntry((entry) => {
+    channelOpsBuffer.unshift({
+      ts: entry.timestamp,
+      level: entry.level,
+      component: entry.component,
+      msg: entry.message,
+    });
+    if (channelOpsBuffer.length > CHANNEL_LOG_MAX) channelOpsBuffer.pop();
+  });
+
+  // GET /api/channels/:id/ops-log?limit=N
+  // Returns log entries attributed to channel `id`, most-recent first.
+
+  fastify.get("/api/channels/:id/ops-log", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const rawLimit = (request.query as Record<string, string>)["limit"];
+    const limit = Math.min(rawLimit !== undefined ? (Number.parseInt(rawLimit, 10) || 200) : 200, 500);
+    const idLower = id.toLowerCase();
+    const bracketTag = `[${idLower}]`;
+    const filtered = channelOpsBuffer
+      .filter(e =>
+        e.component.toLowerCase().includes(idLower) ||
+        e.msg.toLowerCase().includes(bracketTag),
+      )
+      .slice(0, limit);
+    return reply.send({ entries: filtered });
+  });
+
+  // -----------------------------------------------------------------------
   // POST /api/channels/:id/start|stop|restart
   // -----------------------------------------------------------------------
 
