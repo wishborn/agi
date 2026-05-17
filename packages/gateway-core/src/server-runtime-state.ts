@@ -1026,6 +1026,11 @@ export async function createGatewayRuntimeState(
       }
     }
 
+    // Manual Start = explicit user intent — reset any open circuit breaker so
+    // the attempt is not blocked by a stale failure count from a previous boot.
+    // If this attempt also fails, recordFailure() re-opens the breaker normally.
+    deps.circuitBreaker?.reset(`channel:${id}`);
+
     try {
       await channelRegistry.startChannel(id);
       return reply.send({ ok: true });
@@ -1038,6 +1043,24 @@ export async function createGatewayRuntimeState(
     const { id } = request.params as { id: string };
     try {
       await channelRegistry.stopChannel(id);
+
+      // Persist enabled=false so the channel stays stopped on next restart.
+      // Symmetric with the Start handler that writes enabled=true.
+      if (deps.configPath) {
+        try {
+          const raw = readFileSync(deps.configPath, "utf-8");
+          const cfg = JSON.parse(raw) as Record<string, unknown>;
+          type ChanEntry = { id: string; enabled?: boolean; config?: Record<string, unknown> };
+          const channels = (cfg.channels ?? []) as ChanEntry[];
+          const idx = channels.findIndex((c) => c.id === id);
+          if (idx !== -1) {
+            channels[idx]!.enabled = false;
+            cfg.channels = channels;
+            writeFileSync(deps.configPath, JSON.stringify(cfg, null, 2) + "\n", "utf-8");
+          }
+        } catch { /* non-fatal */ }
+      }
+
       return reply.send({ ok: true });
     } catch (err) {
       return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
