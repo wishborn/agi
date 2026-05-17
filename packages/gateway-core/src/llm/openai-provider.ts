@@ -21,7 +21,6 @@ import type {
   LLMInvokeParams,
   LLMToolContinuationParams,
 } from "./types.js";
-import { buildToolsSystemPrompt, parseToolCallsFromText } from "./ollama-provider.js";
 
 // ---------------------------------------------------------------------------
 // OpenAI type shims (avoid hard dependency on the openai package types at
@@ -98,11 +97,71 @@ const DEFAULT_CONFIG: Required<LLMProviderConfig> = {
 
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503]);
 
-// Chat-template special tokens that local models (Gemma, Mistral, Llama) emit
-// in the text body when they attempt tool calls but the OpenAI-compatible
-// server doesn't translate them to choices[0].message.tool_calls. Strip these
-// unconditionally so they never reach user output.
-const CHAT_TEMPLATE_TOKEN_RE = /<\|tool_call\|?>|<\/?tool_call>|<\/?function_calls>|\[TOOL_CALLS\]/g;
+// ---------------------------------------------------------------------------
+// Embedded tool call extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Extracts tool calls that local models embed in the text body when the
+ * OpenAI-compatible server (e.g. Lemonade/llama.cpp) doesn't translate the
+ * model's native output to choices[0].message.tool_calls.
+ *
+ * Format 1 — XML-wrapped (Gemma/llama.cpp with native tools API):
+ *   <tool_call>{"name":"fn","arguments":{...}}</tool_call>
+ *   Also accepts "tool"/"input" as key aliases.
+ *
+ * Format 2 — token-prefixed (raw chat-template token in content):
+ *   <|tool_call|>{"name":"fn","arguments":{...}}
+ *   If non-JSON follows (e.g. hallucinated "call:name arg1"), stripped silently.
+ *
+ * All matched content is removed from cleanText — it never reaches user output.
+ */
+function extractEmbeddedToolCalls(
+  content: string,
+): { toolCalls: LLMToolCall[]; cleanText: string } {
+  const toolCalls: LLMToolCall[] = [];
+  let cleanText = content;
+  let idCounter = 0;
+
+  function parseToolJson(raw: string): LLMToolCall | null {
+    if (!raw.startsWith("{")) return null;
+    try {
+      const obj = JSON.parse(raw) as Record<string, unknown>;
+      const name = (obj["name"] ?? obj["tool"]) as string | undefined;
+      if (typeof name !== "string") return null;
+      const input = (obj["arguments"] ?? obj["input"] ?? {}) as Record<string, unknown>;
+      idCounter++;
+      return { id: `embedded-${String(idCounter)}`, name, input };
+    } catch {
+      return null;
+    }
+  }
+
+  // Pass 1: <tool_call>…</tool_call> XML blocks
+  for (const match of content.matchAll(/<tool_call>([\s\S]*?)<\/tool_call>/g)) {
+    const call = parseToolJson(match[1]?.trim() ?? "");
+    if (call) toolCalls.push(call);
+    cleanText = cleanText.replace(match[0], "");
+  }
+
+  // Pass 2: <|tool_call|> or <|tool_call> token (if no XML blocks found)
+  if (toolCalls.length === 0) {
+    for (const match of cleanText.matchAll(/<\|tool_call\|?>([\s\S]*?)(?=<\||<\/?function_calls>|$)/g)) {
+      const call = parseToolJson(match[1]?.trim() ?? "");
+      if (call) toolCalls.push(call);
+      cleanText = cleanText.replace(match[0], "");
+    }
+  }
+
+  // Strip residual isolated markers
+  cleanText = cleanText
+    .replace(/<\|tool_call\|?>/g, "")
+    .replace(/<\/?function_calls>/g, "")
+    .replace(/\[TOOL_CALLS\]/g, "")
+    .trim();
+
+  return { toolCalls, cleanText };
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -129,10 +188,8 @@ function isRetryableStatus(status: number): boolean {
 export function toOpenAIMessages(
   system: string,
   messages: LLMMessage[],
-  toolsPromptSuffix?: string,
 ): OpenAIChatMessage[] {
-  const systemContent = toolsPromptSuffix ? system + toolsPromptSuffix : system;
-  const result: OpenAIChatMessage[] = [{ role: "system", content: systemContent }];
+  const result: OpenAIChatMessage[] = [{ role: "system", content: system }];
 
   for (const msg of messages) {
     if (msg.role === "system") {
@@ -219,13 +276,13 @@ export function toOpenAIToolMessages(results: LLMToolResult[]): OpenAIChatMessag
 /**
  * Translate an OpenAI chat completion to provider-agnostic LLMResponse.
  *
- * @param usePromptFallback When true, parses ```tool_call JSON blocks from
- *   the text body instead of reading choices[0].message.tool_calls. Used for
- *   local models (e.g. Gemma via Lemonade) that don't populate tool_calls.
+ * When choices[0].message.tool_calls is empty but the content contains
+ * embedded tool call markup (from Lemonade/llama.cpp not translating the
+ * model's native format), extractEmbeddedToolCalls silently extracts them
+ * and cleans the text so they never appear in user-visible chat output.
  */
 export function fromOpenAICompletion(
   completion: OpenAICompletion,
-  usePromptFallback = false,
 ): LLMResponse {
   // Defensive: OpenAI-compatible servers (e.g. Lemonade) sometimes return
   // a completion envelope with a missing or non-array `choices` key,
@@ -269,20 +326,16 @@ export function fromOpenAICompletion(
     rawContent = rawReasoning;
   }
 
-  // Safety net: strip leaked chat-template tool tokens so they never reach
-  // user output. Local models (Gemma, Mistral, Llama) emit these in the
-  // text body when they attempt a tool call but the OpenAI-compatible server
-  // doesn't translate them into tool_calls. Unconditional — independent of
-  // usePromptFallback — so the guard applies even if fallback is off.
-  rawContent = rawContent.replace(CHAT_TEMPLATE_TOKEN_RE, "").trim();
-
   const rawToolCalls = choice.message.tool_calls ?? [];
 
   let toolCalls: LLMToolCall[];
-  let text = rawContent;
+  let text: string;
 
   if (rawToolCalls.length > 0) {
-    // Native tool calls populated by the server — use them directly.
+    // Native tool calls in the response — use them directly. Still run
+    // extractEmbeddedToolCalls to clean any residual markers from text.
+    const { cleanText } = extractEmbeddedToolCalls(rawContent);
+    text = cleanText;
     toolCalls = rawToolCalls.map((tc) => ({
       id: tc.id,
       name: tc.function.name,
@@ -294,14 +347,13 @@ export function fromOpenAICompletion(
         }
       })(),
     }));
-  } else if (usePromptFallback) {
-    // Prompt-fallback path: model was instructed to emit ```tool_call JSON
-    // blocks; parse them out of the text body.
-    const parsed = parseToolCallsFromText(rawContent);
-    toolCalls = parsed.toolCalls;
-    text = parsed.cleanText;
   } else {
-    toolCalls = [];
+    // No native tool calls — check whether the model embedded them in content.
+    // Lemonade/llama.cpp doesn't translate Gemma's <tool_call>…</tool_call>
+    // output to tool_calls; extractEmbeddedToolCalls silently handles this.
+    const embedded = extractEmbeddedToolCalls(rawContent);
+    text = embedded.cleanText;
+    toolCalls = embedded.toolCalls;
   }
 
   const contentBlocks: LLMContentBlock[] = [];
@@ -324,8 +376,9 @@ export function fromOpenAICompletion(
   else if (choice.finish_reason === "length") stopReason = "max_tokens";
   else if (choice.finish_reason !== null) stopReason = choice.finish_reason;
 
-  // When prompt-fallback parsed tool calls from a "stop" turn, promote
-  // the stopReason so the agent-invoker continues the tool loop.
+  // When tool calls were extracted from embedded content, the server reports
+  // finish_reason "stop" rather than "tool_calls" — promote so the
+  // agent-invoker enters the tool loop.
   if (toolCalls.length > 0 && stopReason === "end_turn") stopReason = "tool_use";
 
   // Always preserve the reasoning trace (when present) as a thinking
@@ -356,18 +409,12 @@ export function fromOpenAICompletion(
 
 export class OpenAIProvider implements LLMProvider {
   private readonly config: Required<LLMProviderConfig>;
-  /** When true, injects tool definitions as system prompt text and parses
-   * ```tool_call JSON blocks from the response instead of using the tools API
-   * parameter. Required for local models (e.g. Gemma via Lemonade) that don't
-   * populate choices[0].message.tool_calls in OpenAI-compatible responses. */
-  private readonly usePromptFallback: boolean;
 
-  constructor(config?: Partial<LLMProviderConfig> & { usePromptFallback?: boolean }) {
+  constructor(config?: Partial<LLMProviderConfig>) {
     this.config = {
       ...DEFAULT_CONFIG,
       ...config,
     };
-    this.usePromptFallback = config?.usePromptFallback ?? false;
   }
 
   // ---------------------------------------------------------------------------
@@ -471,21 +518,11 @@ export class OpenAIProvider implements LLMProvider {
   async invoke(params: LLMInvokeParams): Promise<LLMResponse> {
     const model = params.model ?? this.config.defaultModel;
     const maxTokens = params.maxTokens ?? this.config.maxTokens;
+    const messages = toOpenAIMessages(params.system, params.messages);
+    const tools = params.tools ? toOpenAITools(params.tools) : undefined;
 
-    let toolsPromptSuffix: string | undefined;
-    let openAITools: ReturnType<typeof toOpenAITools> | undefined;
-
-    if (params.tools && params.tools.length > 0) {
-      if (this.usePromptFallback) {
-        toolsPromptSuffix = buildToolsSystemPrompt(params.tools);
-      } else {
-        openAITools = toOpenAITools(params.tools);
-      }
-    }
-
-    const messages = toOpenAIMessages(params.system, params.messages, toolsPromptSuffix);
-    const completion = await this.request(messages, openAITools, model, maxTokens);
-    return fromOpenAICompletion(completion, this.usePromptFallback);
+    const completion = await this.request(messages, tools, model, maxTokens);
+    return fromOpenAICompletion(completion);
   }
 
   // ---------------------------------------------------------------------------
@@ -498,65 +535,34 @@ export class OpenAIProvider implements LLMProvider {
     const model = params.original.model ?? this.config.defaultModel;
     const maxTokens = params.original.maxTokens ?? this.config.maxTokens;
 
-    let toolsPromptSuffix: string | undefined;
-    let openAITools: ReturnType<typeof toOpenAITools> | undefined;
+    const messages = toOpenAIMessages(params.original.system, params.original.messages);
 
-    if (params.original.tools && params.original.tools.length > 0) {
-      if (this.usePromptFallback) {
-        toolsPromptSuffix = buildToolsSystemPrompt(params.original.tools);
-      } else {
-        openAITools = toOpenAITools(params.original.tools);
-      }
-    }
-
-    const messages = toOpenAIMessages(params.original.system, params.original.messages, toolsPromptSuffix);
-
+    // Append assistant message with tool calls
     const toolCallBlocks = params.assistantContent.filter((b) => b.type === "tool_use");
     const textBlocks = params.assistantContent.filter((b) => b.type === "text");
-    const textContent = textBlocks.map((b) => b.text ?? "").join("\n");
+    const textContent = textBlocks.map((b) => b.text ?? "").join("\n") || null;
 
-    if (this.usePromptFallback) {
-      // Prompt-fallback path: format tool calls as ```tool_call blocks in the
-      // assistant text, then inject results as a user message — the model
-      // doesn't understand the `role: "tool"` turn in this mode.
-      const toolCallText = toolCallBlocks
-        .map(
-          (b) =>
-            "```tool_call\n" +
-            JSON.stringify({ tool: b.name, input: b.input }) +
-            "\n```",
-        )
-        .join("\n");
-      messages.push({
-        role: "assistant",
-        content: [textContent, toolCallText].filter(Boolean).join("\n"),
-      });
-      const toolResultText = params.toolResults
-        .map((r) => `Tool result for ${r.tool_use_id}:\n${r.content}`)
-        .join("\n\n");
-      messages.push({ role: "user", content: toolResultText });
+    if (toolCallBlocks.length > 0) {
+      const toolCalls: OpenAIToolCall[] = toolCallBlocks.map((b) => ({
+        id: b.id ?? "",
+        type: "function" as const,
+        function: {
+          name: b.name ?? "",
+          arguments: JSON.stringify(b.input ?? {}),
+        },
+      }));
+      messages.push({ role: "assistant", content: textContent, tool_calls: toolCalls });
     } else {
-      // Native OpenAI tool calling path.
-      const textOrNull = textContent || null;
-      if (toolCallBlocks.length > 0) {
-        const toolCalls: OpenAIToolCall[] = toolCallBlocks.map((b) => ({
-          id: b.id ?? "",
-          type: "function" as const,
-          function: {
-            name: b.name ?? "",
-            arguments: JSON.stringify(b.input ?? {}),
-          },
-        }));
-        messages.push({ role: "assistant", content: textOrNull, tool_calls: toolCalls });
-      } else {
-        messages.push({ role: "assistant", content: textOrNull ?? "" });
-      }
-      const toolMessages = toOpenAIToolMessages(params.toolResults);
-      messages.push(...toolMessages);
+      messages.push({ role: "assistant", content: textContent ?? "" });
     }
 
-    const completion = await this.request(messages, openAITools, model, maxTokens);
-    return fromOpenAICompletion(completion, this.usePromptFallback);
+    // Append tool results
+    const toolMessages = toOpenAIToolMessages(params.toolResults);
+    messages.push(...toolMessages);
+
+    const tools = params.original.tools ? toOpenAITools(params.original.tools) : undefined;
+    const completion = await this.request(messages, tools, model, maxTokens);
+    return fromOpenAICompletion(completion);
   }
 
   // ---------------------------------------------------------------------------
