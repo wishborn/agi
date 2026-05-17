@@ -123,6 +123,11 @@ export function createSingleProvider(
       // is honored via `config.defaultModel`; otherwise fall back to
       // Gemma-4-E2B-it-GGUF (lemonade's `suggested:true` model in the
       // catalog probe — small, vision-capable, llamacpp recipe).
+      // usePromptFallback: Gemma (and other local models served via Lemonade)
+      // outputs its own chat-template tool tokens in the text body rather than
+      // populating choices[0].message.tool_calls. Prompt-fallback bypasses
+      // the OpenAI tools API field entirely: injects tool definitions as system
+      // prompt text and parses ```tool_call JSON blocks from the response.
       return new OpenAIProvider({
         apiKey: "not-needed",
         defaultModel: config.defaultModel ?? "Gemma-4-E2B-it-GGUF",
@@ -130,6 +135,7 @@ export function createSingleProvider(
         maxRetries: config.maxRetries ?? 2,
         baseUrl: config.baseUrl ?? "http://127.0.0.1:13305/v1",
         timeoutMs,
+        usePromptFallback: true,
       });
 
     case "aion-micro":
