@@ -99,23 +99,30 @@ function sleep(ms: number): Promise<void> {
 /**
  * Build a system prompt section that describes available tools in structured text.
  * Used for models without native tool calling support.
+ *
+ * Format: plain JSON (no code block) so models that ignore markdown fencing
+ * still produce parseable output. The "tool" key with an exact tool name is
+ * required; listing valid names up front reduces hallucination.
  */
 export function buildToolsSystemPrompt(tools: LLMToolDefinition[]): string {
   if (tools.length === 0) return "";
+
+  const toolNames = tools.map((t) => `"${t.name}"`).join(", ");
 
   const lines: string[] = [
     "",
     "## Available Tools",
     "",
-    "You have access to the following tools. To call a tool, respond with a JSON block",
-    'in this exact format (including the ``` markers):',
+    `You have access to these tools: ${toolNames}`,
     "",
-    "```tool_call",
-    '{"tool": "<tool_name>", "input": {<arguments>}}',
-    "```",
+    "To call a tool, your ENTIRE response must be ONLY this JSON object — no other text,",
+    "no markdown, no explanation:",
     "",
-    "Only call one tool per response. After receiving the tool result, you may call",
-    "another tool or provide your final answer.",
+    '{"tool": "EXACT_TOOL_NAME", "input": {ARGUMENTS}}',
+    "",
+    'The "tool" value MUST be one of the tool names listed above.',
+    'The "input" value MUST be a JSON object containing the arguments.',
+    "Call only one tool per response. Respond with plain text if no tool is needed.",
     "",
     "### Tool Definitions",
     "",
@@ -131,45 +138,67 @@ export function buildToolsSystemPrompt(tools: LLMToolDefinition[]): string {
 }
 
 /**
- * Parse tool call blocks from response text (prompt-based fallback).
+ * Parse tool call JSON from response text (prompt-based fallback).
  *
- * Looks for ```tool_call blocks containing JSON with "tool" and "input" fields.
+ * Two formats are handled:
+ *   1. Code blocks with tool_call or json label — the original format used by Ollama.
+ *   2. Bare JSON that IS the entire response — used by models (e.g. Gemma via Lemonade)
+ *      that follow the plain-JSON system prompt instruction but omit code-block markers.
  */
 export function parseToolCallsFromText(
   text: string,
 ): { toolCalls: LLMToolCall[]; cleanText: string } {
-  const toolCalls: LLMToolCall[] = [];
-  let cleanText = text;
-
-  const pattern = /```tool_call\n([\s\S]*?)```/g;
-  let match: RegExpExecArray | null;
   let idCounter = 0;
 
-  while ((match = pattern.exec(text)) !== null) {
+  function extractCall(parsed: unknown): LLMToolCall | null {
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const obj = parsed as Record<string, unknown>;
+    if (typeof obj["tool"] !== "string") return null;
+    idCounter++;
+    return {
+      id: `fallback-tool-${String(idCounter)}`,
+      name: obj["tool"],
+      input: (typeof obj["input"] === "object" && obj["input"] !== null
+        ? obj["input"] as Record<string, unknown>
+        : {}),
+    };
+  }
+
+  // Pass 1: code blocks (```tool_call or ```json)
+  const blockPattern = /```(?:tool_call|json)?\n([\s\S]*?)```/g;
+  let match: RegExpExecArray | null;
+  const toolCalls: LLMToolCall[] = [];
+
+  while ((match = blockPattern.exec(text)) !== null) {
     const raw = match[1]?.trim();
     if (!raw) continue;
-
     try {
-      const parsed = JSON.parse(raw) as { tool?: string; input?: Record<string, unknown> };
-      if (typeof parsed.tool === "string") {
-        idCounter++;
-        toolCalls.push({
-          id: `ollama-tool-${String(idCounter)}`,
-          name: parsed.tool,
-          input: parsed.input ?? {},
-        });
-      }
+      const call = extractCall(JSON.parse(raw));
+      if (call) toolCalls.push(call);
     } catch {
-      // Malformed JSON — skip this block
+      // Malformed JSON — skip
     }
   }
 
   if (toolCalls.length > 0) {
-    // Strip tool_call blocks from the text
-    cleanText = text.replace(/```tool_call\n[\s\S]*?```/g, "").trim();
+    return {
+      toolCalls,
+      cleanText: text.replace(/```(?:tool_call|json)?\n[\s\S]*?```/g, "").trim(),
+    };
   }
 
-  return { toolCalls, cleanText };
+  // Pass 2: entire response is bare JSON {"tool":"...","input":{...}}
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    try {
+      const call = extractCall(JSON.parse(trimmed));
+      if (call) return { toolCalls: [call], cleanText: "" };
+    } catch {
+      // Not valid JSON
+    }
+  }
+
+  return { toolCalls: [], cleanText: text };
 }
 
 // ---------------------------------------------------------------------------

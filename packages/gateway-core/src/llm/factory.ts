@@ -160,6 +160,9 @@ export function createSingleProvider(
       // Tier: "floor" (per providers-api catalog). timeoutMs computed via
       // timeoutMsForProviderType resolves to BASE_TIMEOUT_MS * 6.0 = 360s
       // — sufficient headroom for CPU-bound first-token on slow boxes.
+      // Same Lemonade backplane as the "lemonade" case — same usePromptFallback
+      // requirement: Lemonade doesn't translate the model's native tool call
+      // output to tool_calls, so prompt-based fallback is required here too.
       return new OpenAIProvider({
         apiKey: "not-needed",
         defaultModel: config.defaultModel ?? "wishborn/aion-micro-v1",
@@ -168,6 +171,7 @@ export function createSingleProvider(
         // baseUrl MUST include `/v1` — see lemonade case above for why.
         baseUrl: config.baseUrl ?? "http://127.0.0.1:13305/v1",
         timeoutMs,
+        usePromptFallback: true,
       });
 
     case "hf-local": {
