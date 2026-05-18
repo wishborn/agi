@@ -469,7 +469,9 @@ cmd_services_start() {
       exit 1
     fi
     cd /mnt/agi
-    nohup env AIONIMA_TEST_VM=1 node cli/dist/index.js run > /tmp/agi.log 2>&1 &
+    # Source VM secrets file (TYNN_API_KEY etc.) so MCP $VAR tokens resolve at boot.
+    [ -f ~/.agi/secrets.env ] && . ~/.agi/secrets.env 2>/dev/null || true
+    nohup env AIONIMA_TEST_VM=1 TYNN_API_KEY="${TYNN_API_KEY:-}" node cli/dist/index.js run > /tmp/agi.log 2>&1 &
     echo $! > /tmp/agi.pid
     sleep 3
     echo "  AGI PID: $(cat /tmp/agi.pid)"
@@ -550,6 +552,55 @@ json.dump(cfg, open(p, "w"), indent=2)
 PYEOF
     echo "    agent.provider=ollama · agent.model=qwen2.5:3b · router.costMode=local"
   '
+
+  # Wire tynn MCP server so the Race-to-DONE bar and PM tools work in the VM.
+  # Extracts the token from TYNN_API_KEY env var or the workspace .mcp.json,
+  # writes it to ~/.agi/secrets.env on the VM (sourced by services-start), and
+  # injects the mcp.servers block into gateway.json for boot-time registration.
+  # If no token is found, logs a warning and skips (test skips gracefully).
+  TYNN_API_KEY="${TYNN_API_KEY:-}"
+  if [ -z "$TYNN_API_KEY" ]; then
+    for MCP_CANDIDATE in \
+        "$REPO_DIR/../../../.mcp.json" \
+        "$HOME/temp_core/.mcp.json" \
+        "$HOME/.mcp.json"; do
+      if [ -f "$MCP_CANDIDATE" ]; then
+        TYNN_API_KEY=$(python3 -c "
+import json
+try:
+  d = json.load(open('$MCP_CANDIDATE'))
+  tok = d.get('mcpServers',{}).get('tynn',{}).get('headers',{}).get('Authorization','')
+  print(tok.replace('Bearer ','').strip())
+except: pass
+" 2>/dev/null || echo "")
+        [ -n "$TYNN_API_KEY" ] && break
+      fi
+    done
+  fi
+
+  if [ -n "$TYNN_API_KEY" ]; then
+    echo "==> Wiring tynn MCP server into test-VM gateway..."
+    # Write secrets file for services-start to pass to the gateway process env.
+    multipass exec "$VM_NAME" -- bash -c "mkdir -p ~/.agi && printf 'TYNN_API_KEY=%s\n' '$TYNN_API_KEY' > ~/.agi/secrets.env && chmod 600 ~/.agi/secrets.env"
+    # Inject mcp.servers block into gateway.json using $TYNN_API_KEY notation —
+    # resolveSecretRef in server.ts expands $VAR from the gateway process env.
+    multipass exec "$VM_NAME" -- python3 - << 'PYEOF'
+import json, os
+p = os.path.expanduser("~/.agi/gateway.json")
+cfg = json.load(open(p)) if os.path.exists(p) else {}
+cfg.setdefault("mcp", {})["servers"] = [{
+    "id": "tynn",
+    "transport": "http",
+    "url": "https://tynn.ai/mcp/tynn",
+    "authToken": "$TYNN_API_KEY"
+}]
+json.dump(cfg, open(p, "w"), indent=2)
+print("    mcp.servers[tynn] wired → https://tynn.ai/mcp/tynn (token resolved via $TYNN_API_KEY env)")
+PYEOF
+    echo "    tynn wired — restart services for boot-time registration to take effect"
+  else
+    echo "==> WARN: TYNN_API_KEY not found — tynn MCP server not wired (Race-to-DONE bar will skip in e2e)"
+  fi
 
   echo "==> Checking health..."
   timeout 30 multipass exec "$VM_NAME" -- bash -c '
