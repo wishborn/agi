@@ -1,90 +1,104 @@
 import { test, expect } from "@playwright/test";
 
+/**
+ * Sidebar navigation and route redirect e2e tests.
+ *
+ * Locator strategy: Sidebar.Item (react-fancy) does NOT forward data-testid
+ * to the DOM. All nav-item clicks use sidebar.getByRole("button", { name })
+ * scoped to the app-sidebar wrapper. Section labels (Sidebar.Group) render
+ * as paragraph elements — checked via getByText within the sidebar scope.
+ */
+
 test.describe("Sidebar Navigation", () => {
-  test("sidebar is visible with all sections", async ({ page }) => {
+  test("sidebar is visible with main-mode sections", async ({ page }) => {
     await page.goto("/");
     const sidebar = page.getByTestId("app-sidebar");
     await expect(sidebar).toBeVisible();
 
-    // Check section headers — target the uppercase header divs specifically
-    const headers = sidebar.locator(".uppercase");
-    await expect(headers.filter({ hasText: "Impactinomics" })).toBeVisible();
-    await expect(headers.filter({ hasText: "Projects" })).toBeVisible();
-    await expect(headers.filter({ hasText: "Communication" })).toBeVisible();
-    await expect(headers.filter({ hasText: "Knowledge" })).toBeVisible();
-    await expect(headers.filter({ hasText: "Gateway" })).toBeVisible();
-    await expect(headers.filter({ hasText: "Settings" })).toBeVisible();
-    await expect(headers.filter({ hasText: "System" })).toBeVisible();
+    // Sidebar.Group renders section labels as paragraph elements, not .uppercase divs
+    await expect(sidebar.getByText("Overview")).toBeVisible();
+    await expect(sidebar.getByText("Projects")).toBeVisible();
+    await expect(sidebar.getByText("MagicApps")).toBeVisible();
+    await expect(sidebar.getByText("Communication")).toBeVisible();
+    await expect(sidebar.getByText("Knowledge")).toBeVisible();
+
+    // Admin sections must not appear in main mode
+    await expect(sidebar.getByText("Gateway")).toHaveCount(0);
+    await expect(sidebar.getByText("System")).toHaveCount(0);
   });
 
-  test("clicking nav items navigates to correct URL", async ({ page }) => {
-    await page.goto("/");
+  test("admin mode shows admin sections when at admin URL", async ({ page }) => {
+    await page.goto("/gateway/logs");
+    const sidebar = page.getByTestId("app-sidebar");
 
-    // Navigate to COA Explorer
-    await page.getByTestId("nav-impactinomics-coa-explorer").click();
+    await expect(sidebar.getByText("Marketplace")).toBeVisible();
+    await expect(sidebar.getByText("Gateway")).toBeVisible();
+    await expect(sidebar.getByText("System")).toBeVisible();
+
+    // Main sections not visible in admin mode
+    await expect(sidebar.getByText("Projects")).toHaveCount(0);
+    await expect(sidebar.getByText("MagicApps")).toHaveCount(0);
+  });
+
+  test("clicking main-mode nav items navigates correctly", async ({ page }) => {
+    await page.goto("/");
+    const sidebar = page.getByTestId("app-sidebar");
+
+    await sidebar.getByRole("button", { name: "COA Explorer" }).click();
     await expect(page).toHaveURL("/coa");
 
-    // Navigate to Projects
-    await page.getByTestId("nav-projects-all-projects").click();
+    await sidebar.getByRole("button", { name: "All Projects" }).click();
     await expect(page).toHaveURL("/projects");
 
-    // Navigate to Gateway Logs
-    await page.getByTestId("nav-gateway-logs").click();
-    await expect(page).toHaveURL("/gateway/logs");
+    await sidebar.getByRole("button", { name: "All Messages" }).click();
+    await expect(page).toHaveURL("/comms");
 
-    // Navigate to Resources
-    await page.getByTestId("nav-system-resources").click();
-    await expect(page).toHaveURL("/system");
-
-    // Navigate back to Overview
-    await page.getByTestId("nav-impactinomics-overview").click();
+    // Dashboard item has exact: true — navigates back to root
+    await sidebar.getByRole("button", { name: "Dashboard" }).click();
     await expect(page).toHaveURL("/");
   });
 
-  test("active state highlights current page", async ({ page }) => {
+  test("Admin button switches to admin mode and navigates to /admin", async ({ page }) => {
     await page.goto("/");
-    const overviewLink = page.getByTestId("nav-impactinomics-overview");
-    await expect(overviewLink).toHaveClass(/bg-primary/);
-
-    // Navigate to projects and verify active state moves
-    await page.getByTestId("nav-projects-all-projects").click();
-    const projectsLink = page.getByTestId("nav-projects-all-projects");
-    await expect(projectsLink).toHaveClass(/bg-primary/);
-    await expect(overviewLink).not.toHaveClass(/bg-primary/);
+    const sidebar = page.getByTestId("app-sidebar");
+    await sidebar.getByRole("button", { name: "Admin" }).click();
+    await expect(page).toHaveURL("/admin");
+    await expect(sidebar.getByText("Gateway")).toBeVisible();
+    await expect(sidebar.getByRole("button", { name: "Back" })).toBeVisible();
   });
 
-  test("catch-all renders PluginPageResolver for unknown URLs", async ({ page }) => {
+  test("Back button from admin mode returns to main mode", async ({ page }) => {
+    await page.goto("/admin");
+    const sidebar = page.getByTestId("app-sidebar");
+    await expect(sidebar.getByRole("button", { name: "Back" })).toBeVisible();
+    await sidebar.getByRole("button", { name: "Back" }).click();
+    await expect(page).toHaveURL("/");
+    await expect(sidebar.getByText("Projects")).toBeVisible();
+  });
+
+  test("catch-all redirects unknown URLs to home", async ({ page }) => {
     await page.goto("/nonexistent-page");
-    // PluginPageResolver shows loading then redirect home since no plugin matches
+    // PluginPageResolver shows loading then redirects home when no plugin matches
     await expect(page).toHaveURL("/", { timeout: 5000 });
   });
 
-  test("chat button in sidebar opens ChatFlyout", async ({ page }) => {
+  test("chat button in header opens ChatFlyout", async ({ page }) => {
     await page.goto("/");
     const chatButton = page.getByTestId("header-chat-button");
     await expect(chatButton).toBeVisible();
-
     await chatButton.click();
     await expect(chatButton).toHaveClass(/bg-primary/);
   });
 });
 
 test.describe("Settings Navigation", () => {
-  test("Settings section has Gateway and Plugins links", async ({ page }) => {
-    await page.goto("/");
-
-    // Settings > Gateway
-    await page.getByTestId("nav-settings-gateway").click();
+  test("Settings item in admin sidebar navigates to settings", async ({ page }) => {
+    // Navigate to an admin URL first so sidebar is in admin mode
+    await page.goto("/gateway/logs");
+    const sidebar = page.getByTestId("app-sidebar");
+    // Settings is the last item in System section → /settings → redirects to /settings/gateway
+    await sidebar.getByRole("button", { name: "Settings" }).click();
     await expect(page).toHaveURL("/settings/gateway");
-
-    // Settings > Plugins (distinct from Gateway > Plugins)
-    const pluginsLink = page.getByTestId("nav-settings-plugins");
-    if (await pluginsLink.count()) {
-      await pluginsLink.click({ force: true });
-      await expect(page).toHaveURL("/settings/plugins");
-    } else {
-      await expect(pluginsLink).toHaveCount(0);
-    }
   });
 
   test("/settings redirects to /settings/gateway", async ({ page }) => {
@@ -96,71 +110,58 @@ test.describe("Settings Navigation", () => {
     await page.goto("/gateway/settings");
     await expect(page).toHaveURL("/settings/gateway");
   });
-
-  // Tab-bar assertion lives in e2e/settings-gateway.spec.ts:27 ("tab bar
-  // renders all five tab buttons") — that's the canonical home for the
-  // 5-tab shape (General/Identity/Providers/Contributing/Network). The
-  // duplicate test that lived here had stale tab names ("Owner"/"Dev"/
-  // "0ME") from before the v0.4.131+ refactor. Retired 2026-04-26 (s101
-  // t367) to remove the redundant assertion + stop the drift cycle.
 });
 
 test.describe("Gateway Section", () => {
-  test("Gateway section has Marketplace link", async ({ page }) => {
-    await page.goto("/");
-
-    const marketplaceLink = page.getByTestId("nav-gateway-marketplace");
-    await expect(marketplaceLink).toBeVisible();
-
-    await marketplaceLink.click();
+  test("Plugins link in admin sidebar navigates to marketplace", async ({ page }) => {
+    await page.goto("/gateway/logs");
+    const sidebar = page.getByTestId("app-sidebar");
+    // "Plugins" is the Marketplace section item → /gateway/marketplace (direct, no redirect needed)
+    await sidebar.getByRole("button", { name: "Plugins" }).click();
     await expect(page).toHaveURL("/gateway/marketplace");
   });
 
-  test("Marketplace page shows tabs", async ({ page }) => {
+  test("Marketplace page shows Browse/Installed/Sources tabs", async ({ page }) => {
     await page.goto("/gateway/marketplace");
-    await expect(page.getByRole("button", { name: "Browse" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Installed" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Sources" })).toBeVisible();
-  });
-
-  test("Gateway > Plugins navigates correctly", async ({ page }) => {
-    await page.goto("/");
-    await page.getByTestId("nav-gateway-plugins").click();
-    await expect(page).toHaveURL("/gateway/plugins");
+    // role="tablist" + role="tab" added to marketplace.tsx tab bar to scope away from
+    // sidebar "Resources" button (substring "Sources" ⊂ "Resources" without scoping)
+    const tablist = page.getByRole("tablist");
+    await expect(tablist.getByRole("tab", { name: "Browse" })).toBeVisible();
+    await expect(tablist.getByRole("tab", { name: "Installed" })).toBeVisible();
+    await expect(tablist.getByRole("tab", { name: "Sources" })).toBeVisible();
   });
 });
 
 test.describe("Communication Section", () => {
   test("Communication section links navigate correctly", async ({ page }) => {
     await page.goto("/");
+    const sidebar = page.getByTestId("app-sidebar");
 
-    await page.getByTestId("nav-communication-all-messages").click();
+    await sidebar.getByRole("button", { name: "All Messages" }).click();
     await expect(page).toHaveURL("/comms");
 
-    await page.getByTestId("nav-communication-telegram").click();
-    await expect(page).toHaveURL("/comms/telegram");
-
-    await page.getByTestId("nav-communication-discord").click();
-    await expect(page).toHaveURL("/comms/discord");
+    await sidebar.getByRole("button", { name: "Pending Identity" }).click();
+    await expect(page).toHaveURL("/identity/pending");
   });
 });
 
 test.describe("Knowledge Section", () => {
   test("Knowledge section links navigate correctly", async ({ page }) => {
     await page.goto("/");
+    const sidebar = page.getByTestId("app-sidebar");
 
-    await page.getByTestId("nav-knowledge-browse").click();
+    await sidebar.getByRole("button", { name: "Browse" }).click();
     await expect(page).toHaveURL("/knowledge");
 
-    await page.getByTestId("nav-knowledge-documentation").click();
+    await sidebar.getByRole("button", { name: "Documentation" }).click();
     await expect(page).toHaveURL("/docs");
   });
 });
 
 test.describe("Old Route Redirects", () => {
-  test("/system/plugins redirects to /gateway/plugins", async ({ page }) => {
+  test("/system/plugins redirects to /gateway/marketplace", async ({ page }) => {
     await page.goto("/system/plugins");
-    await expect(page).toHaveURL("/gateway/plugins");
+    await expect(page).toHaveURL("/gateway/marketplace");
   });
 
   test("/system/logs redirects to /gateway/logs", async ({ page }) => {
