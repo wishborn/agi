@@ -369,7 +369,7 @@ cmd_services_setup() {
 
 ai.on, test.ai.on {
     tls internal
-    reverse_proxy localhost:3100
+    reverse_proxy 127.0.0.1:3100
 }
 EOF
 systemctl restart caddy'

@@ -276,6 +276,8 @@ export function WorkflowGraph({ theme: _theme, config, onSaveConfig, routerStatu
         id: "router-hub",
         type: "router",
         position: { x: routerHubX, y: 20 },
+        width: 220,
+        height: 80,
         data: {
           costMode: routerStatus.costMode,
           escalation: routerStatus.escalation,
@@ -290,6 +292,8 @@ export function WorkflowGraph({ theme: _theme, config, onSaveConfig, routerStatu
           id: `stage-${i}`,
           type: "stage",
           position: { x: stageStartX + i * (stageWidth + stageGap), y: 85 },
+          width: stageWidth,
+          height: 32,
           data: { label },
         });
       });
@@ -307,6 +311,8 @@ export function WorkflowGraph({ theme: _theme, config, onSaveConfig, routerStatu
       id: "taskmaster",
       type: "taskmaster",
       position: { x: tmX, y: tmY },
+      width: TM_WIDTH,
+      height: TM_HEIGHT,
       data: {
         domainCount: domains.length,
         workerCount: totalWorkers,
@@ -327,6 +333,8 @@ export function WorkflowGraph({ theme: _theme, config, onSaveConfig, routerStatu
         id: `group-${domain.id}`,
         type: "domainGroup",
         position: { x: gx, y: groupStartY },
+        width: GROUP_WIDTH,
+        height: groupHeight,
         data: {
           domain,
           groupHeight,
