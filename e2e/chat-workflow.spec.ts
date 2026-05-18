@@ -112,4 +112,13 @@ test.describe("Chat workflow", () => {
     // No active run → pill is not rendered.
     await expect(flyout.getByTestId("chat-live-pill")).toHaveCount(0);
   });
+
+  test("suggestion-chips testid is wired (absent in empty session)", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("header-chat-button").click();
+    const flyout = page.getByTestId("chat-flyout");
+    await expect(flyout).toBeVisible();
+    // No prior session → no suggestions rendered yet.
+    await expect(flyout.getByTestId("suggestion-chips")).toHaveCount(0);
+  });
 });

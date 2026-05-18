@@ -1566,12 +1566,14 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
           )}
 
           {activeSession && activeSession.suggestions.length > 0 && !activeSession.thinking && (
-            <div className="flex gap-1.5 flex-wrap py-1">
+            <div data-testid="suggestion-chips" className="flex gap-1.5 flex-wrap py-1">
               {activeSession.suggestions.map((s, i) => (
                 <button
                   key={`suggestion-${String(i)}`}
+                  data-testid="suggestion-chip"
                   onClick={() => sendMessage(s)}
-                  className="px-3 py-1 rounded-full border border-blue text-blue bg-transparent text-[11px] cursor-pointer"
+                  title={s}
+                  className="px-3 py-1 rounded-full border border-blue/60 text-blue bg-transparent text-[11px] cursor-pointer hover:bg-blue/10 hover:border-blue transition-colors"
                 >
                   {s}
                 </button>
