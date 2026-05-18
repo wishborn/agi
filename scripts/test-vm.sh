@@ -510,7 +510,8 @@ cmd_services_start() {
   echo "==> Seeding owner entity for chat tests + disabling hosting..."
   multipass exec "$VM_NAME" -- bash -lc '
     GW=http://127.0.0.1:3100
-    curl -s -X POST $GW/api/onboarding/owner-profile \
+    curl -s --connect-timeout 3 --max-time 10 \
+      -X POST $GW/api/onboarding/owner-profile \
       -H "Content-Type: application/json" \
       -d "{\"displayName\":\"Wishborn\",\"dmPolicy\":\"open\"}" >/dev/null 2>&1
     python3 - << "PYEOF"
@@ -642,20 +643,21 @@ EOF
   multipass exec "$VM_NAME" -- bash -lc '
     GW=http://127.0.0.1:3100
     for i in 1 2 3 4 5; do
-      curl -s -o /dev/null -w "%{http_code}" $GW/api/system/stats | grep -q "200" && break
+      curl -s --connect-timeout 2 --max-time 5 -o /dev/null -w "%{http_code}" $GW/api/system/stats | grep -q "200" && break
       sleep 2
     done
-    curl -s -X POST $GW/api/mapp-marketplace/pull >/dev/null 2>&1 || true
+    curl -s --connect-timeout 5 --max-time 15 -X POST $GW/api/mapp-marketplace/pull >/dev/null 2>&1 || true
     APPS=(admin-editor code-browser dashboard-viewer dev-workbench gallery media-studio mind-mapper ops-monitor project-analyzer reader runbook-editor)
     OK=0
     for app in "${APPS[@]}"; do
-      if curl -s -X POST -H "Content-Type: application/json" \
+      if curl -s --connect-timeout 5 --max-time 10 \
+          -X POST -H "Content-Type: application/json" \
           -d "{\"appId\":\"$app\",\"sourceId\":1}" \
           $GW/api/mapp-marketplace/install 2>/dev/null | grep -q "\"ok\":true"; then
         OK=$((OK + 1))
       fi
     done
-    INSTALLED=$(curl -s $GW/api/dashboard/magic-apps | grep -o "\"id\":" | wc -l)
+    INSTALLED=$(curl -s --connect-timeout 5 --max-time 10 $GW/api/dashboard/magic-apps | grep -o "\"id\":" | wc -l)
     echo "    installed: $INSTALLED / 11"
   '
 
@@ -667,7 +669,7 @@ EOF
   echo "==> Clearing safemode if active..."
   multipass exec "$VM_NAME" -- bash -c '
     for i in 1 2 3 4 5; do
-      if curl -s -X POST http://127.0.0.1:3100/api/admin/safemode/exit 2>/dev/null | grep -q "\"ok\":true"; then
+      if curl -s --connect-timeout 3 --max-time 5 -X POST http://127.0.0.1:3100/api/admin/safemode/exit 2>/dev/null | grep -q "\"ok\":true"; then
         echo "    safemode cleared"
         exit 0
       fi
@@ -726,10 +728,22 @@ cmd_services_status() {
   timeout 30 multipass exec "$VM_NAME" -- bash -c '
     echo "PostgreSQL: $(systemctl is-active postgresql)"
     echo "Caddy:      $(systemctl is-active caddy)"
-    echo "AGI:        $([ -f /tmp/agi.pid ] && kill -0 $(cat /tmp/agi.pid) 2>/dev/null && echo "running (PID $(cat /tmp/agi.pid))" || echo "stopped")"
+    # Distinguish stopped / starting (PID alive, no health response) / running
+    if [ -f /tmp/agi.pid ] && kill -0 $(cat /tmp/agi.pid) 2>/dev/null; then
+      pid=$(cat /tmp/agi.pid)
+      health=$(curl -sk --connect-timeout 3 --max-time 5 https://ai.on/health 2>/dev/null)
+      if [ -n "$health" ]; then
+        echo "AGI:        running (PID $pid)"
+      else
+        echo "AGI:        starting (PID $pid — plugins/health not yet ready)"
+      fi
+    else
+      echo "AGI:        stopped"
+    fi
     echo ""
     echo "Health checks:"
-    echo "  AGI:  $(curl -sk --connect-timeout 5 --max-time 10 https://ai.on/health 2>/dev/null || echo "unreachable")"
+    health=$(curl -sk --connect-timeout 3 --max-time 5 https://ai.on/health 2>/dev/null)
+    echo "  AGI:  ${health:-not yet responding}"
   '
 }
 
@@ -780,9 +794,11 @@ cmd_services_align() {
   echo "==> Starting VM services..."
   cmd_services_start
 
-  echo "==> Polling /health until VM reports host version (${host_version})..."
+  # Cold starts install agi-rust-runtime + agi-postgres before /health goes ONLINE —
+  # allow up to 120 s (2 min) for first-run plugin installation to complete.
+  echo "==> Polling /health until VM reports host version (${host_version}, up to 120 s)..."
   local vm_version waited=0
-  while [ $waited -lt 30 ]; do
+  while [ $waited -lt 120 ]; do
     vm_version=$(multipass exec "$VM_NAME" -- bash -c "curl -sk https://test.ai.on/health 2>/dev/null" 2>/dev/null \
       | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' \
       | tr -d '\r\n ')
@@ -808,7 +824,7 @@ cmd_services_align() {
   # SSL_PROTOCOL_ERROR because Caddy's bound to test.ai.on, not the IP).
   echo "==> Polling test.ai.on reachability from host..."
   local host_check_waited=0
-  while [ $host_check_waited -lt 30 ]; do
+  while [ $host_check_waited -lt 60 ]; do
     if curl -sk -o /dev/null -w "%{http_code}" --connect-timeout 3 "https://test.ai.on/api/system/stats" 2>/dev/null | grep -q "^2"; then
       echo "    aligned: VM reports v${vm_version}, test.ai.on reachable from host"
       return 0
