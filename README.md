@@ -97,7 +97,55 @@ Every feature has a deeper doc — follow the link when you want details.
 
 ## Contributing
 
-Aionima is open to contribution. This section is a map of where to start in the codebase and what to read for each layer.
+Aionima is open to contribution. Pick the path that matches your situation.
+
+---
+
+### Path A — Contributing Mode (you run Aionima)
+
+If you have Aionima installed and running, Contributing Mode is the fastest way to develop against the live system. It provisions personal custodian forks on GitHub, clones them locally, and rewires the upgrade system so `agi upgrade` pulls from your forks instead of Civicognita. You can push a commit to your fork's `dev` branch and have it live in seconds.
+
+**Enable it:**
+
+1. Open **Settings → Gateway → Contributing** in the dashboard.
+2. Toggle **Contributing Mode** on.
+   - Aionima creates personal forks of all core repos under your GitHub account (or reuses existing ones).
+   - The five fork clones appear under `~/_projects/_aionima/repos/`.
+   - `gateway.json` is updated with your fork URLs.
+3. Run `agi upgrade` (or click **Upgrade** in the dashboard).
+   - The upgrade script rewrites each `/opt/*` origin from `Civicognita/<repo>` → `<your-login>/<repo>`.
+   - Subsequent upgrades pull from your forks automatically.
+
+**Development loop:**
+
+```
+edit code in ~/_projects/_aionima/repos/<repo>/
+git add … && git commit && git push origin dev
+agi upgrade                  # pulls your fork's dev branch into /opt/<repo>
+```
+
+The dashboard's **Contributing** tab shows each fork's status (branch, HEAD SHA, divergence from upstream). When upstream has moved ahead, the **Merge upstream → origin** button pulls the latest Civicognita commits into your fork automatically — including agentic conflict resolution for simple hunks.
+
+**Submit a PR:**
+
+The **Open PR to upstream** button on each fork card opens a pre-filled GitHub compare URL (`Civicognita/<repo>/compare/dev...<your-login>:dev`) in a new tab.
+
+Full reference: [`docs/human/dev-mode.md`](docs/human/dev-mode.md)
+
+---
+
+### Path B — Fork and PR (no Aionima install required)
+
+For a targeted change to a single repo, a plain GitHub fork works fine:
+
+1. Fork the repo you want to change on GitHub.
+2. Clone your fork, create a branch off `dev`.
+3. Make your change, run `agi test <pattern>` if you have Aionima, or push and let CI validate.
+4. Open a PR from `<your-login>/<repo>:your-branch` → `Civicognita/<repo>:dev`.
+
+Both paths ultimately merge into `Civicognita/<repo>:dev`. `main` is the stable release branch — PRs always target `dev`.
+
+---
 
 ### Where to start in the codebase
 
@@ -123,16 +171,16 @@ Aionima is open to contribution. This section is a map of where to start in the 
 | **API endpoints** | [`docs/human/api-reference.md`](docs/human/api-reference.md) → [`docs/agents/adding-api-endpoints.md`](docs/agents/adding-api-endpoints.md) |
 | **Channels** | [`docs/agents/adding-a-channel.md`](docs/agents/adding-a-channel.md) |
 | **Testing + shipping** | [`docs/human/testing.md`](docs/human/testing.md) → [`docs/agents/testing-and-shipping.md`](docs/agents/testing-and-shipping.md) |
-| **Dev Mode + forks** | [`docs/human/dev-mode.md`](docs/human/dev-mode.md) — toggle to contribute against custodian forks |
+| **Contributing Mode** | [`docs/human/dev-mode.md`](docs/human/dev-mode.md) — full reference for fork provisioning + live-development loop |
 | **ADF + Intelligence Protocols** | [`docs/human/adf.md`](docs/human/adf.md) — the framework Aionima sits on |
 
-### Workflow
+### Workflow rules
 
 - **Branches:** develop on `dev`. Never push to `main`. Stable releases are merged from `dev` → `main` manually.
-- **Tests:** unit tests run in a Multipass VM (`agi test`). Playwright E2E runs in the same VM (`agi test --e2e`) or visibly via `agi test --e2e-ui`.
+- **Tests:** unit tests run via `agi test <pattern>`. Playwright E2E via `agi test --e2e` (headless) or `agi test --e2e-ui` (visible).
 - **Versioning:** bump `package.json` patch (`0.4.x`) in the same commit as any shippable change. The upgrade system uses version comparison to trigger restarts.
 - **Same-commit doc guard:** if you change functionality, update the matching doc in [`docs/`](docs/) in the same commit.
-- **Tynn (project management):** every story / task lives in the Tynn MCP project. `mcp__tynn__next` shows what's in flight.
+- **Tynn (project management):** stories and tasks live in the Tynn MCP project. `mcp__tynn__next` shows what's in flight.
 
 ### Architecture (multi-repo)
 
