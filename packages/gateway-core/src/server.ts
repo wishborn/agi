@@ -106,7 +106,7 @@ import { ChatEventBuffer } from "./chat-event-buffer.js";
 import { registerAllTools, registerAgentTools } from "./tools/index.js";
 import { createIssueHandler, ISSUE_TOOL_MANIFEST, ISSUE_TOOL_INPUT_SCHEMA } from "./tools/issue-tools.js";
 import { SkillRegistry } from "@agi/skills";
-import { CompositeMemoryAdapter } from "@agi/memory";
+import { CompositeMemoryAdapter, CandidateDatasetAccumulator } from "@agi/memory";
 import {
   VoicePipeline,
   WhisperSTTProvider,
@@ -124,6 +124,8 @@ import { startGatewaySidecars } from "./server-startup.js";
 import { UserContextStore } from "./user-context-store.js";
 import { HeartbeatScheduler } from "./heartbeat.js";
 import { PrimeLoader } from "./prime-loader.js";
+import { AlignmentScorer } from "./prime-alignment-scorer.js";
+import { EpisodeExtractor } from "./episode-extractor.js";
 import { resolvePrimeDir } from "./resolve-paths.js";
 import { checkProtocolCompatibility } from "./protocol-check.js";
 import { PlanStore, migrateProjectPlans } from "./plan-store.js";
@@ -983,6 +985,30 @@ export async function startGatewayServer(
   });
   log.info(`memory adapter initialized (dir: ${memoryDir})`);
 
+  // s112 — Memory & Learning pipeline (EpisodeExtractor + CandidateDatasetAccumulator).
+  // Fire-and-forget: every successful agent invocation extracts an EpisodicRecord,
+  // scores it, anchors it via NoopAnchor, and (if it passes the 4-gate pipeline)
+  // appends it to the monthly candidate dataset for future LoRA training.
+  const _accumulator = new CandidateDatasetAccumulator();
+  const _alignmentScorer = new AlignmentScorer({
+    primeReader: primeLoader.reader,
+    // Lazy: reads the live provider so hot-swapping in Settings takes effect.
+    invoke: (prompt: string) => getLLMProvider().summarize(prompt, ""),
+  });
+  const episodeExtractor = new EpisodeExtractor({
+    // Lazy provider wrapper so provider hot-swap in Settings takes effect.
+    provider: {
+      summarize: (text: string, prompt: string) => getLLMProvider().summarize(text, prompt),
+    } as unknown as import("./llm/index.js").LLMProvider,
+    memoryAdapter,
+    entityId: resourceId,
+    coaAlias: resourceId,
+    alignmentScorer: _alignmentScorer,
+    accumulator: _accumulator,
+    logger: log,
+  });
+  log.info("episodic memory pipeline initialized (extractor + accumulator)");
+
   // s152 t651 — UserNotes store. Constructed here (before AgentInvoker)
   // so the invoker can read notes per project + global on each turn and
   // inject them into the system-prompt project-context section. Closes
@@ -1007,6 +1033,7 @@ export async function startGatewayServer(
     notesStore,
     workspaceRoot,
     projectPaths,
+    episodeExtractor,
     ownerConfig: ownerConfig !== undefined ? {
       displayName: ownerConfig.displayName,
       channels: ownerConfig.channels as Record<string, string | undefined>,

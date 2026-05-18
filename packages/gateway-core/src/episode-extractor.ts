@@ -27,6 +27,7 @@ import { ulid } from "ulid";
 import type { LLMProvider } from "./llm/index.js";
 import type { EpisodicRecord } from "@agi/memory";
 import { canonicalEpisodicHash, NoopAnchor, episodicToAnchor } from "@agi/memory";
+import type { CandidateDatasetAccumulator } from "@agi/memory";
 import type { AlignmentScorer } from "./prime-alignment-scorer.js";
 import type { ComponentLogger } from "./logger.js";
 
@@ -45,6 +46,8 @@ export interface EpisodeExtractorOptions {
   coaAlias: string;
   /** Optional PRIME alignment scorer. If absent, primeAlignment stays undefined. */
   alignmentScorer?: AlignmentScorer;
+  /** Optional dataset accumulator. Runs 4-gate pipeline on each stored record. */
+  accumulator?: CandidateDatasetAccumulator;
   logger?: ComponentLogger;
   /** Timeout for the full extract+score+store cycle, ms. Default 45_000. */
   timeoutMs?: number;
@@ -86,6 +89,7 @@ export class EpisodeExtractor {
   private readonly entityId: string;
   private readonly coaAlias: string;
   private readonly alignmentScorer?: AlignmentScorer;
+  private readonly accumulator?: CandidateDatasetAccumulator;
   private readonly logger?: ComponentLogger;
   private readonly timeoutMs: number;
   private readonly anchor = new NoopAnchor();
@@ -96,6 +100,7 @@ export class EpisodeExtractor {
     this.entityId = opts.entityId;
     this.coaAlias = opts.coaAlias;
     this.alignmentScorer = opts.alignmentScorer;
+    this.accumulator = opts.accumulator;
     this.logger = opts.logger;
     this.timeoutMs = opts.timeoutMs ?? 45_000;
   }
@@ -153,6 +158,19 @@ export class EpisodeExtractor {
 
       // Step 6: Persist
       await this.memoryAdapter.store(record);
+
+      // Step 7: Gate + accumulate for training dataset (non-blocking, best-effort)
+      if (this.accumulator) {
+        try {
+          const result = this.accumulator.accumulate(record);
+          if (!result.admitted) {
+            this.logger?.debug(`episode gated out by accumulator`);
+          }
+        } catch {
+          // Accumulator failure must never block or surface to callers
+        }
+      }
+
       this.logger?.debug(
         `episode extracted: ${record.id} conf=${record.confidence.toFixed(2)} tags=[${record.tags.join(",")}]`,
       );
