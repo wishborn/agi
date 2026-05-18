@@ -22,14 +22,15 @@ test.describe("Workflow Topology page", () => {
   });
 
   test("Topology tab is selected by default and shows the canvas", async ({ page }) => {
-    // The canvas container is rendered inside the topology TabsContent
-    const canvas = page.locator(".react-fancy-canvas, [class*='canvas'], canvas").first();
-    // Fallback: the WorkflowGraph is wrapped in a div with explicit height
-    const graphWrapper = page.locator("div").filter({ has: page.locator("canvas") }).first();
     // At minimum the page must not redirect away
     await expect(page).toHaveURL("/gateway/workflows");
-    // Canvas host element should exist somewhere in the DOM
-    const hasCanvas = (await page.locator("canvas").count()) > 0 || (await graphWrapper.count()) > 0;
+    // Wait for topology data to load — TASKMASTER renders after the async
+    // WorkflowGraph fetch settles. Without this wait the canvas count check
+    // races against the render and intermittently finds 0 canvas elements.
+    await page.waitForLoadState("networkidle");
+    // Canvas host element should exist somewhere in the DOM after load
+    const hasCanvas = (await page.locator("canvas").count()) > 0
+      || (await page.locator("div").filter({ has: page.locator("canvas") }).count()) > 0;
     expect(hasCanvas).toBeTruthy();
   });
 
