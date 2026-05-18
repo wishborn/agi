@@ -43,6 +43,7 @@ import type { LLMProvider, LLMToolCall, LLMToolResult, LLMMessage, LLMContentBlo
 import type { UserContextStore } from "./user-context-store.js";
 import type { PrimeLoader } from "./prime-loader.js";
 import type { ProjectConfigManager } from "./project-config-manager.js";
+import type { EpisodeExtractor } from "./episode-extractor.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 
@@ -241,6 +242,9 @@ export interface AgentInvokerDeps {
    *  When the result is `"local"`, the system prompt assembler trims sections
    *  small models can't usefully consume (Taskmaster, plan workflow, etc.). */
   getCostMode?: () => string;
+  /** s112 t384 — episode extraction pipeline. When wired, every successful chat
+   *  turn triggers a fire-and-forget episode extraction + scoring + storage cycle. */
+  episodeExtractor?: EpisodeExtractor;
 }
 
 export interface InvocationRequest {
@@ -1255,6 +1259,19 @@ export class AgentInvoker extends EventEmitter {
         loopCount,
         coaFingerprint: outboundFingerprint,
       });
+
+      // Fire-and-forget episode extraction (s112 t384). Must not block the
+      // response return. void is intentional — errors are logged inside extractor.
+      if (this.deps.episodeExtractor !== undefined) {
+        void this.deps.episodeExtractor.extractAndStore({
+          userMessage: sanitizedText,
+          assistantResponse: cleanedText,
+          toolsUsed,
+          model: result.model,
+          coaFingerprint: outboundFingerprint,
+          sessionKey: sKey,
+        });
+      }
 
       const historyTokens = history.tokenEstimate;
       const enrichedRoutingMeta = result.routingMeta
