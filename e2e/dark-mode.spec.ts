@@ -25,12 +25,14 @@ test.describe("Dark Mode & Theme System", () => {
 
   test("color-scheme is dark on html element", async ({ page }) => {
     await page.goto("/");
-    // Wait for ThemeProvider to mount before reading colorScheme inline style
     await page.waitForSelector("[data-testid='app-sidebar']", { timeout: 10000 });
-    const colorScheme = await page.locator("html").evaluate(
-      (el) => getComputedStyle(el).colorScheme,
-    );
-    expect(colorScheme).toContain("dark");
+    // applyTheme is async — poll until colorScheme reflects dark
+    await expect(async () => {
+      const colorScheme = await page.locator("html").evaluate(
+        (el) => getComputedStyle(el).colorScheme,
+      );
+      expect(colorScheme).toContain("dark");
+    }).toPass({ timeout: 5000 });
   });
 
   test("theme CSS custom properties are set", async ({ page }) => {
