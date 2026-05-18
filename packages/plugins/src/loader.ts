@@ -48,6 +48,17 @@ export interface PluginLoaderDeps {
    * this, plugin loads fall back to the bare try/catch behavior unchanged.
    */
   circuitBreaker?: CircuitBreakerTracker;
+  /**
+   * Create or look up a user account seeded from a channel plugin (e.g.,
+   * Discord). Exposed to plugins via `AionimaPluginAPI.getOrCreateChannelUser`.
+   * Implemented by gateway-core/server.ts with a Drizzle upsert so plugins
+   * never need direct DB access.
+   */
+  createChannelUser?: (
+    channelId: string,
+    userId: string,
+    meta: { displayName?: string; username?: string },
+  ) => Promise<{ userId: string; isNew: boolean }>;
 }
 
 export interface LoadResult {
@@ -366,5 +377,7 @@ function createPluginAPI(
     getProjectStacks(projectPath: string): Array<{ stackId: string; addedAt: string }> {
       return deps.projectStacksReader?.(projectPath) ?? [];
     },
+
+    getOrCreateChannelUser: deps.createChannelUser,
   };
 }

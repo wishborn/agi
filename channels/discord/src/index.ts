@@ -22,16 +22,19 @@ import {
   type DiscordConfig,
   isDiscordConfig,
   createConfigAdapter,
+  normalizeDiscordArrayField,
 } from "./config.js";
 import {
   DISCORD_CHANNEL_ID,
   normalizeMessage,
+  buildDisplayName,
 } from "./normalizer.js";
 import { sendOutbound } from "./outbound.js";
 import {
   createSecurityAdapter,
   isGuildAllowed,
   isChannelAllowed,
+  isRoleAllowed,
 } from "./security.js";
 import { buildDiscordBridgeTools } from "./aion-tools.js";
 import { createDiscordChannelDefV2WithTools } from "./channel-def.js";
@@ -277,8 +280,15 @@ async function handleGuildJoin(
  * await registry.startChannel("discord");
  * ```
  */
+type CreateUserFn = (
+  channelId: string,
+  userId: string,
+  meta: { displayName?: string; username?: string },
+) => Promise<{ userId: string; isNew: boolean }>;
+
 export function createDiscordPlugin(
   config: DiscordConfig,
+  opts?: { createUser?: CreateUserFn },
 ): AionimaChannelPlugin & { __client: Client; __config: DiscordConfig } {
   if (!isDiscordConfig(config)) {
     throw new Error("Invalid Discord config: botToken is required");
@@ -321,8 +331,28 @@ export function createDiscordPlugin(
     if (msg.author.bot) return;
 
     // Guild and channel scope checks
-    if (!isGuildAllowed(msg.guildId, config.allowedGuildIds)) return;
-    if (!isChannelAllowed(msg.channelId, config.allowedChannelIds)) return;
+    if (!isGuildAllowed(msg.guildId, normalizeDiscordArrayField(config.allowedGuildIds))) return;
+    if (!isChannelAllowed(msg.channelId, normalizeDiscordArrayField(config.allowedChannelIds))) return;
+
+    // Role allowlist — guild messages only (DMs bypass the role check)
+    const allowedRoleIds = normalizeDiscordArrayField(config.allowedRoleIds);
+    if (allowedRoleIds.length > 0 && msg.guildId !== null && msg.guild) {
+      const member = await msg.guild.members.fetch(msg.author.id).catch(() => null);
+      const memberRoleIds = member ? [...member.roles.cache.keys()] : [];
+      if (!isRoleAllowed(memberRoleIds, allowedRoleIds)) {
+        // Send a DM explaining access is restricted
+        try {
+          const dm = await msg.author.createDM();
+          await dm.send(
+            "You don't have the required role to speak to Aionima in this server. " +
+              "Contact a server administrator if you believe this is an error.",
+          );
+        } catch {
+          // DMs may be disabled — best-effort only
+        }
+        return;
+      }
+    }
 
     // Mention filter: in guild channels, only respond to @mentions or replies
     const mentionOnly = config.mentionOnly ?? true;
@@ -344,6 +374,14 @@ export function createDiscordPlugin(
 
     const normalized = normalizeMessage(msg);
     if (normalized === null) return;
+
+    // On-message user registration — ensure sender has a pending AGI account
+    if (opts?.createUser) {
+      await opts.createUser("discord", msg.author.id, {
+        displayName: buildDisplayName(msg),
+        username: msg.author.username,
+      }).catch(() => { /* non-critical — DB errors must not block message delivery */ });
+    }
 
     await messageHandler(normalized);
   });
@@ -439,6 +477,38 @@ export function createDiscordPlugin(
         "[discord] applicationId not configured — slash commands will not be registered",
       );
     }
+
+    // Proactive member sync — register all guild members with allowed roles
+    // as pending AGI user accounts so they appear in Settings → Users before
+    // they ever send a message.
+    if (opts?.createUser) {
+      const createUser = opts.createUser;
+      const allowedRoleIds = normalizeDiscordArrayField(config.allowedRoleIds);
+      void (async () => {
+        for (const guild of client.guilds.cache.values()) {
+          try {
+            const members = await guild.members.fetch();
+            for (const member of members.values()) {
+              if (member.user.bot) continue;
+              if (
+                allowedRoleIds.length > 0 &&
+                !isRoleAllowed([...member.roles.cache.keys()], allowedRoleIds)
+              ) continue;
+              await createUser("discord", member.user.id, {
+                displayName: member.displayName,
+                username: member.user.username,
+              }).catch(() => { /* non-critical per member */ });
+            }
+          } catch (err) {
+            console.warn(
+              `[discord] proactive member sync failed for guild ${guild.name}:`,
+              err instanceof Error ? err.message : String(err),
+            );
+          }
+        }
+        console.log("[discord] proactive member sync complete");
+      })();
+    }
   });
 
   const security = createSecurityAdapter({
@@ -533,8 +603,10 @@ export default {
   async activate(api: AionimaPluginAPI): Promise<void> {
     const channelConfig = api.getChannelConfig("discord");
     if (!channelConfig?.enabled) return;
+    const createUser = api.getOrCreateChannelUser?.bind(api);
     const plugin = createDiscordPlugin(
       channelConfig.config as unknown as DiscordConfig,
+      createUser ? { createUser } : undefined,
     );
     api.registerChannel(plugin);
 

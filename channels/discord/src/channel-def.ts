@@ -40,7 +40,6 @@
 import {
   Client,
   Events,
-  GatewayIntentBits,
   TextChannel,
   type Channel,
   type Message,
@@ -144,19 +143,11 @@ function adaptBridgeTools(client: Client, config: DiscordConfig): ChannelBridgeT
 // Protocol implementation
 // ---------------------------------------------------------------------------
 
-function buildProtocol(config: DiscordConfig, _ctx: ChannelContext): ChannelProtocol {
-  // One client per channel definition activation (matches legacy plugin
-  // semantics). The protocol stays alive until stop().
-  const client = new Client({
-    intents: [
-      GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent,
-      GatewayIntentBits.DirectMessages,
-      GatewayIntentBits.GuildMembers,
-      GatewayIntentBits.GuildPresences,
-    ],
-  });
+function buildProtocol(config: DiscordConfig, client: Client, _ctx: ChannelContext): ChannelProtocol {
+  // Reuses the Client created by createDiscordPlugin() so there is exactly ONE
+  // discord.js connection per bot token. GuildPresences removed — privileged
+  // intent requiring explicit opt-in in the developer portal; the legacy client
+  // (createDiscordPlugin) doesn't request it for the same reason.
 
   const eventHandlers: Array<(e: ChannelEvent) => void> = [];
 
@@ -307,12 +298,12 @@ function buildProtocol(config: DiscordConfig, _ctx: ChannelContext): ChannelProt
  */
 const StubSettingsPage = () => null;
 
-export function createDiscordChannelDefV2(config: DiscordConfig): ChannelDefinition {
+export function createDiscordChannelDefV2(config: DiscordConfig, client: Client): ChannelDefinition {
   return defineChannelV2({
     id: DISCORD_CHANNEL_ID,
     displayName: "Discord",
     icon: undefined,
-    createProtocol: (ctx) => buildProtocol(config, ctx),
+    createProtocol: (ctx) => buildProtocol(config, client, ctx),
     SettingsPage: StubSettingsPage as unknown as ChannelDefinition["SettingsPage"],
     bridgeTools: [], // populated at activation time when the live Client exists
     readPolicy: {
@@ -338,7 +329,7 @@ export function createDiscordChannelDefV2WithTools(
     id: DISCORD_CHANNEL_ID,
     displayName: "Discord",
     icon: undefined,
-    createProtocol: (ctx) => buildProtocol(config, ctx),
+    createProtocol: (ctx) => buildProtocol(config, client, ctx),
     SettingsPage: StubSettingsPage as unknown as ChannelDefinition["SettingsPage"],
     bridgeTools: adaptBridgeTools(client, config),
     readPolicy: {

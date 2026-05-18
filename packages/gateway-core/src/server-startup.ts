@@ -102,6 +102,46 @@ function scheduleChannelRestart(
   }, delayMs);
 }
 
+/**
+ * v2 protocol restart with exponential backoff. Mirrors scheduleChannelRestart()
+ * for the v2 ChannelProtocol lifecycle. `startFn` is a closure that creates a
+ * fresh protocol, starts it, and registers the event handler — it is called on
+ * every attempt so a new Client.login() is triggered after the previous one failed.
+ */
+function scheduleV2ChannelRestart(
+  channelId: string,
+  startFn: () => Promise<void>,
+  attempt: number,
+  log: ComponentLogger,
+): void {
+  if (attempt >= BACKOFF_MAX_ATTEMPTS) {
+    log.error(
+      `[v2] channel "${channelId}" exceeded max restart attempts (${String(BACKOFF_MAX_ATTEMPTS)}) — giving up`,
+    );
+    return;
+  }
+
+  const delayMs = computeBackoffDelay(attempt);
+  const delaySec = Math.round(delayMs / 1000);
+
+  log.warn(
+    `[v2] channel "${channelId}" restart attempt ${String(attempt + 1)}/${String(BACKOFF_MAX_ATTEMPTS)} in ${String(delaySec)}s`,
+  );
+
+  setTimeout(() => {
+    startFn()
+      .then(() => {
+        log.info(`[v2] channel "${channelId}" restarted on attempt ${String(attempt + 1)}`);
+      })
+      .catch((err: unknown) => {
+        log.error(
+          `[v2] channel "${channelId}" restart attempt ${String(attempt + 1)} failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        scheduleV2ChannelRestart(channelId, startFn, attempt + 1, log);
+      });
+  }, delayMs);
+}
+
 // ---------------------------------------------------------------------------
 // Webhook mounting helper
 // ---------------------------------------------------------------------------
@@ -372,73 +412,79 @@ export async function startGatewaySidecars(
         }),
       };
 
-      try {
+      // Inbound event handler — built once, reused across restarts.
+      const onV2Event = (event: ChannelEvent): void => {
+        if (event.kind !== "message") return;
+        const msg = event.message;
+        const aionimaMsg: AionimaMessage = {
+          id: msg.messageId,
+          channelId: def.id as AionimaMessage["channelId"],
+          channelUserId: msg.authorId,
+          timestamp: msg.sentAt,
+          content: { type: "text", text: msg.text },
+          replyTo: msg.replyToMessageId,
+          threadId: msg.threadRootMessageId,
+          // CHN-B (s163) slice 6 — attachments flow via metadata since
+          // MessageContent has no multi-attachment variant yet.
+          metadata: {
+            roomId: msg.roomId,
+            mentionsBot: msg.mentionsBot,
+            ...(msg.attachments !== undefined && msg.attachments.length > 0
+              ? { attachments: msg.attachments }
+              : {}),
+          },
+        };
+        const preview = msg.text.slice(0, 80);
+        log.info(`[v2 inbound] ${def.id}: message from ${msg.authorId} in ${msg.roomId} — "${preview}"`);
+        inboundRouter.route(aionimaMsg).then((result) => {
+          if (result === null) {
+            log.info(`[v2 inbound] ${def.id}: handled inline`);
+            return;
+          }
+          log.info(`[v2 inbound] ${def.id}: routed → entity=${result.entityId} queue=${result.queueMessageId}`);
+
+          // CHN-F (s167) slice 2 — workflow binding dispatch.
+          if (channelWorkflowBindingStore !== undefined && onWorkflowMatch !== undefined) {
+            const roomId = typeof aionimaMsg.metadata === "object" && aionimaMsg.metadata !== null
+              ? (aionimaMsg.metadata as Record<string, unknown>)["roomId"] as string | undefined
+              : undefined;
+            const messageText = aionimaMsg.content.type === "text"
+              ? (aionimaMsg.content as { type: "text"; text: string }).text
+              : undefined;
+            const matched = channelWorkflowBindingStore.match({
+              channelId: def.id,
+              roomId,
+              roles: [],  // CHN-E (s166) wires entity roles; empty = role-id bindings skip for now
+              messageText,
+            });
+            if (matched.length > 0) {
+              log.info(`[workflow] ${def.id}: ${String(matched.length)} binding(s) matched (mappIds: ${matched.map((b) => b.mappId).join(", ")})`);
+              onWorkflowMatch(matched, aionimaMsg, result.entityId);
+            }
+          }
+        }).catch((err: unknown) => {
+          log.error(`[v2 inbound] ${def.id}: routing error: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      };
+
+      // startAndWire: create a fresh protocol, log in, register the event handler.
+      // Extracted so scheduleV2ChannelRestart can call the same logic on retry.
+      const startAndWireV2 = async (): Promise<void> => {
         const protocol = def.createProtocol(ctx);
         const handle = await protocol.start();
         v2StopHandles.set(def.id, handle.stop);
-        channelsStarted.push(def.id);
-
-        // Bridge v2 ChannelEvent → AionimaMessage → InboundRouter
-        protocol.onEvent((event: ChannelEvent) => {
-          if (event.kind !== "message") return;
-          const msg = event.message;
-          const aionimaMsg: AionimaMessage = {
-            id: msg.messageId,
-            channelId: def.id as AionimaMessage["channelId"],
-            channelUserId: msg.authorId,
-            timestamp: msg.sentAt,
-            content: { type: "text", text: msg.text },
-            replyTo: msg.replyToMessageId,
-            threadId: msg.threadRootMessageId,
-            // CHN-B (s163) slice 6 — attachments flow via metadata since
-            // MessageContent has no multi-attachment variant yet.
-            metadata: {
-              roomId: msg.roomId,
-              mentionsBot: msg.mentionsBot,
-              ...(msg.attachments !== undefined && msg.attachments.length > 0
-                ? { attachments: msg.attachments }
-                : {}),
-            },
-          };
-          const preview = msg.text.slice(0, 80);
-          log.info(`[v2 inbound] ${def.id}: message from ${msg.authorId} in ${msg.roomId} — "${preview}"`);
-          inboundRouter.route(aionimaMsg).then((result) => {
-            if (result === null) {
-              log.info(`[v2 inbound] ${def.id}: handled inline`);
-              return;
-            }
-            log.info(`[v2 inbound] ${def.id}: routed → entity=${result.entityId} queue=${result.queueMessageId}`);
-
-            // CHN-F (s167) slice 2 — workflow binding dispatch.
-            // After routing completes, check for channel-workflow bindings that
-            // match this event. Caller (server.ts) owns executor logic via callback.
-            if (channelWorkflowBindingStore !== undefined && onWorkflowMatch !== undefined) {
-              const roomId = typeof aionimaMsg.metadata === "object" && aionimaMsg.metadata !== null
-                ? (aionimaMsg.metadata as Record<string, unknown>)["roomId"] as string | undefined
-                : undefined;
-              const messageText = aionimaMsg.content.type === "text"
-                ? (aionimaMsg.content as { type: "text"; text: string }).text
-                : undefined;
-              const matched = channelWorkflowBindingStore.match({
-                channelId: def.id,
-                roomId,
-                roles: [],  // CHN-E (s166) wires entity roles; empty = role-id bindings skip for now
-                messageText,
-              });
-              if (matched.length > 0) {
-                log.info(`[workflow] ${def.id}: ${String(matched.length)} binding(s) matched (mappIds: ${matched.map((b) => b.mappId).join(", ")})`);
-                onWorkflowMatch(matched, aionimaMsg, result.entityId);
-              }
-            }
-          }).catch((err: unknown) => {
-            log.error(`[v2 inbound] ${def.id}: routing error: ${err instanceof Error ? err.message : String(err)}`);
-          });
-        });
-
+        protocol.onEvent(onV2Event);
         log.info(`[v2] channel "${def.id}" started`);
+      };
+
+      try {
+        await startAndWireV2();
+        channelsStarted.push(def.id);
       } catch (err) {
         log.error(`[v2] failed to start "${def.id}": ${err instanceof Error ? err.message : String(err)}`);
         channelsSkipped.push(def.id);
+        // Schedule backoff retry — same pattern as legacy scheduleChannelRestart()
+        scheduleV2ChannelRestart(def.id, startAndWireV2, 0, channelLog);
       }
     }
   }

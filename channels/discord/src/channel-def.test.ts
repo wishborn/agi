@@ -11,6 +11,7 @@
  * expected shape.
  */
 import { describe, it, expect } from "vitest";
+import type { Client } from "discord.js";
 import { createDiscordChannelDefV2 } from "./channel-def.js";
 import { classifyAttachmentMime } from "./normalizer.js";
 import type { DiscordConfig } from "./config.js";
@@ -22,15 +23,31 @@ function makeConfig(): DiscordConfig {
   };
 }
 
+// Minimal stub — enough for buildProtocol's synchronous client.on() calls.
+// Real discord.js login/network calls are not exercised in host unit tests.
+function makeClientStub(): Client {
+  const stub = {
+    on: () => stub,
+    once: () => stub,
+    guilds: { cache: new Map() },
+    channels: { fetch: async () => null },
+    users: { fetch: async () => null },
+    user: null,
+    login: async () => "",
+    destroy: () => undefined,
+  };
+  return stub as unknown as Client;
+}
+
 describe("createDiscordChannelDefV2 — contract conformance", () => {
   it("builds without throwing", () => {
-    const def = createDiscordChannelDefV2(makeConfig());
+    const def = createDiscordChannelDefV2(makeConfig(), makeClientStub());
     expect(def.id).toBe("discord");
     expect(def.displayName).toBe("Discord");
   });
 
   it("declares the expected privileged intents in readPolicy", () => {
-    const def = createDiscordChannelDefV2(makeConfig());
+    const def = createDiscordChannelDefV2(makeConfig(), makeClientStub());
     expect(def.readPolicy.nativeIntents).toContain("Guilds");
     expect(def.readPolicy.nativeIntents).toContain("GuildMessages");
     expect(def.readPolicy.nativeIntents).toContain("MessageContent");
@@ -39,19 +56,19 @@ describe("createDiscordChannelDefV2 — contract conformance", () => {
   });
 
   it("declares roles as default-on, presence/messages as default-off", () => {
-    const def = createDiscordChannelDefV2(makeConfig());
+    const def = createDiscordChannelDefV2(makeConfig(), makeClientStub());
     expect(def.readPolicy.canReadRoles.defaultOn).toBe(true);
     expect(def.readPolicy.canReadAllMessages.defaultOn).toBe(false);
     expect(def.readPolicy.canReadPresence.defaultOn).toBe(false);
   });
 
   it("ships zero bridge tools in the no-Client variant (tools added at activation)", () => {
-    const def = createDiscordChannelDefV2(makeConfig());
+    const def = createDiscordChannelDefV2(makeConfig(), makeClientStub());
     expect(def.bridgeTools).toEqual([]);
   });
 
   it("createProtocol returns a ChannelProtocol with all 9 required methods", () => {
-    const def = createDiscordChannelDefV2(makeConfig());
+    const def = createDiscordChannelDefV2(makeConfig(), makeClientStub());
     const protocol = def.createProtocol({
       config: {},
       logger: { info: () => undefined, warn: () => undefined, error: () => undefined },

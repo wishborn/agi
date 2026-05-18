@@ -891,6 +891,20 @@ export interface AionimaPluginAPI {
   registerMcpServerTemplate(def: McpServerTemplate): void;
   registerScanProvider(def: ScanProviderDefinition): void;
   registerWorker(def: WorkerDefinition): void;
+  /**
+   * Create or look up a channel-originated user account. Called by channel
+   * plugins (e.g., Discord) to register members as pending AGI users without
+   * requiring direct DB access from the plugin. `channelId` is the plugin's
+   * channel identifier (e.g., "discord"). `userId` is the platform-native ID.
+   * Returns the internal AGI user ID and whether the row was newly created.
+   * Optional — only wired when the gateway supplies a `createChannelUser`
+   * callback in `PluginLoaderDeps`.
+   */
+  getOrCreateChannelUser?: (
+    channelId: string,
+    userId: string,
+    meta: { displayName?: string; username?: string },
+  ) => Promise<{ userId: string; isNew: boolean }>;
   getChannelConfig(channelId: string): { enabled: boolean; config: Record<string, unknown> } | undefined;
   getConfig(): Record<string, unknown>;
   getLogger(): ComponentLogger;

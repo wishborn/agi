@@ -697,6 +697,16 @@ export default function SettingsChannelsPage() {
           the conversation history as chat bubbles (inbound left, outbound right) with pagination.
           Backend: GET /api/channels/:id/ops-log backed by an in-process log ring buffer.
         </DevNote.Item>
+        <DevNote.Item kind="info" heading="Discord reconnect + role access control + member registration">
+          Three Discord improvements shipped together: (1) Discord now auto-reconnects after
+          an AGI upgrade — the v2 channel protocol reuses the single shared discord.js Client
+          (no more privileged-intent login failure) and gateway-core schedules exponential-backoff
+          retries on start failure. (2) New &quot;Allowed Role Ids&quot; config field
+          (comma-separated) — members without a matching role receive a DM and are blocked.
+          (3) All guild members with an allowed role are auto-registered as pending AGI user
+          accounts on every bot start; message senders are registered on first contact. Users
+          appear in Settings → Users and can claim their dashboard access later.
+        </DevNote.Item>
       </DevNote>
 
       {fetchError ? (

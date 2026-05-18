@@ -46,6 +46,8 @@ function resolveAgiVersion(selfRepoPath: string | undefined): string {
 import { EntityStore, MessageQueue, CommsLog, NotificationStore, IncidentStore, VendorStore, SessionStore as ComplianceSessionStore, ConsentStore, UsageStore } from "@agi/entity-model";
 import type { Entity } from "@agi/entity-model";
 import { createDbClient, waitForDb } from "@agi/db-schema/client";
+import { users } from "@agi/db-schema";
+import { eq } from "drizzle-orm";
 import { BackupManager } from "./backup-manager.js";
 import { registerComplianceRoutes } from "./compliance-api.js";
 import { registerSecurityRoutes } from "./security-api.js";
@@ -1609,6 +1611,41 @@ export async function startGatewayServer(
   }
 
   const pluginPrefs = (config as Record<string, unknown>).plugins as Record<string, { enabled?: boolean; priority?: number }> | undefined;
+
+  // Upsert a channel-originated user into the users table. Called by channel
+  // plugins (e.g., Discord) via api.getOrCreateChannelUser(). The principal
+  // is channel:userId (e.g., "discord:123456789") which is unique per channel
+  // platform user. The username is channel_userId to avoid collisions.
+  // Defined at the outer function scope so it is available in all loadPlugins
+  // call sites including the hot-reload callbacks registered later.
+  const createChannelUser = async (
+    channelId: string,
+    userId: string,
+    meta: { displayName?: string; username?: string },
+  ): Promise<{ userId: string; isNew: boolean }> => {
+    const principal = `${channelId}:${userId}`;
+    const username = `${channelId}_${userId}`;
+    const id = ulid();
+    const [inserted] = await db
+      .insert(users)
+      .values({
+        id,
+        authBackend: "virtual",
+        principal,
+        username,
+        displayName: meta.displayName ?? meta.username,
+      })
+      .onConflictDoNothing({ target: [users.authBackend, users.principal] })
+      .returning({ id: users.id });
+    if (inserted) return { userId: inserted.id, isNew: true };
+    const [existing] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.principal, principal))
+      .limit(1);
+    return { userId: existing?.id ?? id, isNew: false };
+  };
+
   {
     for (const err of discovered.errors) {
       log.warn(`plugin discovery: ${err.path} — ${err.error}`);
@@ -1675,6 +1712,7 @@ export async function startGatewayServer(
         channelRegistry,
         channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
         circuitBreaker: circuitBreakerTracker,
+        createChannelUser,
       });
       log.info(`plugins: ${String(result.loaded.length)} loaded, ${String(result.failed.length)} failed`);
       if (discovered.plugins.length > enabledPlugins.length) {
@@ -1734,6 +1772,7 @@ export async function startGatewayServer(
                       channelRegistry,
                       channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
                       circuitBreaker: circuitBreakerTracker,
+                      createChannelUser,
                     });
                     bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
                     // Retry provider creation now that the plugin is loaded
@@ -3135,6 +3174,7 @@ export async function startGatewayServer(
             channelRegistry,
             channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
             circuitBreaker: circuitBreakerTracker,
+            createChannelUser,
           });
           if (result.loaded.length > 0) {
             // Bridge newly registered capabilities and sync stacks to the registry
@@ -3179,6 +3219,7 @@ export async function startGatewayServer(
             channelRegistry,
             channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
             circuitBreaker: circuitBreakerTracker,
+            createChannelUser,
           }, { bustCache: true });
           if (result.loaded.length > 0) {
             bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
@@ -3260,6 +3301,7 @@ export async function startGatewayServer(
             channelRegistry,
             channelConfigs: freshChannelConfigs,
             circuitBreaker: circuitBreakerTracker,
+            createChannelUser,
           });
           if (result.loaded.length > 0) {
             bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
