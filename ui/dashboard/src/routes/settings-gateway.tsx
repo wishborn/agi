@@ -87,10 +87,12 @@ export default function SettingsGatewayPage() {
       />
 
       {/* Tab bar */}
-      <div className="flex gap-1 mb-6 border-b border-border">
+      <div role="tablist" className="flex gap-1 mb-6 border-b border-border">
         {tabs.map((tab) => (
           <button
             key={tab.id}
+            role="tab"
+            aria-selected={activeTab === tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={cn(
               "px-4 py-2 text-[13px] font-medium border-b-2 transition-colors cursor-pointer bg-transparent",

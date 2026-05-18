@@ -27,18 +27,19 @@ test.describe("Gateway Settings", () => {
   // Providers tab removed from /settings/gateway at cycle 135 — lives at /settings/providers.
   test("tab bar renders four tab buttons (General, Identity, Contributing, Network)", async ({ page }) => {
     await page.goto("/settings/gateway");
-    await expect(page.getByRole("button", { name: "General" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Identity" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Contributing" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Network" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Providers" })).toHaveCount(0);
+    const tablist = page.getByRole("tablist");
+    await expect(tablist.getByRole("tab", { name: "General" })).toBeVisible();
+    await expect(tablist.getByRole("tab", { name: "Identity" })).toBeVisible();
+    await expect(tablist.getByRole("tab", { name: "Contributing" })).toBeVisible();
+    await expect(tablist.getByRole("tab", { name: "Network" })).toBeVisible();
+    await expect(tablist.getByRole("tab", { name: "Providers" })).toHaveCount(0);
   });
 
   test("General tab is active by default and shows content", async ({ page }) => {
     await page.goto("/settings/gateway");
     // General tab renders GatewayNetworkSettings with section="general"
     // which shows gateway host/port fields
-    await expect(page.getByRole("button", { name: "General" })).toBeVisible();
+    await expect(page.getByRole("tablist").getByRole("tab", { name: "General" })).toBeVisible();
     // Page should have rendered tab content without error
     await expect(page).toHaveURL("/settings/gateway");
   });
@@ -56,7 +57,7 @@ test.describe("Gateway Settings", () => {
 
   test("Identity tab shows owner settings content", async ({ page }) => {
     await page.goto("/settings/gateway");
-    await page.getByRole("button", { name: "Identity" }).click();
+    await page.getByRole("tablist").getByRole("tab", { name: "Identity" }).click();
     // OwnerSettings and IdentitySettings are rendered inside the Identity tab
     // Both exist in the DOM after clicking the tab
     await expect(page).toHaveURL("/settings/gateway");
@@ -67,24 +68,25 @@ test.describe("Gateway Settings", () => {
 
   test("Contributing tab shows Dev settings content", async ({ page }) => {
     await page.goto("/settings/gateway");
-    await page.getByRole("button", { name: "Contributing" }).click();
+    await page.getByRole("tablist").getByRole("tab", { name: "Contributing" }).click();
     // DevSettings component is rendered — page stays on settings
     await expect(page).toHaveURL("/settings/gateway");
   });
 
   test("Network tab shows network configuration content", async ({ page }) => {
     await page.goto("/settings/gateway");
-    await page.getByRole("button", { name: "Network" }).click();
-    // GatewayNetworkSettings with section="network" renders update-channel UI
-    await expect(page.getByText(/update.*channel|channel.*update|release.*channel/i).first()).toBeVisible({ timeout: 10000 });
+    await page.getByRole("tablist").getByRole("tab", { name: "Network" }).click();
+    // GatewayNetworkSettings with section="network" renders Cloudflare Tunnel + Machine IP
+    await expect(page.getByText(/cloudflare.*tunnel|tunnel.*cloudflare|machine.*ip/i).first()).toBeVisible({ timeout: 10000 });
   });
 
   test("switching between tabs keeps the page at /settings/gateway", async ({ page }) => {
     await page.goto("/settings/gateway");
     // Providers tab removed at cycle 135; remaining tabs: Identity, Contributing, Network, General
     const tabSequence = ["Identity", "Contributing", "Network", "General"];
+    const tablist = page.getByRole("tablist");
     for (const tabName of tabSequence) {
-      await page.getByRole("button", { name: tabName }).click();
+      await tablist.getByRole("tab", { name: tabName }).click();
       await expect(page).toHaveURL("/settings/gateway");
     }
   });
