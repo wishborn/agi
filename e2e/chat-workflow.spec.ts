@@ -34,7 +34,7 @@ test.describe("Chat workflow", () => {
 
   test("chat flyout opens via project 'Talk about this project' button", async ({ page }) => {
     await page.goto("/projects");
-    await page.waitForTimeout(1000);
+    await page.waitForLoadState("networkidle");
     const cards = page.getByTestId("project-card");
     const cardCount = await cards.count();
     test.skip(cardCount === 0, "no projects available in this environment");
@@ -50,7 +50,7 @@ test.describe("Chat workflow", () => {
 
   test("project chat re-opens after close (Phase 4b: prevContextRef reset)", async ({ page }) => {
     await page.goto("/projects");
-    await page.waitForTimeout(1000);
+    await page.waitForLoadState("networkidle");
     const cards = page.getByTestId("project-card");
     const cardCount = await cards.count();
     test.skip(cardCount === 0, "no projects available in this environment");

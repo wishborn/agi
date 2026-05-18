@@ -423,7 +423,7 @@ export class OllamaProvider implements LLMProvider {
           (err.message.includes("ECONNREFUSED") || err.message.includes("fetch failed"))
         ) {
           throw new Error(
-            `Ollama isn't responding yet. It may be reloading the model — try again in a moment. If it keeps failing, check that Ollama is running at ${baseUrl}.`,
+            `Ollama isn't responding yet. It may be reloading the model — try again in a moment. If it keeps failing, run \`ollama serve\` to start Ollama (expected at ${baseUrl}).`,
           );
         }
 
