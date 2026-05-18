@@ -10,9 +10,8 @@
  * NOT per-message — intentionally batched for performance.
  */
 
-import type { GatewayState } from "@agi/gateway-core";
-
 import type {
+  GatewayState,
   MemoryProvider,
   MemoryEntry,
   MemoryQueryParams,

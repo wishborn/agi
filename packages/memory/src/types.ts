@@ -5,7 +5,14 @@
  * Cognee (ONLINE) with file fallback (.aionima/.mem/).
  */
 
-import type { GatewayState } from "@agi/gateway-core";
+// ---------------------------------------------------------------------------
+// GatewayState — inlined to avoid a circular dep with @agi/gateway-core.
+// gateway-core imports @agi/memory; memory must not import back. The union
+// is structurally compatible with the gateway-core export.
+// ---------------------------------------------------------------------------
+
+/** Gateway operational state — mirrors GatewayState in @agi/gateway-core. */
+export type GatewayState = "ONLINE" | "LIMBO" | "OFFLINE" | "UNKNOWN";
 
 // ---------------------------------------------------------------------------
 // Memory entry

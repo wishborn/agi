@@ -7,7 +7,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@agi/gateway-core": "workspace:*",
     "@agi/sdk": "workspace:*"
   }
 }
