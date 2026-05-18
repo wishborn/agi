@@ -31,6 +31,13 @@ import { Copy as CopyIcon, Check as CheckIcon } from "lucide-react";
 import { PlansDrawer } from "./PlansDrawer.js";
 
 // ---------------------------------------------------------------------------
+// Session persistence — localStorage keys for browser-refresh restore
+// ---------------------------------------------------------------------------
+
+const LS_SESSIONS_KEY = "agi_open_sessions_v1";
+const LS_ACTIVE_KEY = "agi_active_session_v1";
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -320,6 +327,9 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingContextRef = useRef<string | null>(null);
   const pendingMessageRef = useRef<string | null>(null);
+  // Tracks sessions still awaiting chat:opened during a localStorage restore.
+  // Non-zero value suppresses auto-create-session and defers setActiveSessionId.
+  const pendingRestoreCountRef = useRef(0);
 
   // Scroll refs
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -555,6 +565,19 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
         deferredCreateRef.current = false;
         ws.send(JSON.stringify({ type: "chat:open", payload: { context: "general" } }));
       }
+      // Restore sessions from pre-refresh localStorage snapshot.
+      // Only fires if no sessions are already open (i.e. fresh page load, not reconnect).
+      if (sessionsRef.current.length === 0) {
+        try {
+          const saved = JSON.parse(localStorage.getItem(LS_SESSIONS_KEY) ?? "[]") as Array<{ id: string; context: string }>;
+          if (saved.length > 0) {
+            pendingRestoreCountRef.current = saved.length;
+            for (const s of saved) {
+              ws.send(JSON.stringify({ type: "chat:open", payload: { sessionId: s.id, context: s.context } }));
+            }
+          }
+        } catch { /* noop */ }
+      }
       // Start heartbeat. Every tick we ping; if we haven't seen a pong within
       // HEARTBEAT_TIMEOUT_MS we declare the WS dead and force-close it so the
       // reconnect path runs (ws.onclose -> 3s reconnect timer -> new WS).
@@ -643,7 +666,18 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                 queuedMessages: [],
               }];
             });
-            setActiveSessionId(p.sessionId);
+            // During a localStorage restore, hold off on activating each session
+            // individually — wait until the last one arrives, then activate the
+            // previously-active session. For non-restore opens, activate immediately.
+            if (pendingRestoreCountRef.current > 0) {
+              pendingRestoreCountRef.current -= 1;
+              if (pendingRestoreCountRef.current === 0) {
+                const savedActive = localStorage.getItem(LS_ACTIVE_KEY);
+                setActiveSessionId(savedActive ?? p.sessionId);
+              }
+            } else {
+              setActiveSessionId(p.sessionId);
+            }
 
             // Auto-send pending message from "Fix this" (or similar pre-loaded context)
             const pendingMsg = pendingMessageRef.current;
@@ -1149,12 +1183,21 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     }
   }, [activeSession?.messages, activeSession?.thinking, autoScroll]);
 
-  // Create first session on open if none exist (skip when openWithContext will handle it)
+  // Create first session on open if none exist (skip when openWithContext or localStorage restore will handle it)
   useEffect(() => {
-    if (open && sessions.length === 0 && !openWithContext && !pendingContextRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
+    if (open && sessions.length === 0 && !openWithContext && !pendingContextRef.current && pendingRestoreCountRef.current === 0 && wsRef.current?.readyState === WebSocket.OPEN) {
       createSession();
     }
   }, [open, sessions.length, openWithContext, createSession]);
+
+  // Persist open sessions to localStorage so browser refresh can restore them.
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_SESSIONS_KEY, JSON.stringify(sessions.map((s) => ({ id: s.id, context: s.context }))));
+      if (activeSessionId) localStorage.setItem(LS_ACTIVE_KEY, activeSessionId);
+      else localStorage.removeItem(LS_ACTIVE_KEY);
+    } catch { /* storage quota — non-fatal */ }
+  }, [sessions, activeSessionId]);
 
   // Open with context — create a session scoped to a specific project
   const prevContextRef = useRef<string | null>(null);
