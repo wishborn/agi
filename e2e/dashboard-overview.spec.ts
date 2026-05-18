@@ -22,17 +22,18 @@ test.describe("Dashboard Overview", () => {
 
   test("overview page renders Usage & Cost tab by default", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByRole("button", { name: "Usage & Cost" })).toBeVisible();
+    // Tabs.Tab from react-fancy renders with role="tab", not role="button"
+    await expect(page.getByRole("tab", { name: "Usage & Cost" })).toBeVisible();
   });
 
   test("overview page renders Impactinomics tab", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByRole("button", { name: "Impactinomics" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Impactinomics" })).toBeVisible();
   });
 
   test("switching to Impactinomics tab stays on root route", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("button", { name: "Impactinomics" }).click();
+    await page.getByRole("tab", { name: "Impactinomics" }).click();
     await expect(page).toHaveURL("/");
   });
 
@@ -89,13 +90,15 @@ test.describe("Dashboard Overview", () => {
 
   test("COA Explorer nav item navigates to /coa", async ({ page }) => {
     await page.goto("/");
-    await page.getByTestId("nav-impactinomics-coa-explorer").click();
+    // Sidebar.Item doesn't forward data-testid to DOM — use button name
+    await page.getByTestId("app-sidebar").getByRole("button", { name: "COA Explorer" }).click();
     await expect(page).toHaveURL("/coa");
   });
 
   test("overview nav item is active on root route", async ({ page }) => {
     await page.goto("/");
-    const overviewLink = page.getByTestId("nav-impactinomics-overview");
-    await expect(overviewLink).toHaveClass(/bg-primary/);
+    const sidebar = page.getByTestId("app-sidebar");
+    // react-fancy SidebarItem sets aria-current="page" when active={true}
+    await expect(sidebar.getByRole("button", { name: "Dashboard" })).toHaveAttribute("aria-current", "page");
   });
 });
