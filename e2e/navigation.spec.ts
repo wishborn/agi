@@ -15,29 +15,32 @@ test.describe("Sidebar Navigation", () => {
     const sidebar = page.getByTestId("app-sidebar");
     await expect(sidebar).toBeVisible();
 
-    // Sidebar.Group renders section labels as paragraph elements, not .uppercase divs
-    await expect(sidebar.getByText("Overview")).toBeVisible();
-    await expect(sidebar.getByText("Projects")).toBeVisible();
-    await expect(sidebar.getByText("MagicApps")).toBeVisible();
-    await expect(sidebar.getByText("Communication")).toBeVisible();
-    await expect(sidebar.getByText("Knowledge")).toBeVisible();
+    // Sidebar.Group renders section labels as <p class="...uppercase..."> elements.
+    // Use locator("p.uppercase") to target section headers specifically — avoids
+    // substring collisions where nav items share words with section titles.
+    await expect(sidebar.locator("p.uppercase", { hasText: "Overview" })).toBeVisible();
+    await expect(sidebar.locator("p.uppercase", { hasText: "Projects" })).toBeVisible();
+    await expect(sidebar.locator("p.uppercase", { hasText: "MagicApps" })).toBeVisible();
+    await expect(sidebar.locator("p.uppercase", { hasText: "Communication" })).toBeVisible();
+    await expect(sidebar.locator("p.uppercase", { hasText: "Knowledge" })).toBeVisible();
 
     // Admin sections must not appear in main mode
-    await expect(sidebar.getByText("Gateway")).toHaveCount(0);
-    await expect(sidebar.getByText("System")).toHaveCount(0);
+    await expect(sidebar.locator("p.uppercase", { hasText: "Gateway" })).toHaveCount(0);
+    await expect(sidebar.locator("p.uppercase", { hasText: "System" })).toHaveCount(0);
   });
 
   test("admin mode shows admin sections when at admin URL", async ({ page }) => {
     await page.goto("/gateway/logs");
     const sidebar = page.getByTestId("app-sidebar");
 
-    await expect(sidebar.getByText("Marketplace")).toBeVisible();
-    await expect(sidebar.getByText("Gateway")).toBeVisible();
-    await expect(sidebar.getByText("System")).toBeVisible();
+    await expect(sidebar.locator("p.uppercase", { hasText: "Marketplace" })).toBeVisible();
+    await expect(sidebar.locator("p.uppercase", { hasText: "Gateway" })).toBeVisible();
+    await expect(sidebar.locator("p.uppercase", { hasText: "System" })).toBeVisible();
 
-    // Main sections not visible in admin mode
-    await expect(sidebar.getByText("Projects")).toHaveCount(0);
-    await expect(sidebar.getByText("MagicApps")).toHaveCount(0);
+    // Main-mode section labels absent in admin mode (MagicApps still appears as
+    // a nav item under Marketplace, but NOT as a section label <p.uppercase>)
+    await expect(sidebar.locator("p.uppercase", { hasText: "Projects" })).toHaveCount(0);
+    await expect(sidebar.locator("p.uppercase", { hasText: "MagicApps" })).toHaveCount(0);
   });
 
   test("clicking main-mode nav items navigates correctly", async ({ page }) => {
@@ -64,16 +67,16 @@ test.describe("Sidebar Navigation", () => {
     await sidebar.getByRole("button", { name: "Admin" }).click();
     await expect(page).toHaveURL("/admin");
     await expect(sidebar.getByText("Gateway")).toBeVisible();
-    await expect(sidebar.getByRole("button", { name: "Back" })).toBeVisible();
+    await expect(sidebar.getByRole("button", { name: "Back", exact: true })).toBeVisible();
   });
 
   test("Back button from admin mode returns to main mode", async ({ page }) => {
     await page.goto("/admin");
     const sidebar = page.getByTestId("app-sidebar");
-    await expect(sidebar.getByRole("button", { name: "Back" })).toBeVisible();
-    await sidebar.getByRole("button", { name: "Back" }).click();
+    await expect(sidebar.getByRole("button", { name: "Back", exact: true })).toBeVisible();
+    await sidebar.getByRole("button", { name: "Back", exact: true }).click();
     await expect(page).toHaveURL("/");
-    await expect(sidebar.getByText("Projects")).toBeVisible();
+    await expect(sidebar.locator("p.uppercase", { hasText: "Projects" })).toBeVisible();
   });
 
   test("catch-all redirects unknown URLs to home", async ({ page }) => {
