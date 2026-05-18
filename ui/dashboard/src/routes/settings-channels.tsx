@@ -138,7 +138,7 @@ function WorkflowBindingsBlock({ channelId }: { channelId: string }) {
   }
 
   return (
-    <Card className="p-5">
+    <Card className="p-5" data-testid="workflow-bindings-block">
       <div className="flex items-center justify-between mb-3">
         <span className="text-[13px] font-semibold text-foreground">Workflow Bindings</span>
         <Button variant="outline" size="xs" onClick={() => { setShowAdd((v) => !v); setAddError(null); }}>

@@ -1,40 +1,29 @@
 import { test, expect } from "@playwright/test";
 
 /**
- * Settings → Gateway → Channels tab — Workflow Bindings block (s167 CHN-F).
+ * Settings → Channels → Workflow Bindings block (s167 CHN-F).
  *
- * Verifies the WorkflowBindingsBlock UX shipped in v0.4.702+:
- *   - The Channels tab is present on Settings → Gateway
- *   - The workflow-bindings-block renders inside the Discord card
- *   - The initial state shows empty-state OR an existing bindings list
- *   - Clicking "Add" opens the add form with all required fields
- *   - Submitting a valid MApp ID adds a binding row to the list
- *   - Clicking Delete on a row removes it
+ * The WorkflowBindingsBlock moved from Settings → Gateway → Channels tab
+ * (removed Cycle 262, DevNote "Channels tab removed from this page") to
+ * Settings → Channels → [channel card] → Settings inner tab.
+ *
+ * Navigation: /settings/channels → Discord channel tab (first, default) →
+ *   inner Settings tab (default) → workflow-bindings-block testid.
  *
  * **Pre-conditions:**
  *   - Test VM running with the gateway up (services-start)
+ *   - At least one channel plugin installed (Discord is installed by default)
  *   - /api/channels/workflow-bindings API operational (CHN-F backend)
- *
- * **What this spec does NOT cover:**
- *   - Runtime dispatch: binding matching a live Discord event → MApp invocation.
- *     This requires a live Discord bot + a registered MApp; deferred to a
- *     manual integration test.
  */
 
 const TEST_MAPP_ID = "e2e-test-binding";
 
 test.describe("Settings → Channels → Workflow Bindings (s167 CHN-F)", () => {
-  async function openChannelsTab(page: import("@playwright/test").Page): Promise<void> {
-    await page.goto("/settings/gateway", { waitUntil: "domcontentloaded" });
-    await expect(page).toHaveURL(/\/settings\/gateway(\?|#|$)/, { timeout: 10_000 });
-
-    // Click the Channels tab (native <button> — no react-fancy forwarding issue here)
-    const channelsTab = page.getByRole("button", { name: "Channels" });
-    await expect(channelsTab).toBeVisible({ timeout: 8_000 });
-    await channelsTab.click();
-
-    // Wait for the WorkflowBindingsBlock to mount
-    await expect(page.getByTestId("workflow-bindings-block")).toBeVisible({ timeout: 8_000 });
+  async function openBindingsBlock(page: import("@playwright/test").Page): Promise<void> {
+    await page.goto("/settings/channels", { waitUntil: "domcontentloaded" });
+    // Channels are fetched async; wait for the tab bar to render
+    // Discord is first; inner tab defaults to Settings which renders WorkflowBindingsBlock
+    await expect(page.getByTestId("workflow-bindings-block")).toBeVisible({ timeout: 12_000 });
   }
 
   // Clean up any e2e test binding left over from a previous run.
@@ -53,14 +42,13 @@ test.describe("Settings → Channels → Workflow Bindings (s167 CHN-F)", () => 
     }
   }
 
-  test("Channels tab is present on Settings → Gateway", async ({ page }) => {
-    await openChannelsTab(page);
-    // If we reached here, the tab click worked and the block is visible.
+  test("workflow-bindings-block is visible on Settings → Channels", async ({ page }) => {
+    await openBindingsBlock(page);
     await expect(page.getByTestId("workflow-bindings-block")).toBeVisible();
   });
 
   test("workflow-bindings-block shows empty-state OR list after load", async ({ page }) => {
-    await openChannelsTab(page);
+    await openBindingsBlock(page);
 
     // After mount the component fetches bindings. Wait for the loading text to disappear.
     await expect(page.getByText("Loading…")).not.toBeVisible({ timeout: 6_000 });
@@ -73,7 +61,7 @@ test.describe("Settings → Channels → Workflow Bindings (s167 CHN-F)", () => 
   });
 
   test("clicking Add opens the add form with all fields", async ({ page }) => {
-    await openChannelsTab(page);
+    await openBindingsBlock(page);
 
     const block = page.getByTestId("workflow-bindings-block");
     await block.getByRole("button", { name: "Add" }).click();
@@ -89,7 +77,7 @@ test.describe("Settings → Channels → Workflow Bindings (s167 CHN-F)", () => 
 
   test("submitting a binding adds a row; deleting it restores empty-state", async ({ page }) => {
     await cleanupTestBinding(page);
-    await openChannelsTab(page);
+    await openBindingsBlock(page);
 
     // Wait for initial load
     await expect(page.getByText("Loading…")).not.toBeVisible({ timeout: 6_000 });
@@ -118,7 +106,6 @@ test.describe("Settings → Channels → Workflow Bindings (s167 CHN-F)", () => 
     await rows.first().getByTestId("binding-delete").click();
 
     // List should disappear; if it was the only binding, empty-state returns
-    // (may briefly show binding-list with 0 rows while state updates — wait for settle)
     await expect(page.getByTestId("binding-list")).not.toBeVisible({ timeout: 5_000 });
     await expect(page.getByTestId("binding-empty")).toBeVisible({ timeout: 5_000 });
   });

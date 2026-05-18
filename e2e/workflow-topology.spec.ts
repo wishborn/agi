@@ -15,23 +15,19 @@ test.describe("Workflow Topology page", () => {
   });
 
   test("page loads with workflow tabs visible", async ({ page }) => {
-    await expect(page.getByRole("button", { name: "Topology" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Taskmaster" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Workers" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "System Prompt" })).toBeVisible();
+    // WorkflowsPage uses <Tabs> from react-fancy — each TabsTrigger renders role="tab"
+    await expect(page.getByRole("tab", { name: "Topology" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Taskmaster" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Workers" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "System Prompt" })).toBeVisible();
   });
 
-  test("Topology tab is selected by default and shows the canvas", async ({ page }) => {
+  test("Topology tab is selected by default and shows the graph", async ({ page }) => {
     // At minimum the page must not redirect away
     await expect(page).toHaveURL("/gateway/workflows");
-    // Wait for topology data to load — TASKMASTER renders after the async
-    // WorkflowGraph fetch settles. Without this wait the canvas count check
-    // races against the render and intermittently finds 0 canvas elements.
-    await page.waitForLoadState("networkidle");
-    // Canvas host element should exist somewhere in the DOM after load
-    const hasCanvas = (await page.locator("canvas").count()) > 0
-      || (await page.locator("div").filter({ has: page.locator("canvas") }).count()) > 0;
-    expect(hasCanvas).toBeTruthy();
+    // WorkflowGraph uses fancy-flow (xyflow-backed) — renders SVG, not <canvas>.
+    // TASKMASTER node is always present; its text confirms the graph rendered.
+    await expect(page.getByText("TASKMASTER").first()).toBeVisible({ timeout: 15000 });
   });
 
   test("renders AGENT ROUTER hub when router status is available", async ({ page }) => {
@@ -110,13 +106,13 @@ test.describe("Workflow Topology page", () => {
   });
 
   test("Taskmaster tab shows taskmaster entry", async ({ page }) => {
-    await page.getByRole("button", { name: "Taskmaster" }).click();
+    await page.getByRole("tab", { name: "Taskmaster" }).click();
     // PromptEntryList renders TASKMASTER_ENTRY — at minimum no error is thrown
     await expect(page).toHaveURL("/gateway/workflows");
   });
 
   test("Workers tab shows worker catalog entries", async ({ page }) => {
-    await page.getByRole("button", { name: "Workers" }).click();
+    await page.getByRole("tab", { name: "Workers" }).click();
     // Workers tab renders either dynamic catalog from API or static fallback
     // "hacker" appears in both — it's a static WORKER_ENTRIES item
     await expect(page.getByText("hacker").first()).toBeVisible({ timeout: 10000 });
