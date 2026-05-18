@@ -335,3 +335,75 @@ Both core system domains (dashboard, db portal, ID service) and project virtual 
 ### Log Files
 
 Application logs are written to `/opt/agi/logs/`. Logs rotate at 10 MB with up to 5 rotated files kept.
+
+---
+
+## Off-Grid Install (Air-Gapped / No Internet After Install)
+
+Aionima can run fully offline once the aion-micro GGUF is pre-staged. There are two paths:
+
+### Path A — Internet available at install time (recommended)
+
+The default install automatically downloads the aion-micro GGUF during step 7b:
+
+```bash
+sudo bash install.sh
+```
+
+`install.sh` downloads `wishborn/aion-micro-v1` from HuggingFace Hub to `~/.agi/models/aion-micro/aion-micro-v1.gguf` and writes `ops.aionMicro.localGgufPath` into `gateway.json`. After install, the box can be isolated from the internet and aion-micro will continue working.
+
+If the model is in a private HF repo, pass a token:
+
+```bash
+AIONIMA_HF_TOKEN=hf_xxx sudo bash install.sh
+```
+
+To skip model pre-fetch (e.g., in a CI environment where Lemonade will pull on first use):
+
+```bash
+AIONIMA_PREFETCH_MODELS=0 sudo bash install.sh
+```
+
+### Path B — True air-gap (no internet at any point)
+
+Obtain the GGUF on a networked machine and transfer it to the target box:
+
+```bash
+# On a networked machine:
+curl -L -o aion-micro-v1.gguf \
+  "https://huggingface.co/wishborn/aion-micro-v1/resolve/main/aion-micro-v1.gguf"
+
+# Transfer aion-micro-v1.gguf to the air-gapped box, then:
+AIONIMA_GGUF_PATH=/path/to/aion-micro-v1.gguf sudo bash install.sh
+```
+
+`install.sh` copies the file to `~/.agi/models/aion-micro/aion-micro-v1.gguf` and patches `gateway.json` in one step.
+
+### What `localGgufPath` does
+
+When `ops.aionMicro.localGgufPath` is set in `gateway.json`, `AionMicroManager` sends the absolute file path as the model identifier to Lemonade's `/v1/chat/completions` API. Lemonade (llama.cpp-backed) treats an absolute path as a direct GGUF file load rather than a catalog lookup — no HF Hub call is made.
+
+To verify the setup after install:
+
+```bash
+agi doctor          # should pass with no model-related warnings
+agi status          # gateway should show "online"
+# In the dashboard, send a chat message — aion-micro should respond
+```
+
+### Manual GGUF staging (after initial install)
+
+If the install completed without the GGUF (e.g., model wasn't published yet):
+
+```bash
+# Download (when internet becomes available):
+mkdir -p ~/.agi/models/aion-micro
+curl -L -o ~/.agi/models/aion-micro/aion-micro-v1.gguf \
+  "https://huggingface.co/wishborn/aion-micro-v1/resolve/main/aion-micro-v1.gguf"
+
+# Then add localGgufPath to gateway.json:
+agi config ops.aionMicro.localGgufPath ~/.agi/models/aion-micro/aion-micro-v1.gguf
+agi restart
+```
+
+Or use the Lemonade plugin's pull tool from the dashboard: Settings → Lemonade → pull `wishborn/aion-micro-v1`.

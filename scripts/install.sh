@@ -19,6 +19,19 @@ ID_DIR="${AIONIMA_ID_DIR:-/opt/agi-local-id}"
 BRANCH="${AIONIMA_BRANCH:-main}"
 SKIP_HARDENING="${AIONIMA_SKIP_HARDENING:-}"
 
+# aion-micro GGUF pre-staging (step 7b).
+# AIONIMA_PREFETCH_MODELS=1   (default) — download GGUF from HF Hub at install time
+#                                         so the box can run offline indefinitely.
+# AIONIMA_PREFETCH_MODELS=0   — skip; Lemonade will pull on first use (requires internet).
+# AIONIMA_GGUF_PATH=/path/to/aion-micro-v1.gguf
+#                             — offline mode: copy pre-staged GGUF instead of downloading.
+# AIONIMA_HF_TOKEN=hf_xxx     — HuggingFace token for private model repos.
+AIONIMA_PREFETCH_MODELS="${AIONIMA_PREFETCH_MODELS:-1}"
+AIONIMA_GGUF_PATH="${AIONIMA_GGUF_PATH:-}"
+AIONIMA_HF_TOKEN="${AIONIMA_HF_TOKEN:-}"
+AIONIMA_AION_MICRO_HF_REPO="${AIONIMA_AION_MICRO_HF_REPO:-wishborn/aion-micro-v1}"
+AIONIMA_AION_MICRO_GGUF_FILE="${AIONIMA_AION_MICRO_GGUF_FILE:-aion-micro-v1.gguf}"
+
 # Helper: run a command as the service user without consuming stdin
 # (critical when this script is piped from curl)
 run_as() {
@@ -259,6 +272,76 @@ if [ ! -f "$AGI_CONFIG" ]; then
 CFGEOF
   chown "$AIONIMA_USER:$AIONIMA_USER" "$AGI_CONFIG"
   echo "  [OK] Config created at $AGI_CONFIG (LAN IP: $LAN_IP)"
+fi
+
+# ---------------------------------------------------------------------------
+# 7b. Pre-stage aion-micro GGUF for offline operation
+#
+# Downloads (or copies) the fine-tuned aion-micro GGUF to
+# ~/.agi/models/aion-micro/ at install time so subsequent runs work without
+# any internet connection. If the model repo isn't published yet, the step
+# logs a note and continues — aion-micro will use its fallback model until
+# the GGUF is staged manually or via `agi lemonade pull <model>`.
+# ---------------------------------------------------------------------------
+AION_MICRO_MODEL_DIR="$AGI_DATA/models/aion-micro"
+AION_MICRO_GGUF_DEST="$AION_MICRO_MODEL_DIR/$AIONIMA_AION_MICRO_GGUF_FILE"
+
+if [ "$AIONIMA_PREFETCH_MODELS" = "1" ] && [ ! -f "$AION_MICRO_GGUF_DEST" ]; then
+  mkdir -p "$AION_MICRO_MODEL_DIR"
+  chown "$AIONIMA_USER:$AIONIMA_USER" "$AION_MICRO_MODEL_DIR"
+
+  if [ -n "$AIONIMA_GGUF_PATH" ]; then
+    # Offline mode — user supplied the GGUF alongside the installer
+    if [ -f "$AIONIMA_GGUF_PATH" ]; then
+      echo "==> Staging pre-provided aion-micro GGUF..."
+      cp "$AIONIMA_GGUF_PATH" "$AION_MICRO_GGUF_DEST"
+      chown "$AIONIMA_USER:$AIONIMA_USER" "$AION_MICRO_GGUF_DEST"
+      echo "  [OK] aion-micro GGUF staged at $AION_MICRO_GGUF_DEST"
+    else
+      echo "  [WARN] AIONIMA_GGUF_PATH=$AIONIMA_GGUF_PATH not found — aion-micro will use its fallback model"
+    fi
+  else
+    # Online mode — download from HuggingFace Hub
+    echo "==> Downloading aion-micro GGUF from HuggingFace ($AIONIMA_AION_MICRO_HF_REPO)..."
+    HF_URL="https://huggingface.co/${AIONIMA_AION_MICRO_HF_REPO}/resolve/main/${AIONIMA_AION_MICRO_GGUF_FILE}"
+    CURL_OPTS="-fsSL --connect-timeout 15"
+    if [ -n "$AIONIMA_HF_TOKEN" ]; then
+      CURL_OPTS="$CURL_OPTS -H \"Authorization: Bearer $AIONIMA_HF_TOKEN\""
+    fi
+
+    # Download to a temp file; rename on success so a partial download isn't mistaken for the real file
+    AION_MICRO_GGUF_TMP="${AION_MICRO_GGUF_DEST}.tmp"
+    # shellcheck disable=SC2086
+    if eval "curl $CURL_OPTS -o '$AION_MICRO_GGUF_TMP' '$HF_URL'" 2>/dev/null; then
+      mv "$AION_MICRO_GGUF_TMP" "$AION_MICRO_GGUF_DEST"
+      chown "$AIONIMA_USER:$AIONIMA_USER" "$AION_MICRO_GGUF_DEST"
+      echo "  [OK] aion-micro GGUF downloaded to $AION_MICRO_GGUF_DEST"
+    else
+      rm -f "$AION_MICRO_GGUF_TMP"
+      echo "  [NOTE] aion-micro GGUF not yet available at $HF_URL (model may not be published yet)"
+      echo "         Once published, run: agi lemonade pull $AIONIMA_AION_MICRO_HF_REPO"
+      echo "         Or re-run install with: AIONIMA_HF_TOKEN=<token> sudo bash install.sh"
+    fi
+  fi
+fi
+
+# Patch gateway.json to wire localGgufPath when the GGUF is present
+if [ -f "$AION_MICRO_GGUF_DEST" ] && [ -f "$AGI_CONFIG" ]; then
+  python3 - << PYEOF
+import json, sys
+try:
+    with open('$AGI_CONFIG') as f:
+        cfg = json.load(f)
+    ops = cfg.setdefault('ops', {})
+    aion_micro = ops.setdefault('aionMicro', {})
+    aion_micro['localGgufPath'] = '$AION_MICRO_GGUF_DEST'
+    with open('$AGI_CONFIG', 'w') as f:
+        json.dump(cfg, f, indent=2)
+    print('  [OK] gateway.json: ops.aionMicro.localGgufPath = $AION_MICRO_GGUF_DEST')
+except Exception as e:
+    print(f'  [WARN] Could not patch gateway.json: {e}', file=sys.stderr)
+PYEOF
+  chown "$AIONIMA_USER:$AIONIMA_USER" "$AGI_CONFIG"
 fi
 
 # ---------------------------------------------------------------------------

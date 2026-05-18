@@ -2261,7 +2261,7 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   const opsConfig = (config as Record<string, unknown>).ops as
-    | { localModel?: { modelId?: string }; aionMicro?: { enabled?: boolean; port?: number; idleTimeoutMs?: number } }
+    | { localModel?: { modelId?: string }; aionMicro?: { enabled?: boolean; port?: number; idleTimeoutMs?: number; localGgufPath?: string } }
     | undefined;
 
   const aionMicroManager = new AionMicroManager(
