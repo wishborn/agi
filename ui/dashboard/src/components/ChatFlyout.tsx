@@ -1478,8 +1478,20 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                                 </span>
                               )}
                               {msg.routingMeta.complexity && (
-                                <span className="text-[9px] font-mono text-muted-foreground px-1 rounded bg-muted/30">
+                                <span
+                                  className="text-[9px] font-mono text-muted-foreground px-1 rounded bg-muted/30"
+                                  title={msg.routingMeta.requestType ? `requestType: ${msg.routingMeta.requestType}${msg.routingMeta.classifierUsed ? ` (${msg.routingMeta.classifierUsed})` : ""}` : undefined}
+                                >
                                   {msg.routingMeta.complexity}
+                                </span>
+                              )}
+                              {msg.routingMeta.requestType && (
+                                <span
+                                  data-testid="request-type-badge"
+                                  className="text-[9px] font-mono text-muted-foreground/70 px-1 rounded bg-muted/20 cursor-default"
+                                  title={msg.routingMeta.classifierUsed ? `classifier: ${msg.routingMeta.classifierUsed}` : "request type"}
+                                >
+                                  {msg.routingMeta.requestType}
                                 </span>
                               )}
                               {msg.routingMeta.escalated && (
