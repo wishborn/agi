@@ -776,7 +776,17 @@ cmd_services_align() {
   echo "    Host source version: ${host_version}"
 
   echo "==> Stopping VM services..."
-  cmd_services_stop
+  # A transient multipass SSH glitch after sending SIGKILL to the node process
+  # can make multipass exec exit 255. Treat this as a warning: AGI is
+  # stopped (the kill fired) even if the SSH session dropped mid-script.
+  if ! cmd_services_stop; then
+    echo "    WARN: services-stop returned non-zero (transient SSH drop after kill?)"
+    sleep 2
+    local agi_alive
+    agi_alive=$(multipass exec "$VM_NAME" -- bash -c \
+      '[ -f /tmp/agi.pid ] && kill -0 $(cat /tmp/agi.pid) 2>/dev/null && echo "yes" || echo "no"' 2>/dev/null || echo "unknown")
+    echo "    AGI still alive: ${agi_alive:-unknown} — continuing with build+start"
+  fi
 
   echo "==> Building host (cli/dist + dashboard)..."
   # set -o pipefail propagates pnpm build's exit status through the | tail -3
