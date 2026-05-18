@@ -481,10 +481,11 @@ interface DiscordServerPanelProps {
   channelId: string;
   cfgResponse: ChannelConfigResponse | null;
   enabled: boolean;
+  channelStatus?: string;
   onSaved: () => void;
 }
 
-function DiscordServerPanel({ channelId, cfgResponse, enabled, onSaved }: DiscordServerPanelProps) {
+function DiscordServerPanel({ channelId, cfgResponse, enabled, channelStatus, onSaved }: DiscordServerPanelProps) {
   const [discordState, setDiscordState] = useState<DiscordStateDescriptor | null>(null);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -570,7 +571,12 @@ function DiscordServerPanel({ channelId, cfgResponse, enabled, onSaved }: Discor
         allowedRoleIds: [...allowedRoleSet].join(","),
       };
       await updateChannelConfig(channelId, { enabled, config });
-      setSaveMsg("Saved.");
+      if (channelStatus === "running") {
+        await restartChannel(channelId);
+        setSaveMsg("Saved and restarted.");
+      } else {
+        setSaveMsg("Saved.");
+      }
       onSaved();
     } catch (e) {
       setSaveMsg(`Error: ${e instanceof Error ? e.message : String(e)}`);
@@ -938,6 +944,7 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
               channelId={id}
               cfgResponse={cfgResponse}
               enabled={enabled}
+              channelStatus={currentStatus}
               onSaved={loadData}
             />
           </TabsContent>
@@ -1082,6 +1089,14 @@ export default function SettingsChannelsPage() {
           interact&quot; checkbox (empty = all roles allowed). The four array config fields
           (allowedChannelIds, presenceChannelIds, allowedRoleIds, allowedGuildIds) are hidden from
           the generic Settings form and managed exclusively through the Server panel.
+        </DevNote.Item>
+        <DevNote.Item kind="fix" heading="Discord auto-start + settings take effect immediately">
+          Two related fixes: (1) Discord now auto-connects after every upgrade without requiring
+          manual Start — the v2 startup path starts the legacy channel after login so the registry
+          status updates to &quot;running&quot; and the filtered inbound route (mentionOnly, allowedChannelIds,
+          allowedRoleIds) is wired automatically. (2) Saving channel/role settings via the Server
+          tab now triggers an immediate channel restart so config changes take effect without a
+          manual restart.
         </DevNote.Item>
         <DevNote.Item kind="info" heading="Discord reconnect + role access control + member registration">
           Three Discord improvements shipped together: (1) Discord now auto-reconnects after

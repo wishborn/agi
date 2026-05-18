@@ -473,7 +473,23 @@ export async function startGatewaySidecars(
         const protocol = def.createProtocol(ctx);
         const handle = await protocol.start();
         v2StopHandles.set(def.id, handle.stop);
-        protocol.onEvent(onV2Event);
+
+        // If a legacy channel is registered for the same ID, the legacy plugin
+        // owns filtered inbound routing (mentionOnly, allowedChannelIds, roles
+        // etc.). Start it idempotently so the registry status becomes "running"
+        // and wireLegacyChannel fires to set up the filtered message path.
+        // For channels with no legacy counterpart, wire v2 inbound directly.
+        const hasLegacy = channelRegistry.getChannel(def.id) !== undefined;
+        if (hasLegacy) {
+          await channelRegistry.startChannel(def.id).catch((err: unknown) => {
+            channelLog.warn(
+              `[v2] legacy start for "${def.id}" failed (v2 transport still up): ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
+        } else {
+          protocol.onEvent(onV2Event);
+        }
+
         log.info(`[v2] channel "${def.id}" started`);
       };
 

@@ -573,7 +573,12 @@ export function createDiscordPlugin(
 
     gateway: {
       start: async () => {
-        await client.login(config.botToken);
+        // Skip re-login when the shared client was already connected by the v2
+        // protocol path (buildProtocol). This makes legacy start() safe to call
+        // after v2 has already authenticated the bot.
+        if (!client.isReady()) {
+          await client.login(config.botToken);
+        }
         running = true;
       },
 

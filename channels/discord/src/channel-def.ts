@@ -151,17 +151,33 @@ function buildProtocol(config: DiscordConfig, client: Client, _ctx: ChannelConte
 
   const eventHandlers: Array<(e: ChannelEvent) => void> = [];
 
-  client.on(Events.MessageCreate, (msg) => {
-    const channelMessage = aionimaMessageToChannel(msg);
-    if (channelMessage === null) return;
-    const event: ChannelEvent = { kind: "message", message: channelMessage };
-    for (const h of eventHandlers) h(event);
-  });
-
   return {
     start: async () => {
-      await client.login(config.botToken);
-      return { stop: async () => { client.destroy(); } };
+      // Listener is registered here (not at construction time) so retries don't
+      // accumulate stale listeners on the shared client.
+      const onMessage = (msg: import("discord.js").Message) => {
+        const channelMessage = aionimaMessageToChannel(msg);
+        if (channelMessage === null) return;
+        const event: ChannelEvent = { kind: "message", message: channelMessage };
+        for (const h of eventHandlers) h(event);
+      };
+      client.on(Events.MessageCreate, onMessage);
+
+      // Skip login when the shared client is already authenticated — the legacy
+      // createDiscordPlugin path may have already called client.login() before
+      // this v2 protocol is started.
+      if (!client.isReady()) {
+        await client.login(config.botToken);
+      }
+
+      return {
+        stop: async () => {
+          client.off(Events.MessageCreate, onMessage);
+          // Do NOT call client.destroy() here — the legacy plugin owns the
+          // connection lifetime when both paths are active. The legacy
+          // gateway.stop() will call destroy() when the channel is fully stopped.
+        },
+      };
     },
 
     onEvent: (handler) => {
