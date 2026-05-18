@@ -36,3 +36,9 @@ export type {
   RetrievalConfig,
   ExtractionParams,
 } from "./retrieval.js";
+
+// Layer B candidate dataset + 4-gate eval pipeline (s112 t385 G5).
+export { CandidateDatasetAccumulator } from "./candidate-dataset.js";
+export type { CandidateEntry, AccumulatorOptions, AccumulateResult } from "./candidate-dataset.js";
+export type { GateResult } from "./gates/index.js";
+export { gateDataQuality, gateReward, gateGovernance, gateRollback } from "./gates/index.js";
