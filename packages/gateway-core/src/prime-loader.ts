@@ -12,6 +12,9 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, extname, basename } from "node:path";
 
+import { getPrimeReader } from "./prime-reader.js";
+import type { PrimeReader } from "./prime-reader.js";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -31,9 +34,18 @@ export class PrimeLoader {
   private readonly primeDir: string;
   private entries: PrimeEntry[] = [];
   private indexed = false;
+  /** Structured reader — the new surface; legacy methods delegate here. */
+  private readonly _reader: PrimeReader;
 
   constructor(primeDir: string) {
     this.primeDir = primeDir;
+    this._reader = getPrimeReader(primeDir);
+  }
+
+  /** Expose the structured PrimeReader for callers that need ID-based lookup,
+   *  versioning, or hashing (s112 t382). */
+  get reader(): PrimeReader {
+    return this._reader;
   }
 
   private static readonly SKIP_DIRS = new Set([
@@ -111,21 +123,16 @@ export class PrimeLoader {
   }
 
   /**
-   * Load core truth files (persona, purpose, authority) from core/truth/
+   * Load core truth files (persona, purpose, authority) from core/truth/.
+   * Delegates to PrimeReader.getEntry() — the new structured surface —
+   * so callers get the same versioned, hashed content without re-reading files.
    */
   loadCoreTruth(): { persona?: string; purpose?: string; authority?: string } {
-    const result: { persona?: string; purpose?: string; authority?: string } = {};
-
-    const truthDir = join(this.primeDir, "core", "truth");
-    const personaPath = join(truthDir, ".persona.md");
-    const purposePath = join(truthDir, ".purpose.md");
-    const authorityPath = join(truthDir, "authority.md");
-
-    try { result.persona = readFileSync(personaPath, "utf-8"); } catch { /* missing */ }
-    try { result.purpose = readFileSync(purposePath, "utf-8"); } catch { /* missing */ }
-    try { result.authority = readFileSync(authorityPath, "utf-8"); } catch { /* missing */ }
-
-    return result;
+    return {
+      persona: this._reader.getEntry("persona")?.content,
+      purpose: this._reader.getEntry("purpose")?.content,
+      authority: this._reader.getEntry("authority")?.content,
+    };
   }
 
   /**
