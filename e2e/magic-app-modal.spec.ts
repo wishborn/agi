@@ -39,11 +39,14 @@ test.describe("MagicApp Admin", () => {
   // large enough that inference takes 3–5 minutes, far beyond a CI-friendly
   // budget. The test is kept here for targeted manual runs (agi test --e2e
   // magic-app-modal --headed) but is skipped in the automated suite.
+  // Enable: FULL_AI_ROUNDTRIP=1 agi test --e2e magic-app-modal
   test("Create with AI: full round-trip produces assistant response", async ({ page }) => {
+    test.skip(!process.env.FULL_AI_ROUNDTRIP, "Slow: requires cloud provider or FULL_AI_ROUNDTRIP=1");
+
     const BASE_URL = process.env.BASE_URL ?? "";
     const isRemote = BASE_URL.includes("test.ai.on");
 
-    // 10 min budget: up to 280 s × 2 turns + overhead for slow CPU model
+    // 10 min budget: up to 350 s × 2 turns + overhead for slow CPU model
     test.setTimeout(600_000);
 
     await page.goto("/magic-apps/admin");
@@ -53,11 +56,11 @@ test.describe("MagicApp Admin", () => {
     await expect(page.locator('[data-testid="chat-flyout"]')).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('[data-testid="chat-message-user-0"]')).toBeVisible({ timeout: 15_000 });
 
-    // Allow up to 280 s for local model cold-start + inference.
-    // qwen2.5:3b on a 4-core CPU takes ~240 s for the full builder prompt;
+    // Allow up to 350 s for local model cold-start + inference.
+    // qwen2.5:3b on a 4-core CPU takes ~280 s for the full builder prompt;
     // cloud providers respond in ~5 s. Keep headroom before the 300 s test timeout.
     const assistantMsg0 = page.locator('[data-testid="chat-message-assistant-0"]');
-    await expect(assistantMsg0).toBeVisible({ timeout: 280_000 });
+    await expect(assistantMsg0).toBeVisible({ timeout: 350_000 });
     await expect(assistantMsg0).not.toBeEmpty();
 
     // Verify chat input is still available for follow-up
