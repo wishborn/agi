@@ -728,10 +728,10 @@ cmd_services_status() {
   timeout 30 multipass exec "$VM_NAME" -- bash -c '
     echo "PostgreSQL: $(systemctl is-active postgresql)"
     echo "Caddy:      $(systemctl is-active caddy)"
-    # Distinguish stopped / starting (PID alive, no health response) / running
+    # Single curl — capture once, reuse for both status line and health output
+    health=$(curl -sk --connect-timeout 3 --max-time 5 https://ai.on/health 2>/dev/null)
     if [ -f /tmp/agi.pid ] && kill -0 $(cat /tmp/agi.pid) 2>/dev/null; then
       pid=$(cat /tmp/agi.pid)
-      health=$(curl -sk --connect-timeout 3 --max-time 5 https://ai.on/health 2>/dev/null)
       if [ -n "$health" ]; then
         echo "AGI:        running (PID $pid)"
       else
@@ -742,7 +742,6 @@ cmd_services_status() {
     fi
     echo ""
     echo "Health checks:"
-    health=$(curl -sk --connect-timeout 3 --max-time 5 https://ai.on/health 2>/dev/null)
     echo "  AGI:  ${health:-not yet responding}"
   '
 }
