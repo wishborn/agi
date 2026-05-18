@@ -63,9 +63,10 @@ export interface AgentToolsConfig {
   systemConfigService?: SystemConfigService;
   /** MAppRegistry for MApp builder tools. */
   mappRegistry?: import("../mapp-registry.js").MAppRegistry;
-  /** ScanRunner + ScanStore for the run_security_scan agent tool. */
+  /** ScanRunner + ScanStore + COALogger for the run_security_scan agent tool. */
   scanRunner?: ScanRunner;
   scanStore?: ScanStore;
+  coaLogger?: import("@agi/coa-chain").COAChainLogger;
 }
 
 // ---------------------------------------------------------------------------

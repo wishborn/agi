@@ -2377,6 +2377,7 @@ export async function startGatewayServer(
     mappRegistry,
     scanRunner,
     scanStore,
+    coaLogger,
   });
   log.info(`registered ${String(agentToolCount)} agent tools`);
 

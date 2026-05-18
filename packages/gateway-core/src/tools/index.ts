@@ -487,7 +487,11 @@ export function registerAgentTools(
   if (config.scanRunner !== undefined && config.scanStore !== undefined) {
     register(
       RUN_SECURITY_SCAN_MANIFEST as unknown as ToolManifestEntry,
-      createRunSecurityScanHandler({ scanRunner: config.scanRunner, scanStore: config.scanStore }),
+      createRunSecurityScanHandler({
+        scanRunner: config.scanRunner,
+        scanStore: config.scanStore,
+        coaLogger: config.coaLogger,
+      }),
       RUN_SECURITY_SCAN_INPUT_SCHEMA,
     );
   }

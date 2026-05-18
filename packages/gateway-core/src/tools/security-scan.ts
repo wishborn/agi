@@ -9,14 +9,16 @@
  *   list     — list recent scan runs (optionally scoped to a projectPath)
  */
 
-import type { ToolHandler } from "../tool-registry.js";
+import type { ToolHandler, ToolExecutionContext } from "../tool-registry.js";
 import type { ScanRunner } from "@agi/security";
 import type { ScanStore } from "@agi/security";
 import type { ScanConfig, ScanType } from "@agi/security";
+import type { COAChainLogger } from "@agi/coa-chain";
 
 export interface SecurityScanToolConfig {
   scanRunner?: ScanRunner;
   scanStore?: ScanStore;
+  coaLogger?: COAChainLogger;
 }
 
 // ---------------------------------------------------------------------------
@@ -24,8 +26,8 @@ export interface SecurityScanToolConfig {
 // ---------------------------------------------------------------------------
 
 export function createRunSecurityScanHandler(config: SecurityScanToolConfig): ToolHandler {
-  return async (input: Record<string, unknown>): Promise<string> => {
-    const { scanRunner, scanStore } = config;
+  return async (input: Record<string, unknown>, ctx?: ToolExecutionContext): Promise<string> => {
+    const { scanRunner, scanStore, coaLogger } = config;
     if (!scanRunner || !scanStore) {
       return JSON.stringify({ error: "Security scanning not available in this environment" });
     }
@@ -48,6 +50,8 @@ export function createRunSecurityScanHandler(config: SecurityScanToolConfig): To
         projectId,
         excludePaths: ["node_modules", ".git", "dist"],
         severityThreshold: input.severityThreshold ? String(input.severityThreshold) as ScanConfig["severityThreshold"] : undefined,
+        entityId: ctx?.entityId,
+        entityAlias: ctx?.entityAlias,
       };
 
       // Fire async — return scanId immediately
@@ -61,6 +65,21 @@ export function createRunSecurityScanHandler(config: SecurityScanToolConfig): To
         const recent = await scanStore.listScanRuns({ limit: 1 });
         if (recent.length > 0 && recent[0]) scanId = recent[0].id;
       } catch { /* non-fatal */ }
+
+      // COA anchor — record who triggered the scan
+      if (coaLogger && ctx) {
+        coaLogger.log({
+          resourceId: ctx.resourceId,
+          entityId: ctx.entityId,
+          entityAlias: ctx.entityAlias,
+          nodeId: ctx.nodeId,
+          workType: "security_scan",
+          ref: scanId,
+          action: "create",
+        }).catch((err: unknown) => {
+          console.error("[security-scan tool] COA log failed:", err instanceof Error ? err.message : String(err));
+        });
+      }
 
       return JSON.stringify({
         ok: true,
