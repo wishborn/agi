@@ -1025,7 +1025,9 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
         },
       }));
     } else {
-      // Normal send path
+      // Normal send path — set thinking=true optimistically so the live-pill
+      // renders immediately (especially noticeable with large image/doc payloads
+      // where the server chat:thinking event arrives after a WS roundtrip delay).
       setSessions((prev) => prev.map((s) =>
         s.id === activeSession.id
           ? {
@@ -1037,6 +1039,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                 images: imageFiles.map((img) => img.content),
               }],
               suggestions: [],
+              thinking: true,
             }
           : s
       ));
