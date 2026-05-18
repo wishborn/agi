@@ -23,6 +23,7 @@ import type { PluginRegistry } from "@agi/plugins";
 import type { StackRegistry } from "../stack-registry.js";
 import type { HostingManager, ProjectHostingMeta } from "../hosting-manager.js";
 import type { SystemConfigService } from "../system-config-service.js";
+import type { ScanRunner, ScanStore } from "@agi/security";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -62,6 +63,9 @@ export interface AgentToolsConfig {
   systemConfigService?: SystemConfigService;
   /** MAppRegistry for MApp builder tools. */
   mappRegistry?: import("../mapp-registry.js").MAppRegistry;
+  /** ScanRunner + ScanStore for the run_security_scan agent tool. */
+  scanRunner?: ScanRunner;
+  scanStore?: ScanStore;
 }
 
 // ---------------------------------------------------------------------------

@@ -2375,6 +2375,8 @@ export async function startGatewayServer(
     selfRepoPath: config.workspace?.selfRepo,
     systemConfigService: systemConfigService ?? undefined,
     mappRegistry,
+    scanRunner,
+    scanStore,
   });
   log.info(`registered ${String(agentToolCount)} agent tools`);
 

@@ -128,6 +128,13 @@ import {
 // Builder tools (MagicApp creation/editing)
 import { BUILDER_TOOLS } from "./builder-tools.js";
 
+// Security scan tool
+import {
+  createRunSecurityScanHandler,
+  RUN_SECURITY_SCAN_MANIFEST,
+  RUN_SECURITY_SCAN_INPUT_SCHEMA,
+} from "./security-scan.js";
+
 // Web page tool
 import { createGetWebPageHandler, GET_WEB_PAGE_MANIFEST, GET_WEB_PAGE_INPUT_SCHEMA } from "./web-page.js";
 
@@ -474,6 +481,15 @@ export function registerAgentTools(
         tool.schema,
       );
     }
+  }
+
+  // Security scan tool (available when ScanRunner + ScanStore are wired in)
+  if (config.scanRunner !== undefined && config.scanStore !== undefined) {
+    register(
+      RUN_SECURITY_SCAN_MANIFEST as unknown as ToolManifestEntry,
+      createRunSecurityScanHandler({ scanRunner: config.scanRunner, scanStore: config.scanStore }),
+      RUN_SECURITY_SCAN_INPUT_SCHEMA,
+    );
   }
 
   return count;
