@@ -24,13 +24,14 @@ test.describe("Gateway Settings", () => {
     await expect(page).toHaveURL("/settings/gateway");
   });
 
-  test("tab bar renders all five tab buttons", async ({ page }) => {
+  // Providers tab removed from /settings/gateway at cycle 135 — lives at /settings/providers.
+  test("tab bar renders four tab buttons (General, Identity, Contributing, Network)", async ({ page }) => {
     await page.goto("/settings/gateway");
     await expect(page.getByRole("button", { name: "General" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Identity" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Providers" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Contributing" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Network" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Providers" })).toHaveCount(0);
   });
 
   test("General tab is active by default and shows content", async ({ page }) => {
@@ -42,16 +43,15 @@ test.describe("Gateway Settings", () => {
     await expect(page).toHaveURL("/settings/gateway");
   });
 
-  test("Providers tab shows Routing Mode section", async ({ page }) => {
-    await page.goto("/settings/gateway");
-    await page.getByRole("button", { name: "Providers" }).click();
-    await expect(page.getByText("Routing Mode")).toBeVisible();
+  // Providers moved to /settings/providers (cycle 135). These tests now verify the providers page.
+  test("providers page renders at /settings/providers", async ({ page }) => {
+    await page.goto("/settings/providers");
+    await expect(page.getByRole("heading", { name: /providers/i }).first()).toBeVisible({ timeout: 10_000 });
   });
 
-  test("Providers tab shows Default Provider & Model section", async ({ page }) => {
-    await page.goto("/settings/gateway");
-    await page.getByRole("button", { name: "Providers" }).click();
-    await expect(page.getByText("Default Provider & Model")).toBeVisible();
+  test("providers page shows available providers section", async ({ page }) => {
+    await page.goto("/settings/providers");
+    await expect(page.getByText(/available providers|cost preference|escalation/i).first()).toBeVisible({ timeout: 10_000 });
   });
 
   test("Identity tab shows owner settings content", async ({ page }) => {
@@ -81,7 +81,8 @@ test.describe("Gateway Settings", () => {
 
   test("switching between tabs keeps the page at /settings/gateway", async ({ page }) => {
     await page.goto("/settings/gateway");
-    const tabSequence = ["Providers", "Identity", "Contributing", "Network", "General"];
+    // Providers tab removed at cycle 135; remaining tabs: Identity, Contributing, Network, General
+    const tabSequence = ["Identity", "Contributing", "Network", "General"];
     for (const tabName of tabSequence) {
       await page.getByRole("button", { name: tabName }).click();
       await expect(page).toHaveURL("/settings/gateway");
