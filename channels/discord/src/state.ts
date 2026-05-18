@@ -237,7 +237,12 @@ export function flattenStateToAvailableRooms(state: DiscordStateDescriptor): Ava
     if (a.group !== b.group) return a.group.localeCompare(b.group);
     const pa = a.parent ?? "";
     const pb = b.parent ?? "";
-    if (pa !== pb) return pa.localeCompare(pb);
+    if (pa !== pb) {
+      // Channels with a parent category sort before parentless channels
+      if (pa === "") return 1;
+      if (pb === "") return -1;
+      return pa.localeCompare(pb);
+    }
     return a.label.localeCompare(b.label);
   });
   return out;

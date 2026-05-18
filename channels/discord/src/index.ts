@@ -381,12 +381,19 @@ export function createDiscordPlugin(
       }
     }
 
-    // Mention filter: in guild channels, only respond to @mentions or replies
+    // Mention filter: in guild channels, only respond to @mentions, replies,
+    // or messages that call the bot by username / the "aion" alias.
     const mentionOnly = config.mentionOnly ?? true;
     if (mentionOnly && msg.guildId !== null) {
       const isMentioned = client.user !== null && msg.mentions.has(client.user);
       const isReply = msg.reference !== null;
-      if (!isMentioned && !isReply) return;
+      const botUsername = client.user?.username ?? "";
+      const namePattern = new RegExp(
+        `\\b(aion|${botUsername.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})\\b`,
+        "i"
+      );
+      const isNameCalled = namePattern.test(msg.content);
+      if (!isMentioned && !isReply && !isNameCalled) return;
     }
 
     // Strip bot mention from content before normalizing

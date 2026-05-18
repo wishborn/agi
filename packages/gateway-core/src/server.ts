@@ -1295,6 +1295,20 @@ export async function startGatewayServer(
               ? (inboundMsg.content as { caption?: string }).caption ?? "[media]"
               : String(payload.message ?? "");
 
+        // Extract channel-specific context from the message metadata so the
+        // agent can call bridge tools (e.g. discord_search_messages) with the
+        // correct IDs without having to parse them out of the message text.
+        const msgMeta = inboundMsg?.metadata as Record<string, unknown> | undefined;
+        const channelContextForInvoker = msgMeta !== undefined ? {
+          channelId: message.channel,
+          guildId: typeof msgMeta.guildId === "string" ? msgMeta.guildId : undefined,
+          guildName: typeof msgMeta.guildName === "string" ? msgMeta.guildName : undefined,
+          roomId: typeof msgMeta.channelId === "string" ? msgMeta.channelId : undefined,
+          roomName: typeof msgMeta.channelName === "string" ? msgMeta.channelName : undefined,
+          senderDisplayName: typeof msgMeta.displayName === "string" ? msgMeta.displayName : undefined,
+          senderUserId: typeof msgMeta.authorId === "string" ? msgMeta.authorId : undefined,
+        } : undefined;
+
         queueLog.info(`invoking agent for entity ${entityId}`);
         try {
           const outcome = await agentInvoker.process({
@@ -1306,6 +1320,7 @@ export async function startGatewayServer(
             devMode,
             isOwner: ownerEntityId !== undefined && entityId === ownerEntityId,
             ...(payload.projectPath !== undefined ? { projectContext: payload.projectPath } : {}),
+            ...(channelContextForInvoker !== undefined ? { channelContext: channelContextForInvoker } : {}),
           });
 
           queueLog.info(`agent outcome: ${outcome.type}`);

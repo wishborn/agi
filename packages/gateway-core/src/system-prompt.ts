@@ -190,6 +190,36 @@ export interface SystemPromptContext {
    * and entity context are preserved.
    */
   costMode?: string;
+  /**
+   * Channel-specific location context (server, channel, sender info + IDs).
+   * Injected unconditionally when present so the agent knows where it is and
+   * what concrete IDs to pass to bridge tools (e.g. discord_search_messages).
+   * Populated by the inbound router from AionimaMessage.metadata.
+   */
+  channelContext?: ChannelContextData;
+}
+
+/**
+ * Runtime channel location context extracted from an inbound AionimaMessage.
+ * Gives the agent the concrete IDs it needs to call channel bridge tools
+ * (discord_search_messages, discord_list_members, etc.) without having to
+ * derive them from the message text.
+ */
+export interface ChannelContextData {
+  /** Channel adapter ID (e.g. "discord", "telegram"). */
+  channelId: string;
+  /** Guild/server ID (Discord: guildId). */
+  guildId?: string;
+  /** Guild/server display name. */
+  guildName?: string;
+  /** Room/channel ID within the guild (Discord: channelId). */
+  roomId?: string;
+  /** Room/channel display name (e.g. "general"). */
+  roomName?: string;
+  /** Display name of the person who sent the message. */
+  senderDisplayName?: string;
+  /** Platform user ID of the sender (Discord: user snowflake). */
+  senderUserId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -879,6 +909,36 @@ To read plans: pm(action: "plan-list", projectPath) or pm(action: "plan-get", pr
 }
 
 // ---------------------------------------------------------------------------
+// Channel context section
+// ---------------------------------------------------------------------------
+
+function buildChannelContextSection(ctx: ChannelContextData): string {
+  const lines: string[] = [];
+
+  const roomPart = ctx.roomName !== undefined ? `**#${ctx.roomName}**` : undefined;
+  const guildPart = ctx.guildName !== undefined ? `server **${ctx.guildName}**` : undefined;
+  const where = [roomPart, guildPart].filter(Boolean).join(" on ");
+  if (where.length > 0) {
+    lines.push(`You are responding in ${where} (${ctx.channelId} channel).`);
+  } else {
+    lines.push(`You are responding via the ${ctx.channelId} channel.`);
+  }
+
+  if (ctx.roomId !== undefined) {
+    lines.push(`Channel ID: \`${ctx.roomId}\` — pass to \`discord_search_messages\` to read recent history.`);
+  }
+  if (ctx.guildId !== undefined) {
+    lines.push(`Guild ID: \`${ctx.guildId}\` — pass to \`discord_list_members\` to see who is in this server.`);
+  }
+  if (ctx.senderDisplayName !== undefined) {
+    const idSuffix = ctx.senderUserId !== undefined ? ` (ID: \`${ctx.senderUserId}\`)` : "";
+    lines.push(`The person you are responding to: **${ctx.senderDisplayName}**${idSuffix}`);
+  }
+
+  return `## Channel Context\n\n${lines.join("\n")}`;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -1064,6 +1124,13 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
     sections.push(buildTaskmasterSection());
   }
 
+  // Channel context — unconditional when present; gives the agent the concrete
+  // IDs it needs to call bridge tools (discord_search_messages etc.) without
+  // deriving them from the message text.
+  if (ctx.channelContext !== undefined) {
+    sections.push(buildChannelContextSection(ctx.channelContext));
+  }
+
   // Skills — always inject if matched (they're request-relevant by definition)
   if (ctx.skills !== undefined && ctx.skills.length > 0) {
     sections.push(buildSkillsSection(ctx.skills));
@@ -1217,6 +1284,10 @@ export function assembleSystemPromptWithBreakdown(
 
   if (!isLocal && rt !== "chat" && rt !== "worker") {
     contextSections.push(buildTaskmasterSection());
+  }
+
+  if (ctx.channelContext !== undefined) {
+    contextSections.push(buildChannelContextSection(ctx.channelContext));
   }
 
   // -------------------------------------------------------------------------

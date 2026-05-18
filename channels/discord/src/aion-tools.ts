@@ -369,12 +369,91 @@ function buildAvailableRoomsTool(ctx: BridgeToolContext): AgentToolDefinition {
  * agent tool registry. Caller (channel plugin's `start()`) iterates and
  * calls `api.registerAgentTool(def)` for each.
  */
+/**
+ * `discord_guild_info` — returns a snapshot of a guild's environment:
+ * member list (from cache), voice channel occupants, and each member's
+ * current presence status. Use this when the user asks who's online,
+ * who's in a voice channel, or what the current server population looks like.
+ *
+ * Presence status is best-effort: returns null when GuildPresences intent
+ * is not enabled in the Discord developer portal.
+ */
+function buildGuildInfoTool(ctx: BridgeToolContext): AgentToolDefinition {
+  return {
+    name: "discord_guild_info",
+    description:
+      "Get a snapshot of a Discord guild (server) environment: member list with presence status (online/idle/dnd/offline), voice channel occupants, and basic guild stats. If guildId is omitted, uses the first guild the bot is in. Use this when asked who is online, who is in a voice channel, or for a general overview of server activity.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        guildId: { type: "string", description: "Discord guild (server) ID. Omit to use the first available guild." },
+      },
+    },
+    handler: async (input) => {
+      const inputObj = input as Record<string, unknown>;
+      const requestedGuildId = typeof inputObj["guildId"] === "string" ? (inputObj["guildId"] as string).trim() : undefined;
+
+      let guild;
+      if (requestedGuildId !== undefined && requestedGuildId.length > 0) {
+        guild = await ctx.client.guilds.fetch(requestedGuildId).catch(() => null);
+        if (guild === null) return { error: `guild ${requestedGuildId} not found` };
+      } else {
+        const firstGuildEntry = ctx.client.guilds.cache.first();
+        if (firstGuildEntry === undefined) return { error: "bot is not in any guild" };
+        guild = await ctx.client.guilds.fetch(firstGuildEntry.id).catch(() => null);
+        if (guild === null) return { error: "failed to fetch guild" };
+      }
+
+      // Fetch all members into cache (respects bot's view — may be partial for large guilds)
+      const members = await guild.members.fetch({ withPresences: false }).catch(() => guild.members.cache);
+
+      const memberList = [...members.values()].map((m) => ({
+        id: m.user.id,
+        username: m.user.username,
+        displayName: m.displayName,
+        roles: m.roles.cache
+          .filter((r) => r.name !== "@everyone")
+          .map((r) => ({ id: r.id, name: r.name })),
+        presence: m.presence
+          ? {
+              status: m.presence.status,
+              activities: m.presence.activities.map((a) => ({ name: a.name, type: a.type })),
+            }
+          : null,
+      }));
+
+      // Voice channel occupants from cache (type 2 = GuildVoice)
+      const voiceChannels = guild.channels.cache
+        .filter((c) => c.type === 2 /* GuildVoice */ && "members" in c)
+        .map((c) => {
+          const membersMap = (c as { id: string; name: string; members: Map<string, { user: { id: string }; displayName: string }> }).members;
+          return {
+            id: c.id,
+            name: (c as { name: string }).name,
+            members: [...membersMap.values()].map((m) => ({ id: m.user.id, displayName: m.displayName })),
+          };
+        })
+        .filter((vc) => vc.members.length > 0);
+
+      return {
+        guildId: guild.id,
+        guildName: guild.name,
+        memberCount: guild.memberCount,
+        membersInCache: memberList.length,
+        members: memberList,
+        activeVoiceChannels: voiceChannels,
+      };
+    },
+  };
+}
+
 export function buildDiscordBridgeTools(ctx: BridgeToolContext): AgentToolDefinition[] {
   return [
     buildSearchMessagesTool(ctx),
     buildGetUserTool(ctx),
     buildListMembersTool(ctx),
     buildGetUserActivityTool(ctx),
+    buildGuildInfoTool(ctx),
     buildResolveProjectTool(ctx),
     buildAggregateStatsTool(ctx),
     buildAvailableRoomsTool(ctx),

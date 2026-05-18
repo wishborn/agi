@@ -277,6 +277,8 @@ export interface InvocationRequest {
   chatSessionId?: string;
   /** Abort signal — when triggered, the invocation stops at the next checkpoint. */
   abortSignal?: AbortSignal;
+  /** Channel-specific context (guild/channel IDs, sender info) for bridge tool awareness. */
+  channelContext?: import("./system-prompt.js").ChannelContextData;
 }
 
 export type InvocationOutcome =
@@ -644,6 +646,7 @@ export class AgentInvoker extends EventEmitter {
       toolsAvailable: willOfferTools,
       iterativeWorkPrompt,
       ...(projectNotes !== undefined ? { projectNotes } : {}),
+      ...(request.channelContext !== undefined ? { channelContext: request.channelContext } : {}),
     };
 
     const { prompt: baseSystemPrompt, breakdown: promptBreakdown } = assembleSystemPromptWithBreakdown(promptCtx);
