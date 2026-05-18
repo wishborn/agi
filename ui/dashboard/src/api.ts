@@ -669,6 +669,40 @@ export async function fetchRecentDecisions(limit = 20): Promise<RoutingDecisionR
   return data.decisions;
 }
 
+/** Wire shape of a single cost-ledger record from GET /api/providers/cost/recent.
+ *  Mirrors CostLedgerEntryRecord in cost-ledger-reader.ts. */
+export interface CostLedgerEntryRecord {
+  id: string;
+  ts: string;
+  entityId: string | null;
+  provider: string;
+  model: string;
+  costMode: string;
+  complexity: string;
+  inputTokens: number;
+  outputTokens: number;
+  cpuWattsObserved: number | null;
+  gpuWattsObserved: number | null;
+  dollarCost: number | null;
+  escalated: boolean;
+  turnDurationMs: number;
+  routingReason: string;
+}
+
+/** GET /api/providers/cost/recent — newest-last array of cost ledger records
+ *  for the Mission Control hero narrative enrichment. Never throws; returns
+ *  empty on error (fresh install before any chat turns). */
+export async function fetchRecentCostRecords(limit = 5): Promise<CostLedgerEntryRecord[]> {
+  try {
+    const res = await fetch(`/api/providers/cost/recent?limit=${String(limit)}`);
+    if (!res.ok) return [];
+    const data = (await res.json()) as { records: CostLedgerEntryRecord[] };
+    return Array.isArray(data.records) ? data.records : [];
+  } catch {
+    return [];
+  }
+}
+
 /** PUT /api/providers/active — switch the active Provider (and optionally
  *  the model). Hot-reloaded — agent-router picks up the new Provider on the
  *  next invocation without a gateway restart. Used by the click-to-activate
