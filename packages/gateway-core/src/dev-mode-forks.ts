@@ -37,6 +37,8 @@ export interface CoreRepoSpec {
   slug:
     | "agi"
     | "prime"
+    | "id"
+    | "hive-id"
     | "marketplace"
     | "mapp-marketplace"
     | "react-fancy"
@@ -59,6 +61,8 @@ export interface CoreRepoSpec {
   configKey:
     | "agiRepo"
     | "primeRepo"
+    | "idRepo"
+    | "hiveIdRepo"
     | "marketplaceRepo"
     | "mappMarketplaceRepo"
     | "reactFancyRepo"
@@ -76,6 +80,11 @@ export const CORE_REPOS: readonly CoreRepoSpec[] = Object.freeze([
   // so they continue to use CANONICAL_OWNER = "Civicognita").
   { slug: "agi",              upstream: "agi",                  displayName: "AGI",              configKey: "agiRepo" },
   { slug: "prime",            upstream: "aionima",              displayName: "PRIME",            configKey: "primeRepo" },
+  { slug: "id",               upstream: "aionima-id",           displayName: "Local-ID",         configKey: "idRepo" },
+  // s149 t625 — Hive-ID (cloud federation hub, privately deployed). Added
+  // to CORE_REPOS so Contributing Mode provisions + clones the fork locally.
+  // Distinct from Local-ID (id.ai.on LAN service) — Hive-ID runs on Railway/Azure.
+  { slug: "hive-id",          upstream: "agi-hive-id",          displayName: "Hive-ID",          configKey: "hiveIdRepo" },
   { slug: "marketplace",      upstream: "agi-marketplace",      displayName: "Marketplace",      configKey: "marketplaceRepo" },
   { slug: "mapp-marketplace", upstream: "agi-mapp-marketplace", displayName: "MApp Marketplace", configKey: "mappMarketplaceRepo" },
 
