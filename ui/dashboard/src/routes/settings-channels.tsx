@@ -42,6 +42,54 @@ import {
 import type { ChannelDetail, CommsLogEntry } from "@/types.js";
 
 // ---------------------------------------------------------------------------
+// Discord state types (mirrors channels/discord/src/state.ts — no direct import)
+// ---------------------------------------------------------------------------
+
+interface DiscordRoleDescriptor {
+  id: string;
+  name: string;
+  color: number;
+  position: number;
+  managed: boolean;
+}
+interface DiscordChannelDescriptor {
+  id: string;
+  name: string;
+  kind: string;
+  parent?: string;
+}
+interface DiscordGuildDescriptor {
+  id: string;
+  name: string;
+  iconUrl?: string;
+  memberCount?: number;
+  channels: DiscordChannelDescriptor[];
+  roles: DiscordRoleDescriptor[];
+}
+interface DiscordStateDescriptor {
+  connected: boolean;
+  user?: { id: string; tag: string; avatarUrl?: string };
+  guilds: DiscordGuildDescriptor[];
+  snapshotAt: string;
+}
+
+type DiscordChannelMode = "off" | "monitor" | "respond";
+
+/** Fields managed visually by DiscordServerPanel — hidden in the generic config form. */
+const DISCORD_VISUAL_FIELDS = new Set([
+  "allowedGuildIds",
+  "allowedChannelIds",
+  "presenceChannelIds",
+  "allowedRoleIds",
+]);
+
+function parseIds(v: unknown): string[] {
+  if (typeof v === "string") return v.split(",").map((s) => s.trim()).filter(Boolean);
+  if (Array.isArray(v)) return (v as unknown[]).filter((s) => typeof s === "string") as string[];
+  return [];
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -426,6 +474,315 @@ function ChannelChatsTab({ channelId }: { channelId: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// DiscordServerPanel — visual guild/channel/role manager
+// ---------------------------------------------------------------------------
+
+interface DiscordServerPanelProps {
+  channelId: string;
+  cfgResponse: ChannelConfigResponse | null;
+  enabled: boolean;
+  onSaved: () => void;
+}
+
+function DiscordServerPanel({ channelId, cfgResponse, enabled, onSaved }: DiscordServerPanelProps) {
+  const [discordState, setDiscordState] = useState<DiscordStateDescriptor | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [selectedGuildId, setSelectedGuildId] = useState<string | null>(null);
+  const [channelModes, setChannelModes] = useState<Record<string, DiscordChannelMode>>({});
+  const [allowedRoleSet, setAllowedRoleSet] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const guildInitialized = useRef(false);
+
+  // Initialise modes + roles from current config whenever cfgResponse arrives
+  useEffect(() => {
+    if (!cfgResponse) return;
+    const c = cfgResponse.config;
+    const respondIds = parseIds(c["allowedChannelIds"]);
+    const monitorIds = parseIds(c["presenceChannelIds"]);
+    const modes: Record<string, DiscordChannelMode> = {};
+    for (const id of respondIds) modes[id] = "respond";
+    for (const id of monitorIds) modes[id] = "monitor";
+    setChannelModes(modes);
+    setAllowedRoleSet(new Set(parseIds(c["allowedRoleIds"])));
+  }, [cfgResponse]);
+
+  const loadState = useCallback(async () => {
+    setLoading(true);
+    setFetchError(null);
+    try {
+      const res = await fetch("/api/channels/discord/state");
+      if (!res.ok) throw new Error(`HTTP ${String(res.status)}`);
+      const data = (await res.json()) as DiscordStateDescriptor;
+      setDiscordState(data);
+      if (!guildInitialized.current && data.guilds.length > 0) {
+        setSelectedGuildId(data.guilds[0].id);
+        guildInitialized.current = true;
+      }
+    } catch (e) {
+      setFetchError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadState(); }, [loadState]);
+
+  const selectedGuild =
+    discordState?.guilds.find((g) => g.id === selectedGuildId) ?? discordState?.guilds[0];
+
+  function setMode(chId: string, mode: DiscordChannelMode) {
+    setChannelModes((prev) => {
+      if (mode === "off") {
+        const next = { ...prev };
+        delete next[chId];
+        return next;
+      }
+      return { ...prev, [chId]: mode };
+    });
+  }
+
+  function toggleRole(roleId: string) {
+    setAllowedRoleSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(roleId)) next.delete(roleId);
+      else next.add(roleId);
+      return next;
+    });
+  }
+
+  const handleSave = async () => {
+    if (!cfgResponse) return;
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      const respondIds = Object.entries(channelModes)
+        .filter(([, m]) => m === "respond")
+        .map(([id]) => id);
+      const monitorIds = Object.entries(channelModes)
+        .filter(([, m]) => m === "monitor")
+        .map(([id]) => id);
+      const config: Record<string, unknown> = {
+        ...cfgResponse.config,
+        allowedChannelIds: respondIds.join(","),
+        presenceChannelIds: monitorIds.join(","),
+        allowedRoleIds: [...allowedRoleSet].join(","),
+      };
+      await updateChannelConfig(channelId, { enabled, config });
+      setSaveMsg("Saved.");
+      onSaved();
+    } catch (e) {
+      setSaveMsg(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  function roleColor(color: number): string | undefined {
+    if (color === 0) return undefined;
+    return `#${color.toString(16).padStart(6, "0")}`;
+  }
+
+  // Group channels by parent category for nested display
+  function groupChannels(channels: DiscordChannelDescriptor[]) {
+    const groups: Array<{ parent?: string; channels: DiscordChannelDescriptor[] }> = [];
+    const seen = new Map<string | undefined, DiscordChannelDescriptor[]>();
+    for (const ch of channels.filter((c) => c.kind !== "voice")) {
+      const key = ch.parent;
+      if (!seen.has(key)) {
+        const arr: DiscordChannelDescriptor[] = [];
+        seen.set(key, arr);
+        groups.push({ parent: key, channels: arr });
+      }
+      seen.get(key)!.push(ch);
+    }
+    return groups;
+  }
+
+  if (loading) {
+    return <div className="text-[13px] text-muted-foreground py-8 text-center">Loading Discord server data…</div>;
+  }
+
+  if (fetchError !== null) {
+    return (
+      <div className="space-y-3">
+        <div className="text-[13px] text-destructive">Failed to load Discord state: {fetchError}</div>
+        <Button variant="outline" size="xs" onClick={() => void loadState()}>Retry</Button>
+      </div>
+    );
+  }
+
+  if (discordState === null || !discordState.connected || discordState.guilds.length === 0) {
+    return (
+      <Card className="p-6 text-center text-[13px] text-muted-foreground">
+        {discordState?.connected === false
+          ? "Bot is not connected. Start the Discord channel to manage server settings."
+          : "No servers found. Make sure the bot has been invited to your server."}
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Guild header + selector */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          {discordState.guilds.length > 1 ? (
+            <select
+              value={selectedGuildId ?? ""}
+              onChange={(e) => setSelectedGuildId(e.target.value)}
+              className="h-8 px-2 rounded-lg border border-input bg-background text-[13px] text-foreground"
+            >
+              {discordState.guilds.map((g) => (
+                <option key={g.id} value={g.id}>{g.name}</option>
+              ))}
+            </select>
+          ) : (
+            <span className="text-[13px] font-semibold text-foreground">{selectedGuild?.name}</span>
+          )}
+          {selectedGuild?.memberCount !== undefined && (
+            <span className="text-[12px] text-muted-foreground">
+              {selectedGuild.memberCount.toLocaleString()} members
+            </span>
+          )}
+          {discordState.user && (
+            <span className="text-[11px] text-muted-foreground ml-2">
+              Bot: <span className="font-mono">{discordState.user.tag}</span>
+            </span>
+          )}
+        </div>
+        <Button variant="outline" size="xs" onClick={() => void loadState()}>Refresh</Button>
+      </div>
+
+      {selectedGuild && (
+        <div className="grid grid-cols-[1fr_260px] gap-4">
+
+          {/* Channels panel */}
+          <Card className="p-4 space-y-3">
+            <div>
+              <span className="text-[13px] font-semibold text-foreground">Channels</span>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                <span className="font-medium text-foreground">Off</span> = ignored ·{" "}
+                <span className="font-medium text-blue-400">Monitor</span> = reads all messages, no responses ·{" "}
+                <span className="font-medium text-emerald-400">Respond</span> = reads + AI routing
+              </p>
+            </div>
+            <div className="space-y-4 max-h-[480px] overflow-y-auto pr-1">
+              {groupChannels(selectedGuild.channels).map(({ parent, channels: chs }) => (
+                <div key={parent ?? "__root__"}>
+                  {parent !== undefined && (
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 px-2">
+                      {parent}
+                    </div>
+                  )}
+                  <div className="space-y-0.5">
+                    {chs.map((ch) => {
+                      const mode: DiscordChannelMode = channelModes[ch.id] ?? "off";
+                      return (
+                        <div
+                          key={ch.id}
+                          className="flex items-center justify-between gap-2 py-1 px-2 rounded hover:bg-secondary/40"
+                        >
+                          <span className="text-[13px] text-foreground truncate flex-1 min-w-0">
+                            <span className="text-muted-foreground mr-1 select-none">
+                              {ch.kind === "forum" ? "§" : "#"}
+                            </span>
+                            {ch.name}
+                          </span>
+                          <div className="flex items-center gap-0.5 shrink-0">
+                            {(["off", "monitor", "respond"] as DiscordChannelMode[]).map((m) => (
+                              <button
+                                key={m}
+                                type="button"
+                                onClick={() => setMode(ch.id, m)}
+                                className={cn(
+                                  "px-2 py-0.5 rounded text-[11px] font-medium transition-colors",
+                                  mode === m
+                                    ? m === "respond"
+                                      ? "bg-emerald-500/20 text-emerald-400"
+                                      : m === "monitor"
+                                        ? "bg-blue-500/20 text-blue-400"
+                                        : "bg-secondary text-foreground"
+                                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/60",
+                                )}
+                              >
+                                {m.charAt(0).toUpperCase() + m.slice(1)}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* Roles panel */}
+          <Card className="p-4 space-y-3">
+            <div>
+              <span className="text-[13px] font-semibold text-foreground">Roles</span>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Checked roles can interact with Aion. Empty = all roles allowed.
+              </p>
+            </div>
+            <div className="space-y-0.5 max-h-[480px] overflow-y-auto">
+              {selectedGuild.roles
+                .filter((r) => !r.managed)
+                .map((role) => {
+                  const color = roleColor(role.color);
+                  const checked = allowedRoleSet.has(role.id);
+                  return (
+                    <label
+                      key={role.id}
+                      className="flex items-center gap-2 py-1 px-2 rounded hover:bg-secondary/40 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleRole(role.id)}
+                        className="accent-emerald-500 shrink-0"
+                      />
+                      <span
+                        className="text-[13px] truncate"
+                        style={color !== undefined ? { color } : undefined}
+                      >
+                        {role.name}
+                      </span>
+                    </label>
+                  );
+                })}
+              {selectedGuild.roles.filter((r) => !r.managed).length === 0 && (
+                <p className="text-[12px] text-muted-foreground py-2 px-2">
+                  No assignable roles found in this server.
+                </p>
+              )}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      <div className="flex items-center gap-3">
+        <button
+          onClick={() => { void handleSave(); }}
+          disabled={saving || cfgResponse === null}
+          className="px-4 py-1.5 rounded-lg text-[13px] font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+        {saveMsg !== null && (
+          <span className={`text-[12px] ${saveMsg.startsWith("Error") ? "text-destructive" : "text-emerald-400"}`}>
+            {saveMsg}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // ChannelTab — config + controls for one channel
 // ---------------------------------------------------------------------------
 
@@ -566,13 +923,25 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
         </div>
       </Card>
 
-      {/* Inner tabs: Settings / Chats / Log */}
+      {/* Inner tabs: Settings / Server (Discord only) / Chats / Log */}
       <Tabs defaultValue="settings">
         <TabsList className="mb-3">
           <TabsTrigger value="settings">Settings</TabsTrigger>
+          {id === "discord" && <TabsTrigger value="server">Server</TabsTrigger>}
           <TabsTrigger value="chats">Chats</TabsTrigger>
           <TabsTrigger value="log">Log</TabsTrigger>
         </TabsList>
+
+        {id === "discord" && (
+          <TabsContent value="server">
+            <DiscordServerPanel
+              channelId={id}
+              cfgResponse={cfgResponse}
+              enabled={enabled}
+              onSaved={loadData}
+            />
+          </TabsContent>
+        )}
 
         <TabsContent value="settings">
           <div className="space-y-5">
@@ -602,19 +971,27 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
                 <p className="text-[13px] text-muted-foreground">No configuration fields for this channel.</p>
               ) : (
                 <div className="grid grid-cols-1 gap-3">
-                  {fieldKeys.map((key) => (
-                    <div key={key} className="flex flex-col gap-1">
-                      <label className="text-[12px] font-medium text-muted-foreground">{fieldLabel(key)}</label>
-                      <input
-                        type={isSensitive(key) ? "password" : "text"}
-                        value={form[key] ?? ""}
-                        onChange={(e) => setForm((prev) => ({ ...prev, [key]: e.target.value }))}
-                        autoComplete="off"
-                        className="h-8 px-3 rounded-lg border border-input bg-background text-[13px] text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                        placeholder={isSensitive(key) ? "••••••••" : ""}
-                      />
-                    </div>
-                  ))}
+                  {fieldKeys
+                    // Discord array fields are managed visually in the Server tab
+                    .filter((key) => !(id === "discord" && DISCORD_VISUAL_FIELDS.has(key)))
+                    .map((key) => (
+                      <div key={key} className="flex flex-col gap-1">
+                        <label className="text-[12px] font-medium text-muted-foreground">{fieldLabel(key)}</label>
+                        <input
+                          type={isSensitive(key) ? "password" : "text"}
+                          value={form[key] ?? ""}
+                          onChange={(e) => setForm((prev) => ({ ...prev, [key]: e.target.value }))}
+                          autoComplete="off"
+                          className="h-8 px-3 rounded-lg border border-input bg-background text-[13px] text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                          placeholder={isSensitive(key) ? "••••••••" : ""}
+                        />
+                      </div>
+                    ))}
+                  {id === "discord" && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Channel presence and role permissions are managed in the <strong>Server</strong> tab.
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -696,6 +1073,15 @@ export default function SettingsChannelsPage() {
           operational entries filtered to the channel (auto-refreshes every 5s). Chats shows
           the conversation history as chat bubbles (inbound left, outbound right) with pagination.
           Backend: GET /api/channels/:id/ops-log backed by an in-process log ring buffer.
+        </DevNote.Item>
+        <DevNote.Item kind="info" heading="Discord server management panel">
+          Discord channel tab gains a &quot;Server&quot; inner tab. Fetches live guild data from
+          /api/channels/discord/state (guilds, channels with category grouping, roles). Each channel
+          has Off / Monitor / Respond radio toggles: Monitor = Aion reads all messages for context
+          but never responds; Respond = full AI routing. Each non-managed role has a &quot;Can
+          interact&quot; checkbox (empty = all roles allowed). The four array config fields
+          (allowedChannelIds, presenceChannelIds, allowedRoleIds, allowedGuildIds) are hidden from
+          the generic Settings form and managed exclusively through the Server panel.
         </DevNote.Item>
         <DevNote.Item kind="info" heading="Discord reconnect + role access control + member registration">
           Three Discord improvements shipped together: (1) Discord now auto-reconnects after

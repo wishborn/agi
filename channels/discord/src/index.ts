@@ -33,7 +33,6 @@ import { sendOutbound } from "./outbound.js";
 import {
   createSecurityAdapter,
   isGuildAllowed,
-  isChannelAllowed,
   isRoleAllowed,
 } from "./security.js";
 import { buildDiscordBridgeTools } from "./aion-tools.js";
@@ -289,7 +288,11 @@ type CreateUserFn = (
 export function createDiscordPlugin(
   config: DiscordConfig,
   opts?: { createUser?: CreateUserFn },
-): AionimaChannelPlugin & { __client: Client; __config: DiscordConfig } {
+): AionimaChannelPlugin & {
+  __client: Client;
+  __config: DiscordConfig;
+  getExtendedState: () => Record<string, unknown>;
+} {
   if (!isDiscordConfig(config)) {
     throw new Error("Invalid Discord config: botToken is required");
   }
@@ -330,9 +333,33 @@ export function createDiscordPlugin(
     // Ignore messages from bots (including ourselves)
     if (msg.author.bot) return;
 
-    // Guild and channel scope checks
+    // Guild scope (always enforced)
     if (!isGuildAllowed(msg.guildId, normalizeDiscordArrayField(config.allowedGuildIds))) return;
-    if (!isChannelAllowed(msg.channelId, normalizeDiscordArrayField(config.allowedChannelIds))) return;
+
+    // Channel mode: Off (ignore completely) / Monitor (read, no AI) / Respond (full pipeline)
+    // If neither list is configured → legacy open-access: treat everything as Respond.
+    const configuredAllowed = normalizeDiscordArrayField(config.allowedChannelIds);
+    const configuredPresence = normalizeDiscordArrayField(config.presenceChannelIds);
+    const hasExplicitChannels = configuredAllowed.length > 0 || configuredPresence.length > 0;
+    const isRespondChannel = !hasExplicitChannels || configuredAllowed.includes(msg.channelId);
+    const isMonitorChannel =
+      hasExplicitChannels && !isRespondChannel && configuredPresence.includes(msg.channelId);
+    // Off channel — drop completely
+    if (hasExplicitChannels && !isRespondChannel && !isMonitorChannel) return;
+
+    // Monitor channels: track context + user registration, but skip AI routing entirely
+    if (isMonitorChannel) {
+      replyChannelMap.set(msg.author.id, msg.channelId);
+      if (opts?.createUser) {
+        await opts.createUser("discord", msg.author.id, {
+          displayName: buildDisplayName(msg),
+          username: msg.author.username,
+        }).catch(() => { /* non-critical */ });
+      }
+      return;
+    }
+
+    // --- Respond channel: full pipeline below ---
 
     // Role allowlist — guild messages only (DMs bypass the role check)
     const allowedRoleIds = normalizeDiscordArrayField(config.allowedRoleIds);
@@ -586,6 +613,14 @@ export function createDiscordPlugin(
     },
 
     security,
+
+    // Exposes live guild/channel/role state through the gateway's standard
+    // GET /api/channels/:id/state endpoint (server-runtime-state.ts:974).
+    // The plugin-registered route at /api/channels/discord/state takes
+    // precedence in practice; this is for completeness + future callers.
+    getExtendedState: (): Record<string, unknown> =>
+      getDiscordState(client) as unknown as Record<string, unknown>,
+
     // Internal escape hatches — used by the activate() function below to
     // register bridge tools against the live Client. Marked as `__` to
     // discourage consumer use; not part of the public AionimaChannelPlugin

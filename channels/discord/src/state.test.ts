@@ -80,12 +80,14 @@ describe("describeClientState", () => {
           memberCount: 42,
           iconUrl: "https://cdn.discord/g1.png",
           channels: [{ id: "c1", name: "general", kind: "text" }],
+          roles: [],
         },
         {
           id: "g2",
           name: "Civicognita",
           memberCount: 7,
           channels: [],
+          roles: [],
         },
       ],
     });
@@ -121,6 +123,7 @@ describe("flattenStateToAvailableRooms (CHN-D slice 3b)", () => {
             { id: "c2", name: "lobby", kind: "voice" }, // filtered
             { id: "c3", name: "bug-reports", kind: "forum", parent: "Support" },
           ],
+          roles: [],
         },
         {
           id: "g2",
@@ -128,6 +131,7 @@ describe("flattenStateToAvailableRooms (CHN-D slice 3b)", () => {
           channels: [
             { id: "c4", name: "announcements", kind: "text", parent: "Info" },
           ],
+          roles: [],
         },
       ],
     });
@@ -152,6 +156,7 @@ describe("flattenStateToAvailableRooms (CHN-D slice 3b)", () => {
           id: "12345",
           name: "Test",
           channels: [{ id: "67890", name: "ch", kind: "text" }],
+          roles: [],
         },
       ],
     });
@@ -164,7 +169,7 @@ describe("flattenStateToAvailableRooms (CHN-D slice 3b)", () => {
       user: { id: "u", tag: "Aion#1" },
       snapshotAt: "",
       guilds: [
-        { id: "g", name: "S", channels: [{ id: "c", name: "ch", kind: "text" }] },
+        { id: "g", name: "S", channels: [{ id: "c", name: "ch", kind: "text" }], roles: [] },
       ],
     });
     expect(out[0]?.channelId).toBe("discord");

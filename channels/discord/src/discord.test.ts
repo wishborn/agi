@@ -111,8 +111,12 @@ describe("isDiscordConfig", () => {
     expect(isDiscordConfig({ botToken: 123 })).toBe(false);
   });
 
-  it("rejects allowedGuildIds that is not an array", () => {
-    expect(isDiscordConfig({ botToken: "tok", allowedGuildIds: "guild1" })).toBe(false);
+  it("accepts allowedGuildIds as a comma-separated string (generic settings UI)", () => {
+    expect(isDiscordConfig({ botToken: "tok", allowedGuildIds: "guild1" })).toBe(true);
+  });
+
+  it("rejects allowedGuildIds that is a number", () => {
+    expect(isDiscordConfig({ botToken: "tok", allowedGuildIds: 9 })).toBe(false);
   });
 
   it("rejects allowedGuildIds containing non-strings", () => {

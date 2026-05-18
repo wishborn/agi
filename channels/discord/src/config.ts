@@ -22,6 +22,12 @@ export interface DiscordConfig {
    * converts it to string[] before use.
    */
   allowedRoleIds?: string[];
+  /**
+   * Channels where Aion reads all messages for context and moderation but
+   * does NOT route to the AI (no responses). Respond to @mentions only in
+   * allowedChannelIds; read everything here. Empty = no monitor-only channels.
+   */
+  presenceChannelIds?: string[];
   /** Only respond when @mentioned or in DMs, default true. */
   mentionOnly?: boolean;
   /** Max messages per user per minute before rate-limiting (default: 20). */
@@ -66,7 +72,7 @@ export function isDiscordConfig(value: unknown): value is DiscordConfig {
 
   // Accept both string[] and comma-separated string for all array fields
   // (the generic Settings UI form saves them as comma-separated strings).
-  for (const field of ["allowedGuildIds", "allowedChannelIds", "allowedRoleIds"] as const) {
+  for (const field of ["allowedGuildIds", "allowedChannelIds", "allowedRoleIds", "presenceChannelIds"] as const) {
     if (field in obj) {
       const v = obj[field];
       if (
@@ -98,6 +104,9 @@ export function createConfigAdapter(): ChannelConfigAdapter {
     getDefaults: () => ({
       botToken: "",
       applicationId: "",
+      allowedGuildIds: "",
+      allowedChannelIds: "",
+      presenceChannelIds: "",
       allowedRoleIds: "",
       mentionOnly: true,
       rateLimitPerMinute: 20,

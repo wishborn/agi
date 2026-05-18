@@ -23,12 +23,24 @@ export interface DiscordChannelDescriptor {
   parent?: string;
 }
 
+export interface DiscordRoleDescriptor {
+  id: string;
+  name: string;
+  /** Discord integer color (0 = unset/default). */
+  color: number;
+  /** Position in the guild role hierarchy (higher = more privileged). */
+  position: number;
+  /** true for bot-managed / integration roles (cannot be manually assigned). */
+  managed: boolean;
+}
+
 export interface DiscordGuildDescriptor {
   id: string;
   name: string;
   iconUrl?: string;
   memberCount?: number;
   channels: DiscordChannelDescriptor[];
+  roles: DiscordRoleDescriptor[];
 }
 
 export interface DiscordStateDescriptor {
@@ -108,6 +120,32 @@ export function describeGuildChannels(guild: Pick<Guild, "channels">): DiscordCh
 }
 
 /**
+ * Pure-logic extractor: walk a Guild's role cache and produce a sorted,
+ * normalized list of role descriptors. Excludes the synthetic @everyone role
+ * (always present, not useful for access-control purposes).
+ */
+export function describeGuildRoles(
+  guild: Pick<Guild, "roles">,
+): DiscordRoleDescriptor[] {
+  const out: DiscordRoleDescriptor[] = [];
+  for (const role of guild.roles.cache.values()) {
+    if (role.name === "@everyone") continue;
+    out.push({
+      id: role.id,
+      name: role.name,
+      color: role.color,
+      position: role.position,
+      managed: role.managed,
+    });
+  }
+  // Sort by descending position (most-privileged first) then name
+  out.sort((a, b) =>
+    b.position !== a.position ? b.position - a.position : a.name.localeCompare(b.name),
+  );
+  return out;
+}
+
+/**
  * Pure-logic extractor for the full client state. Accepts a thin
  * duck-typed shape so unit tests can pass a fake. The avatar/icon
  * lookups are resolved in `getDiscordState()` (the type-safe wrapper
@@ -123,6 +161,7 @@ export interface ClientStateInput {
     memberCount?: number;
     iconUrl?: string;
     channels: DiscordChannelDescriptor[];
+    roles: DiscordRoleDescriptor[];
   }>;
 }
 
@@ -131,7 +170,9 @@ export function describeClientState(input: ClientStateInput): DiscordStateDescri
   if (input.user === null) {
     return { connected: false, guilds: [], snapshotAt };
   }
-  const guilds = [...input.guilds].sort((a, b) => a.name.localeCompare(b.name));
+  const guilds = [...input.guilds]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((g) => ({ ...g }));
   return {
     connected: true,
     user: {
@@ -225,6 +266,7 @@ export function getDiscordState(client: Client): DiscordStateDescriptor {
       memberCount: g.memberCount,
       iconUrl,
       channels: describeGuildChannels(g),
+      roles: describeGuildRoles(g),
     });
   }
   return describeClientState({
