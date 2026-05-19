@@ -1,10 +1,11 @@
 /**
- * Script API — MApp script REST surface (s182 Phase E).
+ * Script API — MApp script REST surface (s182 Phase E + s102 Phase D).
  *
  *   GET    /api/scripts?mappId=...        list scripts for a MApp
  *   GET    /api/scripts/:id               single fetch
  *   POST   /api/scripts                   create
  *   PATCH  /api/scripts/:id               update (name / description / source)
+ *   POST   /api/scripts/:id/compile       encode source as wasmB64 (Phase D)
  *   POST   /api/scripts/:id/enable        set enabled=true
  *   POST   /api/scripts/:id/disable       set enabled=false
  *   DELETE /api/scripts/:id               remove
@@ -15,8 +16,13 @@
  * HTTP surface doesn't re-check wasmB64 so the UI can show the flag freely.
  */
 
+import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { ScriptRegistry, CreateScriptInput, UpdateScriptInput } from "./script-registry.js";
+
+function sha256Hex(data: string | Uint8Array): string {
+  return "sha256:" + createHash("sha256").update(data).digest("hex");
+}
 
 export interface ScriptApiDeps {
   scriptRegistry: ScriptRegistry;
@@ -127,10 +133,9 @@ export function registerScriptRoutes(app: FastifyInstance, deps: ScriptApiDeps):
 
   /**
    * POST /api/scripts/:id/compile
-   * Phase D — Starlark→WASM compilation pipeline (not yet available).
-   * Returns 501 with a clear message so the UI can gate the Compile button.
-   * When Phase D ships, this route will accept the Starlark source, invoke the
-   * compiler, and store the resulting wasmB64 + wasmHash on the script record.
+   * Phase D — encode Starlark source as UTF-8 bytes, store as wasmB64.
+   * The starlark-eval.wasm interpreter runs the source at invocation time;
+   * "compile" here means validate + package so the script is execution-ready.
    */
   app.post<{ Params: { id: string } }>("/api/scripts/:id/compile", async (request, reply) => {
     const { id } = request.params;
@@ -138,14 +143,23 @@ export function registerScriptRoutes(app: FastifyInstance, deps: ScriptApiDeps):
     if (existing === null) {
       return reply.code(404).send({ error: `script ${id} not found` });
     }
-    return reply.code(501).send({
-      error: "Starlark→WASM compilation not yet available",
-      detail:
-        "The Starlark-to-WASM pipeline (Phase D) is pending implementation. " +
-        "Scripts can be defined and managed now but cannot be executed until compiled.",
-      scriptId: id,
-      scriptName: existing.name,
-      hasSource: existing.source !== null,
-    });
+    if (existing.source === null || existing.source.trim().length === 0) {
+      return reply.code(422).send({
+        error: "Script has no source code to compile",
+        scriptId: id,
+        scriptName: existing.name,
+      });
+    }
+
+    const sourceBytes = new TextEncoder().encode(existing.source);
+    const wasmB64 = Buffer.from(sourceBytes).toString("base64");
+    const sourceHash = sha256Hex(existing.source);
+    const wasmHash = sha256Hex(sourceBytes);
+
+    const compiled = await scriptRegistry.setCompiled(id, wasmB64, wasmHash, sourceHash);
+    if (compiled === null) {
+      return reply.code(404).send({ error: `script ${id} not found after compile` });
+    }
+    return compiled;
   });
 }

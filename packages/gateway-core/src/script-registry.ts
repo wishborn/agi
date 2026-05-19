@@ -189,6 +189,27 @@ export class ScriptRegistry {
   }
 
   /**
+   * Store compiled artifact for a script.
+   * For Starlark mode (Phase D), wasmB64 is the base64 of the UTF-8 source bytes;
+   * the starlark-eval.wasm interpreter runs the source at invocation time.
+   * Returns null when the script doesn't exist.
+   */
+  async setCompiled(
+    id: string,
+    wasmB64: string,
+    wasmHash: string,
+    sourceHash: string,
+  ): Promise<MappScriptRecord | null> {
+    const existing = await this.get(id);
+    if (existing === null) return null;
+    await this.db
+      .update(mappScripts)
+      .set({ wasmB64, wasmHash, sourceHash, updatedAt: new Date() })
+      .where(eq(mappScripts.id, id));
+    return this.get(id);
+  }
+
+  /**
    * Return enabled packer scripts for a MApp.
    * Used by the agent pipeline to inject active packers (Phase F wiring).
    * Only scripts with is_packer=true AND enabled=true AND wasmB64 non-null

@@ -1,22 +1,30 @@
 /// <reference lib="dom" />
 /**
- * ScriptRunner — Phase A WASM host infrastructure.
+ * ScriptRunner — WASM host infrastructure (Phase A + Phase D).
  *
- * Executes a pre-compiled WASM module with JSON input/output, wall-clock
- * timing, SHA-256 COA logging, and WASI stubs that enforce deterministic mode
- * (frozen clock + seeded PRNG). Full WASI preopens and stdout capture arrive
- * in Phase D when the Starlark-to-WASM pipeline is wired.
+ * Two execution modes, auto-detected from the binary:
  *
- * Phase A limitations:
- * - Synchronous execution (blocks event loop for script duration).
- *   Worker-thread isolation lands in Phase D for runaway protection.
- * - WASI preopens option is reserved; path_open returns EBADF in Phase A.
- * - Output is read from memory offset 65536 (page boundary) — the WASM
- *   module must null-terminate a JSON string there. Modules that don't
- *   write output return `{}`.
+ *   WASM mode (Phase A): `run()` receives a WASM binary (magic \x00asm).
+ *     Stubs all WASI syscalls; output read from memory offset 65536.
+ *
+ *   Starlark mode (Phase D): `run()` receives Starlark source bytes
+ *     (not a WASM binary). The bundled starlark-eval.wasm interpreter
+ *     is loaded via node:wasi with WASI preopens for I/O file exchange.
+ *     Source → /input/source.star, input → /input/input.json,
+ *     result read from /output/output.json.
+ *
+ * Phase D limitations (Worker thread isolation deferred to Phase D-ii):
+ * - Starlark execution is synchronous (blocks event loop).
+ * - timeoutMs enforced as a best-effort SIGABRT via AbortController;
+ *   runaway scripts blocked by the WASM fuel metering in Phase D-ii.
  */
 
 import { createHash } from "node:crypto";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { WASI } from "node:wasi";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -87,6 +95,23 @@ export class ScriptError extends Error {
 // Runner
 // ---------------------------------------------------------------------------
 
+const STARLARK_INTERPRETER_WASM = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "../tools/starlark-eval/starlark-eval.wasm",
+);
+
+const WASM_MAGIC = new Uint8Array([0x00, 0x61, 0x73, 0x6d]);
+
+function isWasmBinary(bytes: Uint8Array): boolean {
+  return (
+    bytes.length >= 4 &&
+    bytes[0] === WASM_MAGIC[0] &&
+    bytes[1] === WASM_MAGIC[1] &&
+    bytes[2] === WASM_MAGIC[2] &&
+    bytes[3] === WASM_MAGIC[3]
+  );
+}
+
 export class ScriptRunner {
   /**
    * Execute a WASM binary with the given JSON input and return a ScriptResult.
@@ -96,6 +121,15 @@ export class ScriptRunner {
    * non-zero → `exitReason: "error"`.
    */
   async run(
+    wasmBinary: Uint8Array,
+    input: unknown = null,
+    opts: ScriptOptions = {},
+  ): Promise<ScriptResult> {
+    if (!isWasmBinary(wasmBinary)) return this.runStarlark(wasmBinary, input, opts);
+    return this.runWasm(wasmBinary, input, opts);
+  }
+
+  private async runWasm(
     wasmBinary: Uint8Array,
     input: unknown = null,
     opts: ScriptOptions = {},
@@ -150,6 +184,77 @@ export class ScriptRunner {
         exitReason = "error";
         stdout = JSON.stringify({ error: String(err) });
       }
+    }
+
+    const durationMs = Date.now() - startMs;
+    const outputHash = sha256(stdout);
+
+    let output: unknown = null;
+    try { output = JSON.parse(stdout); } catch { output = stdout; }
+
+    return { output, stdout, exitCode, durationMs, inputHash, outputHash, exitReason };
+  }
+
+  private async runStarlark(
+    sourceBytes: Uint8Array,
+    input: unknown = null,
+    opts: ScriptOptions = {},
+  ): Promise<ScriptResult> {
+    void opts;
+    const startMs = Date.now();
+    const inputJson = JSON.stringify(input);
+    const inputHash = sha256(inputJson);
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "starlark-"));
+    const inputDir = join(tmpDir, "input");
+    const outputDir = join(tmpDir, "output");
+    mkdirSync(inputDir);
+    mkdirSync(outputDir);
+
+    writeFileSync(join(inputDir, "source.star"), sourceBytes);
+    writeFileSync(join(inputDir, "input.json"), new TextEncoder().encode(inputJson));
+
+    let stdout = "{}";
+    let exitCode = 0;
+    let exitReason: ScriptExitReason = "ok";
+
+    try {
+      const interpreterBytes = readFileSync(STARLARK_INTERPRETER_WASM);
+      const wasi = new WASI({
+        version: "preview1",
+        stdin: 0,
+        stdout: 1,
+        stderr: 2,
+        preopens: {
+          "/input": inputDir,
+          "/output": outputDir,
+        },
+        returnOnExit: true,
+      });
+
+      const { instance } = (await WebAssembly.instantiate(
+        interpreterBytes,
+        { wasi_snapshot_preview1: wasi.wasiImport },
+      )) as unknown as WebAssembly.WebAssemblyInstantiatedSource;
+
+      exitCode = wasi.start(instance) ?? 0;
+      exitReason = exitCode === 0 ? "ok" : "error";
+
+      if (exitCode === 0) {
+        try {
+          stdout = readFileSync(join(outputDir, "output.json"), "utf8");
+        } catch {
+          stdout = "{}";
+        }
+      } else {
+        stdout = JSON.stringify({ error: `starlark-eval exited with code ${exitCode}` });
+      }
+    } catch (err) {
+      exitCode = 1;
+      exitReason = "error";
+      stdout = JSON.stringify({ error: String(err) });
+    } finally {
+      try { rmSync(tmpDir, { recursive: true }); } catch { /* ignore */ }
     }
 
     const durationMs = Date.now() - startMs;

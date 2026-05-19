@@ -147,3 +147,56 @@ describe("ScriptRunner (s182 Phase A)", () => {
     expect(a.outputHash).toBe(b.outputHash);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase D — Starlark mode (uses bundled starlark-eval.wasm interpreter)
+// ---------------------------------------------------------------------------
+
+describe("ScriptRunner (s102 Phase D — Starlark mode)", () => {
+  const src = (code: string) => new TextEncoder().encode(code);
+
+  it("routes non-WASM bytes to the Starlark executor", async () => {
+    const runner = new ScriptRunner();
+    const result = await runner.run(src('def main(input): return {"ok": True}'), null);
+    expect(result.exitReason).toBe("ok");
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toEqual({ ok: true });
+  });
+
+  it("passes JSON input to main(input) and returns its result", async () => {
+    const runner = new ScriptRunner();
+    const result = await runner.run(src("def main(input): return input"), { value: 42 });
+    expect(result.exitReason).toBe("ok");
+    expect((result.output as Record<string, unknown>).value).toBe(42);
+  });
+
+  it("serializes globals dict when main() is absent", async () => {
+    const runner = new ScriptRunner();
+    const result = await runner.run(src('x = 1\ny = "hello"'), null);
+    expect(result.exitReason).toBe("ok");
+    const out = result.output as Record<string, unknown>;
+    expect(out.x).toBe(1);
+    expect(out.y).toBe("hello");
+  });
+
+  it("returns exitReason=error on Starlark syntax error", async () => {
+    const runner = new ScriptRunner();
+    const result = await runner.run(src("def main(input: !!!bad syntax"), null);
+    expect(result.exitReason).toBe("error");
+    expect(result.exitCode).not.toBe(0);
+  });
+
+  it("WASM magic bytes still route to Phase A path after Phase D is wired", async () => {
+    const runner = new ScriptRunner();
+    const result = await runner.run(WASM_NOOP, null);
+    expect(result.exitReason).toBe("ok");
+    expect(result.stdout).toBe("{}");
+  });
+
+  it("produces stable inputHash for repeated Starlark runs", async () => {
+    const runner = new ScriptRunner();
+    const a = await runner.run(src("def main(input): return input"), { n: 1 });
+    const b = await runner.run(src("def main(input): return input"), { n: 1 });
+    expect(a.inputHash).toBe(b.inputHash);
+  });
+});
