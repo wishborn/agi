@@ -54,6 +54,7 @@ import { registerSecurityRoutes } from "./security-api.js";
 import { registerProvidersRoutes } from "./providers-api.js";
 import { registerPmRoutes } from "./pm-api.js";
 import { registerNotesRoutes } from "./notes-api.js";
+import { registerScriptRoutes } from "./script-api.js";
 import { registerWorkflowsRoutes } from "./workflows-api.js";
 import { registerAdminRoutes } from "./admin-api.js";
 import { ScanProviderRegistry, ScanStore, ScanRunner, sastScanner, scaScanner, secretsScanner, configScanner } from "@agi/security";
@@ -1015,6 +1016,12 @@ export async function startGatewayServer(
   // the user-writes-note → Aion-reads-note loop.
   const { NotesStore } = await import("./notes-store.js");
   const notesStore = new NotesStore(db);
+
+  // s182 Phase E — ScriptRegistry + ScriptRunner for per-MApp Starlark scripting.
+  const { ScriptRegistry } = await import("./script-registry.js");
+  const { ScriptRunner } = await import("./script-runner.js");
+  const scriptRegistry = new ScriptRegistry(db);
+  const scriptRunner = new ScriptRunner();
 
   const agentInvoker = new AgentInvoker({
     stateMachine,
@@ -2459,6 +2466,8 @@ export async function startGatewayServer(
     scanRunner,
     scanStore,
     coaLogger,
+    scriptRegistry,
+    scriptRunner,
   });
   log.info(`registered ${String(agentToolCount)} agent tools`);
 
@@ -3434,6 +3443,9 @@ export async function startGatewayServer(
           notesStore,
           workspaceProjects: projectPaths,
         }),
+        // s182 Phase E — MApp script REST surface. CRUD + enable/disable
+        // for per-MApp Starlark scripts; consumed by MAppEditor Scripts tab.
+        (f) => registerScriptRoutes(f, { scriptRegistry }),
         (f) => registerWorkflowsRoutes(f),
         (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api"), aionMicroManager),
         (f: import("fastify").FastifyInstance) => registerHfRoutes(f, hfApiDeps),

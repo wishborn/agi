@@ -282,6 +282,92 @@ export async function deleteNote(id: string): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// s182 Phase E — MApp Scripts API
+// ---------------------------------------------------------------------------
+
+export interface MAppScript {
+  id: string;
+  mappId: string;
+  name: string;
+  description: string | null;
+  language: "starlark";
+  source: string | null;
+  sourceHash: string | null;
+  wasmB64: string | null;
+  wasmHash: string | null;
+  isPacker: boolean;
+  enabled: boolean;
+  timeoutMs: number;
+  maxMemoryPages: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function fetchScripts(mappId: string): Promise<MAppScript[]> {
+  const res = await fetch(`/api/scripts?mappId=${encodeURIComponent(mappId)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { scripts: MAppScript[] };
+  return data.scripts;
+}
+
+export async function createScript(input: {
+  mappId: string; name: string; description?: string | null; source?: string | null; isPacker?: boolean;
+}): Promise<MAppScript> {
+  const res = await fetch("/api/scripts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<MAppScript>;
+}
+
+export async function updateScript(id: string, patch: {
+  name?: string; description?: string | null; source?: string | null; isPacker?: boolean;
+}): Promise<MAppScript> {
+  const res = await fetch(`/api/scripts/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<MAppScript>;
+}
+
+export async function enableScript(id: string): Promise<void> {
+  const res = await fetch(`/api/scripts/${encodeURIComponent(id)}/enable`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function disableScript(id: string): Promise<void> {
+  const res = await fetch(`/api/scripts/${encodeURIComponent(id)}/disable`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function deleteScript(id: string): Promise<void> {
+  const res = await fetch(`/api/scripts/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
 export async function createProject(params: {
   name: string;
   tynnToken?: string;
