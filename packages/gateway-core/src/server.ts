@@ -62,7 +62,7 @@ import { COAChainLogger } from "@agi/coa-chain";
 import { PairingStore } from "./pairing-store.js";
 import type { AionimaMessage } from "@agi/plugins";
 import { createLogger, createComponentLogger } from "./logger.js";
-import type { Logger, LogEntry } from "./logger.js";
+import type { Logger, ComponentLogger, LogEntry } from "./logger.js";
 import { CpuPowerSampler, GpuPowerSampler } from "./system-power.js";
 import { CostLedgerWriter } from "./cost-ledger-writer.js";
 import { CostLedgerReader } from "./cost-ledger-reader.js";
@@ -238,6 +238,86 @@ async function generateNextSteps(
 }
 
 // ---------------------------------------------------------------------------
+// Startup helpers
+// ---------------------------------------------------------------------------
+
+async function probeConnectivity(
+  cfg: AionimaConfig,
+  log: ComponentLogger,
+): Promise<{ prime: boolean; hive: boolean }> {
+  const primeDir = cfg.prime?.dir ?? "/opt/agi-prime";
+  const prime = existsSync(join(primeDir, "prime.md"));
+
+  const hiveUrl = cfg.federation?.seedPeers?.[0] ?? "https://id.aionima.ai";
+  let hive = false;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(`${hiveUrl}/health`, { signal: controller.signal });
+    clearTimeout(timer);
+    hive = res.ok;
+  } catch {
+    hive = false;
+  }
+
+  log.info(`connectivity probe: prime=${String(prime)} hive=${String(hive)} → ${prime && hive ? "ONLINE" : prime || hive ? "LIMBO" : "OFFLINE"}`);
+  return { prime, hive };
+}
+
+async function resolveOwnerEntity(
+  ownerConfig: AionimaConfig["owner"],
+  entityStore: EntityStore,
+  log: ComponentLogger,
+): Promise<string | undefined> {
+  if (ownerConfig === undefined) return undefined;
+
+  const ownerChannels = ownerConfig.channels;
+  const hasChannels = Object.values(ownerChannels).some((v) => v !== undefined);
+
+  if (!hasChannels) {
+    log.warn("owner.channels is empty — owner recognition disabled");
+    return undefined;
+  }
+
+  const channelEntries = Object.entries(ownerChannels).filter(
+    (entry): entry is [string, string] => entry[1] !== undefined,
+  );
+
+  let ownerEntity: Entity | undefined;
+
+  for (const [channel, channelUserId] of channelEntries) {
+    const existing = await entityStore.getEntityByChannel(channel, channelUserId);
+    if (existing !== null) {
+      ownerEntity = existing;
+      break;
+    }
+  }
+
+  if (ownerEntity === undefined) {
+    const [firstChannel, firstUserId] = channelEntries[0]!;
+    ownerEntity = await entityStore.resolveOrCreate(firstChannel, firstUserId, ownerConfig.displayName);
+  }
+
+  for (const [channel, channelUserId] of channelEntries) {
+    await entityStore.upsertChannelAccount({
+      entityId: ownerEntity.id,
+      channel,
+      channelUserId,
+    });
+  }
+
+  if (ownerEntity.verificationTier !== "sealed") {
+    await entityStore.updateEntity(ownerEntity.id, { verificationTier: "sealed" });
+  }
+  if (ownerEntity.displayName === "Unknown") {
+    await entityStore.updateEntity(ownerEntity.id, { displayName: ownerConfig.displayName });
+  }
+
+  log.info(`owner entity resolved: ${ownerEntity.coaAlias} (${ownerEntity.displayName}) — sealed`);
+  return ownerEntity.id;
+}
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
@@ -277,7 +357,7 @@ export async function startGatewayServer(
   // Step 1: Config merge — apply CLI overrides
   // -------------------------------------------------------------------------
 
-  const gw = config.gateway ?? { host: "127.0.0.1", port: 3100, state: "OFFLINE" as const };
+  const gw = config.gateway ?? { host: "127.0.0.1", port: 3100, state: "UNKNOWN" as const };
   const host = opts?.host ?? gw.host;
   const port = opts?.port ?? gw.port;
 
@@ -434,11 +514,16 @@ export async function startGatewayServer(
   // Step 3: State machine initialization
   // -------------------------------------------------------------------------
 
-  const stateMachine = new GatewayStateMachine(gw.state);
+  // Always start as UNKNOWN — the probe below is the authoritative source of truth.
+  const stateMachine = new GatewayStateMachine("UNKNOWN");
 
   stateMachine.on("state_change", (transition: StateTransition) => {
     log.info(`state transition: ${transition.from} → ${transition.to} at ${transition.timestamp}`);
   });
+
+  // Run connectivity probe and set initial state authoritatively.
+  const { prime, hive } = await probeConnectivity(config, log);
+  stateMachine.forceState(prime && hive ? "ONLINE" : prime || hive ? "LIMBO" : "OFFLINE");
 
   // -------------------------------------------------------------------------
   // Step 4: Core data layer — open database, create EntityStore + MessageQueue
@@ -522,60 +607,7 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   const ownerConfig = config.owner;
-  let ownerEntityId: string | undefined;
-
-  if (ownerConfig !== undefined) {
-    const ownerChannels = ownerConfig.channels;
-    const hasChannels = Object.values(ownerChannels).some((v) => v !== undefined);
-
-    if (hasChannels) {
-      // First pass: find an existing entity from ANY configured channel.
-      // This prevents creating a duplicate when a new channel ID is added
-      // alongside one that already has an entity (e.g. adding Discord
-      // when Telegram entity #E0 already exists).
-      const channelEntries = Object.entries(ownerChannels).filter(
-        (entry): entry is [string, string] => entry[1] !== undefined,
-      );
-
-      let ownerEntity: Entity | undefined;
-
-      for (const [channel, channelUserId] of channelEntries) {
-        const existing = await entityStore.getEntityByChannel(channel, channelUserId);
-        if (existing !== null) {
-          ownerEntity = existing;
-          break;
-        }
-      }
-
-      // If no existing entity found, create one from the first channel
-      if (ownerEntity === undefined) {
-        const [firstChannel, firstUserId] = channelEntries[0]!;
-        ownerEntity = await entityStore.resolveOrCreate(firstChannel, firstUserId, ownerConfig.displayName);
-      }
-
-      // Link all channels to the resolved entity
-      for (const [channel, channelUserId] of channelEntries) {
-        await entityStore.upsertChannelAccount({
-          entityId: ownerEntity.id,
-          channel,
-          channelUserId,
-        });
-      }
-
-      // Ensure the owner entity is sealed (full access)
-      if (ownerEntity.verificationTier !== "sealed") {
-        await entityStore.updateEntity(ownerEntity.id, { verificationTier: "sealed" });
-      }
-      // Update display name if it was "Unknown"
-      if (ownerEntity.displayName === "Unknown") {
-        await entityStore.updateEntity(ownerEntity.id, { displayName: ownerConfig.displayName });
-      }
-      ownerEntityId = ownerEntity.id;
-      log.info(`owner entity resolved: ${ownerEntity.coaAlias} (${ownerEntity.displayName}) — sealed`);
-    } else {
-      log.warn("owner.channels is empty — owner recognition disabled");
-    }
-  }
+  let ownerEntityId: string | undefined = await resolveOwnerEntity(ownerConfig, entityStore, log);
 
   // Pairing store — manages DM access grants for non-owner users
   const pairingStore = new PairingStore({
@@ -4165,7 +4197,7 @@ export async function startGatewayServer(
             if (outcome.usage && outcome.model) {
               try {
                 chatUsageRec = await usageStore.record({
-                  entityId: ownerEntityId,
+                  entityId: ownerEntityId ?? "system",
                   projectPath: chatProjectPath,
                   provider: outcome.provider ?? "unknown",
                   model: outcome.model,
@@ -5329,6 +5361,20 @@ export async function startGatewayServer(
         if (!(key in freshConfig)) delete configObj[key];
       }
       Object.assign(configObj, freshConfig);
+
+      // Hot-resolve owner entity when owner channels change
+      if (event.changedKeys.some((k) => k === "owner")) {
+        resolveOwnerEntity(
+          (freshConfig as AionimaConfig).owner,
+          entityStore,
+          log,
+        ).then((id) => {
+          ownerEntityId = id;
+          log.info("owner entity hot-resolved");
+        }).catch((err: unknown) => {
+          log.error(`failed to hot-resolve owner entity: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
 
       // Hot-swap LLM provider when agent config changes
       if (event.changedKeys.some((k) => k === "agent")) {

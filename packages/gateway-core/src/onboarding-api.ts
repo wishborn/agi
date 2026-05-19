@@ -342,19 +342,9 @@ export function registerOnboardingRoutes(
           registrationId: string;
         };
 
-        // Store entity references in config
-        owner.entityId = data.owner.id;
-        owner.coaAlias = data.owner.coaAlias;
-        owner.geid = data.owner.geid;
-
-        const agent = (cfg.agent ?? {}) as Record<string, unknown>;
-        agent.entityId = data.agent.id;
-        agent.coaAlias = data.agent.coaAlias;
-        agent.geid = data.agent.geid;
-        cfg.agent = agent;
-
-        cfg.owner = owner;
-        writeConfig(cfg);
+        // Entity IDs are managed in Postgres by AGI (s180 Local-ID absorption).
+        // Do NOT write entityId/coaAlias/geid to gateway.json — OwnerConfigSchema
+        // and AgentConfigSchema both use .strict() and would crash on next start.
         log.info(`Owner entity registered: ${data.owner.coaAlias} (${data.owner.geid})`);
         log.info(`Agent entity registered: ${data.agent.coaAlias} (${data.agent.geid})`);
       } else if (res.status === 409) {

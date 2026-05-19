@@ -399,14 +399,6 @@ export class AgentInvoker extends EventEmitter {
       return { type: "log_only" };
     }
 
-    if (decision.action === "queue") {
-      return {
-        type: "queued",
-        reason: decision.reason,
-        entityNotification: decision.message,
-      };
-    }
-
     // -----------------------------------------------------------------------
     // Step 3: Rate limit check
     // -----------------------------------------------------------------------

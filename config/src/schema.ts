@@ -6,7 +6,7 @@ const GatewayConfigSchema = z
   .object({
     host: z.string().default("127.0.0.1"),
     port: z.number().int().min(1).max(65535).default(3100),
-    state: GatewayStateSchema.default("OFFLINE"),
+    state: GatewayStateSchema.default("LIMBO"),
     /** Release channel: "main" (stable) or "dev" (bleeding edge). Controls which branch all repos track for updates. */
     updateChannel: z.enum(["main", "dev"]).optional(),
     /** Max tool-loop iterations per agent turn. The circuit breaker on
