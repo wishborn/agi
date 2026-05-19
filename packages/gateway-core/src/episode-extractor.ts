@@ -66,7 +66,7 @@ export interface ExtractionInput {
 // Prompt loading
 // ---------------------------------------------------------------------------
 
-const _promptsDir = join(dirname(fileURLToPath(import.meta.url)), "../../../../prompts");
+const _promptsDir = join(dirname(fileURLToPath(import.meta.url)), "../../../prompts");
 
 function _loadPrompt(name: string): string {
   try {
