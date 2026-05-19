@@ -86,7 +86,7 @@ describe("EpisodeExtractor (s112 t384)", () => {
     await extractor.extractAndStore(makeInput());
 
     expect(storeFn).toHaveBeenCalledOnce();
-    const stored = storeFn.mock.calls[0][0] as Record<string, unknown>;
+    const stored = storeFn.mock.calls[0]![0] as Record<string, unknown>;
     expect(typeof stored["hash"]).toBe("string");
     expect(String(stored["hash"])).toMatch(/^sha256:/);
   });
@@ -171,7 +171,7 @@ describe("EpisodeExtractor — accumulator wiring (s112 end-to-end)", () => {
     const record = await extractor.extractAndStore(makeInput());
 
     expect(accumulateFn).toHaveBeenCalledOnce();
-    expect(accumulateFn.mock.calls[0][0]).toEqual(record);
+    expect(accumulateFn.mock.calls[0]![0]).toEqual(record);
   });
 
   it("does not throw when accumulator.accumulate throws", async () => {

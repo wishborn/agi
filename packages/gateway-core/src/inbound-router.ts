@@ -331,7 +331,8 @@ export class InboundRouter {
       this.outboundSender !== undefined &&
       this.ownerConfig.dmPolicy === "pairing" &&
       !this.isOwner(channelId, message.channelUserId) &&
-      !this.pairingStore.isApproved(channelId, message.channelUserId)
+      !this.pairingStore.isApproved(channelId, message.channelUserId) &&
+      !message.metadata?.["bypassPairingGate"]
     ) {
       const displayName = typeof message.metadata === "object" && message.metadata !== null
         ? (message.metadata as Record<string, unknown>)["displayName"] as string | undefined

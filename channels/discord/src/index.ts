@@ -417,7 +417,14 @@ export function createDiscordPlugin(
       }).catch(() => { /* non-critical — DB errors must not block message delivery */ });
     }
 
-    await messageHandler(normalized);
+    // When allowedRoleIds are configured, the role check above already verified
+    // this sender. Signal the inbound-router to skip the pairing gate so
+    // role-approved guild members don't see "pairing code / owner approval".
+    const normalizedWithMeta = allowedRoleIds.length > 0
+      ? { ...normalized, metadata: { ...normalized.metadata, bypassPairingGate: true } }
+      : normalized;
+
+    await messageHandler(normalizedWithMeta);
   });
 
   // -------------------------------------------------------------------------
