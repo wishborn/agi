@@ -128,5 +128,27 @@ describe.skipIf(!hasDb)(
       const packers = await registry.getEnabledPackers("app.empty");
       expect(packers).toHaveLength(0);
     });
+
+    it("setCompiled stores wasmB64, wasmHash, and sourceHash", async () => {
+      const script = await registry.create({ mappId: "app.compile", name: "to-compile" });
+      expect(script.wasmB64).toBeNull();
+
+      const result = await registry.setCompiled(
+        script.id,
+        "dGVzdA==",
+        "sha256:abc123",
+        "sha256:def456",
+      );
+
+      expect(result).not.toBeNull();
+      expect(result!.wasmB64).toBe("dGVzdA==");
+      expect(result!.wasmHash).toBe("sha256:abc123");
+      expect(result!.sourceHash).toBe("sha256:def456");
+    });
+
+    it("setCompiled returns null for unknown script", async () => {
+      const result = await registry.setCompiled("script_NOPE", "b64", "hash1", "hash2");
+      expect(result).toBeNull();
+    });
   },
 );
