@@ -67,6 +67,9 @@ export interface AgentToolsConfig {
   scanRunner?: ScanRunner;
   scanStore?: ScanStore;
   coaLogger?: import("@agi/coa-chain").COAChainLogger;
+  /** ScriptRegistry + ScriptRunner for the run_script agent tool (s182 Phase C). */
+  scriptRegistry?: import("../script-registry.js").ScriptRegistry;
+  scriptRunner?: import("../script-runner.js").ScriptRunner;
 }
 
 // ---------------------------------------------------------------------------

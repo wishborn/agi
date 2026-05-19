@@ -135,6 +135,13 @@ import {
   RUN_SECURITY_SCAN_INPUT_SCHEMA,
 } from "./security-scan.js";
 
+// Script execution tool (s182 Phase C)
+import {
+  createRunScriptHandler,
+  RUN_SCRIPT_MANIFEST,
+  RUN_SCRIPT_INPUT_SCHEMA,
+} from "./run-script.js";
+
 // Web page tool
 import { createGetWebPageHandler, GET_WEB_PAGE_MANIFEST, GET_WEB_PAGE_INPUT_SCHEMA } from "./web-page.js";
 
@@ -493,6 +500,18 @@ export function registerAgentTools(
         coaLogger: config.coaLogger,
       }),
       RUN_SECURITY_SCAN_INPUT_SCHEMA,
+    );
+  }
+
+  // Script execution tool (s182 Phase C — available when ScriptRegistry is wired in)
+  if (config.scriptRegistry !== undefined) {
+    register(
+      RUN_SCRIPT_MANIFEST as unknown as ToolManifestEntry,
+      createRunScriptHandler({
+        scriptRegistry: config.scriptRegistry,
+        scriptRunner: config.scriptRunner,
+      }),
+      RUN_SCRIPT_INPUT_SCHEMA,
     );
   }
 
