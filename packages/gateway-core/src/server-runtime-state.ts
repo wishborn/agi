@@ -4726,6 +4726,51 @@ export async function createGatewayRuntimeState(
     return result;
   }
 
+  // Top-N process list — sorted by RSS descending. Parsed from ps to avoid
+  // per-PID /proc reads. Cached for 5s so rapid dashboard polls don't spawn ps
+  // on every request.
+  interface ProcessStat {
+    pid: number;
+    user: string;
+    cpuPct: number;
+    memPct: number;
+    rssKb: number;
+    name: string;
+  }
+  let topProcessesCache: { data: ProcessStat[]; ts: number } = { data: [], ts: 0 };
+
+  function getTopProcesses(limit = 10): ProcessStat[] {
+    const now = Date.now();
+    if (now - topProcessesCache.ts < 5000) return topProcessesCache.data;
+    try {
+      const out = execFileSync(
+        "ps",
+        ["aux", "--sort=-%mem", "--no-headers", "-ww", "-o", "pid,user,%cpu,%mem,rss,comm"],
+        { timeout: 5000 },
+      ).toString();
+      const data = out
+        .trim()
+        .split("\n")
+        .slice(0, limit)
+        .map((line) => {
+          const parts = line.trim().split(/\s+/);
+          return {
+            pid: parseInt(parts[0] ?? "0", 10),
+            user: parts[1] ?? "",
+            cpuPct: parseFloat(parts[2] ?? "0"),
+            memPct: parseFloat(parts[3] ?? "0"),
+            rssKb: parseInt(parts[4] ?? "0", 10),
+            name: parts.slice(5).join(" "),
+          };
+        })
+        .filter((p) => p.pid > 0);
+      topProcessesCache = { data, ts: now };
+      return data;
+    } catch {
+      return topProcessesCache.data;
+    }
+  }
+
   // Disk I/O tracking — reads /proc/diskstats for the root volume device
   let rootDiskDevice = "";
   try {
@@ -4849,6 +4894,7 @@ export async function createGatewayRuntimeState(
       diskIO,
       power: { cpuWatts, gpuWatts },
       gpus: gpuStats,
+      topProcesses: getTopProcesses(10),
       uptime: os.uptime(),
       hostname: os.hostname(),
     });
