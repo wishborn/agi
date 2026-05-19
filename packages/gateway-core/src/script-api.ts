@@ -124,4 +124,28 @@ export function registerScriptRoutes(app: FastifyInstance, deps: ScriptApiDeps):
     await scriptRegistry.delete(request.params.id);
     return reply.code(204).send();
   });
+
+  /**
+   * POST /api/scripts/:id/compile
+   * Phase D — Starlark→WASM compilation pipeline (not yet available).
+   * Returns 501 with a clear message so the UI can gate the Compile button.
+   * When Phase D ships, this route will accept the Starlark source, invoke the
+   * compiler, and store the resulting wasmB64 + wasmHash on the script record.
+   */
+  app.post<{ Params: { id: string } }>("/api/scripts/:id/compile", async (request, reply) => {
+    const { id } = request.params;
+    const existing = await scriptRegistry.get(id);
+    if (existing === null) {
+      return reply.code(404).send({ error: `script ${id} not found` });
+    }
+    return reply.code(501).send({
+      error: "Starlark→WASM compilation not yet available",
+      detail:
+        "The Starlark-to-WASM pipeline (Phase D) is pending implementation. " +
+        "Scripts can be defined and managed now but cannot be executed until compiled.",
+      scriptId: id,
+      scriptName: existing.name,
+      hasSource: existing.source !== null,
+    });
+  });
 }

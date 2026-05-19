@@ -36,6 +36,7 @@
  * | `defineDashboardDomain` | `api.registerDashboardDomain()` | `DashboardInterfaceDomainDefinition` |
  * | `defineScan`            | `api.registerScanProvider()`    | `ScanProviderDefinition`              |
  * | `defineWorker`          | `api.registerWorker()`          | `WorkerDefinition`                    |
+ * | `defineScript`          | manifest `scripts[]` (mapp/1.1) | `MAppScriptDefinition`                |
  *
  * ### Plugin lifecycle
  *
@@ -126,6 +127,8 @@ export { defineDashboardDomain } from "./define-dashboard-domain.js";
 export { defineScan } from "./define-scan.js";
 export { defineWorker } from "./define-worker.js";
 export { defineMagicApp } from "./define-magic-app.js";
+export { defineScript } from "./define-script.js";
+export type { ScriptDefinition } from "./define-script.js";
 
 // Layer D blockchain anchor — interface only in v0.4.0 (NoopAnchor lives in
 // packages/memory). Live Ethereum/L2 implementation arrives in v0.6.0 via
@@ -133,7 +136,8 @@ export { defineMagicApp } from "./define-magic-app.js";
 export type { AnchorRecord, AnchorResult, BlockchainAnchor } from "./anchor.js";
 
 // MApp Schema (MPx 1.0)
-export { MAPP_SCHEMA_VERSION, serializeMApp } from "./mapp-schema.js";
+export { MAPP_SCHEMA_VERSION, MAPP_SCHEMA_VERSION_V1_1, serializeMApp } from "./mapp-schema.js";
+export type { MAppSchemaVersion, MAppScriptDefinition } from "./mapp-schema.js";
 export type {
   MAppDefinition, MAppInfo, MAppCategory, MAppPermission,
   MAppContainerConfig, MAppPanel, MAppWidget, MAppTheme,
