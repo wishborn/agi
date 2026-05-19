@@ -172,20 +172,13 @@ clone_repo "ID Service"         "$ID_REPO"              "$ID_DIR"
 # fetches catalogs and installs plugins directly from GitHub on demand.
 
 # ---------------------------------------------------------------------------
-# 6. Install dependencies and build
+# 6. Dependencies and build — delegated to upgrade.sh
+#
+# pnpm install, pnpm build, Playwright browser install, native module
+# rebuild, and Local-ID container build are all handled by upgrade.sh which
+# is invoked at the end of install.sh. This avoids duplicating logic and
+# ensures the same code path runs for every subsequent agi upgrade.
 # ---------------------------------------------------------------------------
-echo "==> Installing pnpm dependencies..."
-run_as "cd '$INSTALL_DIR' && pnpm install --frozen-lockfile"
-
-echo "==> Installing Playwright browser (chromium)..."
-run_as "cd '$INSTALL_DIR' && npx playwright install chromium --with-deps" || echo "WARNING: Playwright browser install failed (visual-inspect tool will be unavailable)"
-
-echo "==> Building..."
-run_as "cd '$INSTALL_DIR' && pnpm build"
-
-# Record Node.js version so upgrade.sh knows when to rebuild native modules
-node -v > "$INSTALL_DIR/.node-version-hash"
-chown "$AIONIMA_USER:$AIONIMA_USER" "$INSTALL_DIR/.node-version-hash"
 
 # ---------------------------------------------------------------------------
 # 7. Create data directory
@@ -402,12 +395,9 @@ IDENVEOF
     echo "         and add the connection string to $ID_ENV, then restart agi-id."
   fi
 
-  # 9c. Build the Local-ID container image. The Dockerfile there runs
-  # npm ci + tsc + drizzle-kit generate entirely inside the build stage;
-  # no host-side install is needed. Only AGI itself runs as a host process;
-  # everything else runs in a rootless Podman container.
-  echo "  Building Local-ID container image..."
-  run_as "cd '$ID_DIR' && podman build -t localhost/agi-local-id:latest . 2>&1 | tail -3"
+  # 9c. Local-ID container build is delegated to upgrade.sh (see step 14).
+  # It runs pnpm build + podman build in one idempotent block — the same
+  # path taken on every subsequent agi upgrade.
 
   # 9d. Ensure the `aionima` container network exists (shared with
   # agi-postgres-17 so the services can reach each other by name).
@@ -532,16 +522,17 @@ if [ -x "$AGI_CLI" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 14. Start the service
+# 14. First build + start — delegated to upgrade.sh
+#
+# upgrade.sh handles: pnpm install, Playwright, pnpm build, channel builds,
+# Local-ID container build, DB migrations, plugin sync, and service restart.
+# Running it here on first install is identical to every subsequent
+# `agi upgrade` — one code path for all boots.
 # ---------------------------------------------------------------------------
-echo "==> Starting Aionima..."
-systemctl start agi
-sleep 3
-if systemctl is-active --quiet agi; then
-  echo "  [OK] Aionima is running"
-else
-  echo "  [WARN] Aionima failed to start — run 'agi logs' to investigate"
-fi
+echo "==> Running first build + start via upgrade.sh..."
+AIONIMA_DEPLOY_DIR="$INSTALL_DIR" AIONIMA_USER="$AIONIMA_USER" \
+  bash "$INSTALL_DIR/scripts/upgrade.sh" || \
+  echo "  [WARN] upgrade.sh reported errors — run 'agi logs' to investigate"
 
 # ---------------------------------------------------------------------------
 # 15. Run hardening (unless skipped)
