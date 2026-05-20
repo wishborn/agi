@@ -1097,73 +1097,86 @@ export async function startGatewayServer(
   // Step 5a2: Iterative-work fire handler — closes the autonomy loop
   // -------------------------------------------------------------------------
   // When the scheduler decides a project is due, this handler resolves the
-  // $ITERATIVE-WORK system entity, builds a synthetic tick prompt, and routes
-  // it through agentInvoker.process() with projectContext set. The system
-  // prompt assembler (cycle 37 wiring) sees iterativeWork.enabled === true
-  // for this project and injects agi/prompts/iterative-work.md into Aion's
-  // context — Aion then participates in the tynn workflow on the project's
-  // behalf. markComplete is called in finally so a failed invocation still
+  // Scheduled job fire consumer — dispatches by job.type. The pm-loop type
+  // preserves the original iterative-work behavior (synthetic tick prompt via
+  // AgentInvoker). prompt fires a user-authored message. command runs via
+  // `agi bash`. action invokes a plugin-registered handler. markComplete +
+  // recordCompletion are called in finally so a failed invocation still
   // releases the in-flight slot for the next due tick.
-  //
-  // Pattern mirrors heartbeat.ts (channel: "system", synthetic coa, unique
-  // queueMessageId) — same "system-invoked agent call" shape.
   const ITERATIVE_WORK_TICK_PROMPT = "[iterative-work tick] Continue your work on this project per the iterative-work discipline. First action: consume prior markers (don't re-derive). Then pick the highest-priority READY task and ship a slice. End-of-cycle: report Show-Stoppers / Drift / Clarity counts.";
 
   iterativeWorkScheduler.on("fire", (fire) => {
     void (async () => {
+      const { job } = fire;
       const outcome: { status: "done" | "error"; error?: string; artifact?: import("./iterative-work/types.js").IterativeWorkArtifact } = { status: "done" };
       try {
         const slug = projectSlug(fire.projectPath);
-        const systemEntity = await entityStore.resolveOrCreate(
-          "system",
-          "$ITERATIVE-WORK",
-          "Iterative Work System",
-        );
-        const coaFingerprint = `${resourceId}.${systemEntity.coaAlias}.${nodeId}.iterative-work(${slug})`;
-        log.info(`iterative-work fire: ${fire.projectPath} (cron=${fire.cron})`);
-        await agentInvoker.process({
-          entity: systemEntity,
-          channel: "system",
-          content: ITERATIVE_WORK_TICK_PROMPT,
-          coaFingerprint,
-          queueMessageId: `iter-work-${slug}-${String(fire.firedAt.getTime())}`,
-          projectContext: fire.projectPath,
-          isOwner: true,
-        });
+        log.info(`scheduled-job fire: ${fire.projectPath} job=${job.id} type=${job.type} cron=${fire.cron}`);
 
-        // s124 t469 — capture a screenshot of the project's deployed URL
-        // (when hosting is configured). Resolved Q-2 mechanism: full-page
-        // headless Chromium via Playwright (not Puppeteer — Playwright is
-        // already in deps for e2e). Failure-tolerant: a missed thumbnail
-        // just leaves artifact.thumbnailPath undefined; the
-        // IterativeWorkArtifactCard renders gracefully without it.
-        try {
-          const hosting = projectConfigManager.readHosting(fire.projectPath) as { hostname?: string } | null;
-          const hostname = hosting?.hostname;
-          if (typeof hostname === "string" && hostname.length > 0) {
-            const baseDomain = (config as { hosting?: { baseDomain?: string } }).hosting?.baseDomain ?? "ai.on";
-            const url = `https://${hostname}.${baseDomain}`;
-            const { captureProjectScreenshot } = await import("./iterative-work/screenshot.js");
-            const thumbnailPath = await captureProjectScreenshot({
-              hostingUrl: url,
-              log: (msg) => { log.warn(`iter-screenshot: ${msg}`); },
-            });
-            if (thumbnailPath !== null) {
-              outcome.artifact = { ...outcome.artifact, thumbnailPath };
-              log.info(`iterative-work screenshot captured: ${thumbnailPath}`);
+        if (job.type === "pm-loop" || job.type === "prompt") {
+          const content = job.type === "pm-loop" ? ITERATIVE_WORK_TICK_PROMPT : job.prompt;
+          const systemEntity = await entityStore.resolveOrCreate(
+            "system",
+            "$ITERATIVE-WORK",
+            "Iterative Work System",
+          );
+          const coaFingerprint = `${resourceId}.${systemEntity.coaAlias}.${nodeId}.scheduled-job(${slug}.${job.id})`;
+          await agentInvoker.process({
+            entity: systemEntity,
+            channel: "system",
+            content,
+            coaFingerprint,
+            queueMessageId: `sched-job-${slug}-${job.id}-${String(fire.firedAt.getTime())}`,
+            projectContext: fire.projectPath,
+            isOwner: true,
+          });
+
+          // s124 t469 — screenshot capture for pm-loop completions only.
+          if (job.type === "pm-loop") {
+            try {
+              const hosting = projectConfigManager.readHosting(fire.projectPath) as { hostname?: string } | null;
+              const hostname = hosting?.hostname;
+              if (typeof hostname === "string" && hostname.length > 0) {
+                const baseDomain = (config as { hosting?: { baseDomain?: string } }).hosting?.baseDomain ?? "ai.on";
+                const url = `https://${hostname}.${baseDomain}`;
+                const { captureProjectScreenshot } = await import("./iterative-work/screenshot.js");
+                const thumbnailPath = await captureProjectScreenshot({
+                  hostingUrl: url,
+                  log: (msg) => { log.warn(`iter-screenshot: ${msg}`); },
+                });
+                if (thumbnailPath !== null) {
+                  outcome.artifact = { ...outcome.artifact, thumbnailPath };
+                  log.info(`scheduled-job screenshot captured: ${thumbnailPath}`);
+                }
+              }
+            } catch (err) {
+              log.warn(`scheduled-job screenshot block failed for ${fire.projectPath}: ${err instanceof Error ? err.message : String(err)}`);
             }
           }
-        } catch (err) {
-          log.warn(`iterative-work screenshot block failed for ${fire.projectPath}: ${err instanceof Error ? err.message : String(err)}`);
+        } else if (job.type === "command") {
+          // Run via `agi bash` for policy-gating + audit logging.
+          const { execFile } = await import("node:child_process");
+          const { promisify } = await import("node:util");
+          const execFileAsync = promisify(execFile);
+          const agiBin = process.env.AGI_BIN ?? "agi";
+          const { stdout, stderr } = await execFileAsync(agiBin, ["bash", job.command], { timeout: 300_000 });
+          if (stderr) log.warn(`scheduled-job command stderr: ${stderr.trim()}`);
+          if (stdout) log.info(`scheduled-job command stdout: ${stdout.trim()}`);
+        } else if (job.type === "action") {
+          // Plugin action dispatch — reserved for when the plugin action
+          // registry is wired. Log a warning for now so the job doesn't
+          // silently no-op if someone configures an action job before plugins
+          // register action handlers.
+          log.warn(`scheduled-job action type not yet dispatched (actionId=${job.actionId}); plugin action registry not yet wired`);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        log.error(`iterative-work fire failed for ${fire.projectPath}: ${message}`);
+        log.error(`scheduled-job fire failed for ${fire.projectPath} job=${job.id}: ${message}`);
         outcome.status = "error";
         outcome.error = message;
       } finally {
-        iterativeWorkScheduler.recordCompletion(fire.projectPath, outcome);
-        iterativeWorkScheduler.markComplete(fire.projectPath);
+        iterativeWorkScheduler.recordCompletion(fire.projectPath, job.id, outcome);
+        iterativeWorkScheduler.markComplete(fire.projectPath, job.id);
       }
     })();
   });

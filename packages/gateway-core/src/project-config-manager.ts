@@ -11,6 +11,7 @@
  * so the dashboard can update in real-time via WebSocket.
  */
 
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { dirname, resolve as resolvePath } from "node:path";
@@ -53,6 +54,29 @@ export interface ProjectConfigCreateOpts {
 }
 
 // ---------------------------------------------------------------------------
+// Migration helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Translate a legacy `iterativeWork` project.json field to a `scheduledJobs`
+ * pm-loop entry. Idempotent: skips projects that already have `scheduledJobs`.
+ * The next write via update() persists the migrated shape to disk.
+ */
+function migrateProjectConfig(raw: Record<string, unknown>): Record<string, unknown> {
+  if (!raw.iterativeWork || raw.scheduledJobs !== undefined) return raw;
+  const iw = raw.iterativeWork as { enabled?: boolean; cadence?: string; cron?: string };
+  const job: Record<string, unknown> = {
+    id: randomUUID(),
+    type: "pm-loop",
+    name: "PM Loop",
+    enabled: iw.enabled ?? false,
+  };
+  if (iw.cadence !== undefined) job.cadence = iw.cadence;
+  if (iw.cron !== undefined) job.cron = iw.cron;
+  return { ...raw, scheduledJobs: [job], iterativeWork: undefined };
+}
+
+// ---------------------------------------------------------------------------
 // ProjectConfigManager
 // ---------------------------------------------------------------------------
 
@@ -73,6 +97,8 @@ export class ProjectConfigManager extends EventEmitter {
   /**
    * Read a project config. Returns null if file doesn't exist or is invalid.
    * Uses safeParse for graceful degradation on legacy/corrupt files.
+   * Applies migrateProjectConfig() before parse so legacy `iterativeWork`
+   * fields are transparently promoted to `scheduledJobs` entries.
    */
   read(projectPath: string): ProjectConfig | null {
     const resolved = resolvePath(projectPath);
@@ -81,7 +107,7 @@ export class ProjectConfigManager extends EventEmitter {
     if (!existsSync(metaPath)) return null;
 
     try {
-      const raw = JSON.parse(readFileSync(metaPath, "utf-8"));
+      const raw = migrateProjectConfig(JSON.parse(readFileSync(metaPath, "utf-8")) as Record<string, unknown>);
       const result = ProjectConfigSchema.safeParse(raw);
       if (!result.success) {
         this.log.warn(`invalid project config at ${metaPath}: ${result.error.message}`);
@@ -527,12 +553,14 @@ export class ProjectConfigManager extends EventEmitter {
   /**
    * Read raw JSON from disk (no schema validation).
    * Returns empty object if file doesn't exist.
+   * Applies migrateProjectConfig() so update() sees `scheduledJobs` rather
+   * than legacy `iterativeWork` when merging patches.
    */
   private readRaw(resolvedProjectPath: string): Record<string, unknown> {
     const metaPath = this.resolveConfigPath(resolvedProjectPath);
     if (!existsSync(metaPath)) return {};
     try {
-      return JSON.parse(readFileSync(metaPath, "utf-8")) as Record<string, unknown>;
+      return migrateProjectConfig(JSON.parse(readFileSync(metaPath, "utf-8")) as Record<string, unknown>);
     } catch {
       return {};
     }

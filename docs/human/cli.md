@@ -213,11 +213,11 @@ agi iw stop --project /home/wishborn/_projects/work/proj-a
 agi iw stop --all
 ```
 
-Both flip `iterativeWork.enabled = false` on the affected project(s)
-in `project.json` AND force-clear any in-flight tracking in the
-scheduler. After the stop, the next `agi doctor logs` sweep should
-show no fresh fire entries for that project. Re-enable via the
-dashboard's Iterative Work tab when the underlying issue is fixed.
+Both disable the project's enabled scheduled jobs in `project.json`
+AND force-clear any in-flight tracking in the scheduler. After the
+stop, the next `agi doctor logs` sweep should show no fresh fire
+entries for that project. Re-enable via the dashboard's Scheduled Jobs
+tab when the underlying issue is fixed.
 
 The `--all` form is the nuclear option: hits every project in the
 configured `workspace.projects` directories. Use when you can't

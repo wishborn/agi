@@ -120,23 +120,22 @@ export const ProjectAiDatasetBindingSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
-// Iterative-work mode — opt-in per-project. When enabled, the prompt assembler
-// injects agi/prompts/iterative-work.md into Aion's system prompt so the agent
-// participates in the tynn workflow (race-to-DONE, look-for-MORE, slice
-// discipline). The cron field is consumed by the scheduler (t436); leaving it
-// undefined while enabled means manual-fire only (e.g. via /next).
+// Scheduled jobs — per-project recurring job scheduler (s118 redesign).
+// Replaces the single-mode `iterativeWork` field with a multi-type job array.
+// Each job has a type-discriminated schema; all types share a common base.
+// Legacy `iterativeWork` configs are migrated at read-time by
+// migrateProjectConfig() in project-config-manager.ts.
 // ---------------------------------------------------------------------------
 
 /**
- * Cadence keys offered by the per-project iterative-work tab dropdown.
- * Mirrors the gateway-core IterativeWorkCadence type (kept in sync; config
- * package can't import gateway-core to avoid a circular dep). The user picks
- * the cadence; the system auto-staggers the actual cron expression at save
- * time via cadenceToStaggeredCron in iterative-work/cron.ts.
+ * Cadence keys available for all scheduled job types. The user picks the
+ * cadence; the system auto-staggers the actual cron expression at save time
+ * via cadenceToStaggeredCron in iterative-work/cron.ts.
  *
- * Available options narrow by project category at the UI layer:
+ * Options available by project category for pm-loop jobs:
  * - dev (web/app): 30m, 1h
  * - ops (ops/administration): 30m, 1h, 5h, 12h, 1d, 5d, 1w
+ * Other job types accept any cadence regardless of category.
  */
 export const IterativeWorkCadenceSchema = z.enum([
   "30m",
@@ -148,17 +147,70 @@ export const IterativeWorkCadenceSchema = z.enum([
   "1w",
 ]);
 
+const ScheduledJobBaseSchema = z.object({
+  /** UUID — stable key for CRUD operations. */
+  id: z.string(),
+  /** Display name shown in the Scheduled Jobs tab and Settings page. */
+  name: z.string(),
+  /** Whether the job fires on its cron schedule. Defaults to true. */
+  enabled: z.boolean().default(true),
+  /** User-picked cadence key. Stored alongside cron for UI display. */
+  cadence: IterativeWorkCadenceSchema.optional(),
+  /**
+   * Cron expression evaluated by the scheduler. When `cadence` is set,
+   * auto-computed from cadenceToStaggeredCron(cadence, projectPath) at save
+   * time. Absent cadence: source of truth directly (legacy passthrough).
+   */
+  cron: z.string().optional(),
+});
+
+/** Fires a user-authored prompt as a project chat turn. */
+const PromptJobSchema = ScheduledJobBaseSchema.extend({
+  type: z.literal("prompt"),
+  /** The prompt text sent as the user message. */
+  prompt: z.string(),
+});
+
+/** Runs a shell command via `agi bash` (logged, policy-gated). */
+const CommandJobSchema = ScheduledJobBaseSchema.extend({
+  type: z.literal("command"),
+  /** The shell command to execute (passed to `agi bash`). */
+  command: z.string(),
+});
+
+/** Invokes a plugin-registered action by its registry ID. */
+const ActionJobSchema = ScheduledJobBaseSchema.extend({
+  type: z.literal("action"),
+  /** ID of the registered plugin action (from the plugin action registry). */
+  actionId: z.string(),
+  /** Optional key-value params forwarded to the action handler. */
+  params: z.record(z.unknown()).optional(),
+});
+
+/** Original PM-loop behavior: fires the iterative-work discipline prompt. */
+const PmLoopJobSchema = ScheduledJobBaseSchema.extend({
+  type: z.literal("pm-loop"),
+});
+
+export const ScheduledJobSchema = z.discriminatedUnion("type", [
+  PromptJobSchema,
+  CommandJobSchema,
+  ActionJobSchema,
+  PmLoopJobSchema,
+]);
+
+export type ScheduledJob = z.infer<typeof ScheduledJobSchema>;
+
+/**
+ * @deprecated s118 redesign — superseded by `scheduledJobs` array. Kept for
+ * the migration guard in project-config-manager.ts: upgrading nodes may still
+ * have `iterativeWork` in their project.json. The guard reads this, translates
+ * it to a pm-loop entry in `scheduledJobs`, and strips the old key on next write.
+ */
 export const ProjectIterativeWorkSchema = z
   .object({
     enabled: z.boolean().optional(),
-    /** User-picked cadence (s118 redesign 2026-04-27). Stored alongside cron. */
     cadence: IterativeWorkCadenceSchema.optional(),
-    /**
-     * Cron expression. When `cadence` is set, this is auto-computed from
-     * cadenceToStaggeredCron(cadence, projectPath) at save time. When only
-     * `cron` is set (legacy), it remains the source of truth — user-edited
-     * pre-redesign configs continue working.
-     */
     cron: z.string().optional(),
   })
   .strict();
@@ -416,7 +468,13 @@ export const ProjectConfigSchema = z
     aiModels: z.array(ProjectAiModelBindingSchema).optional(),
     /** AI dataset dependencies. Datasets are mounted as read-only volumes. */
     aiDatasets: z.array(ProjectAiDatasetBindingSchema).optional(),
-    /** Iterative-work mode — toggles tynn-workflow prompt injection + cron-nudged scheduling. */
+    /** Per-project scheduled jobs (recurring prompts, commands, actions, pm-loop). s118 redesign. */
+    scheduledJobs: z.array(ScheduledJobSchema).optional(),
+    /**
+     * @deprecated s118 redesign — superseded by `scheduledJobs`. Still parsed
+     * so legacy project.json files load without error; migrated to a pm-loop
+     * entry in `scheduledJobs` by migrateProjectConfig() in project-config-manager.ts.
+     */
     iterativeWork: ProjectIterativeWorkSchema.optional(),
     /**
      * @deprecated s131 (2026-05-09) — per-project MCP servers moved to a

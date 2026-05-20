@@ -28,7 +28,7 @@ import { PmLitePanel } from "./PmLitePanel.js";
 import { PmKanbanPanel } from "./PmKanbanPanel.js";
 import { NotesPanel } from "./NotesPanel.js";
 import { ChannelsPanel } from "./ChannelsPanel.js";
-import { IterativeWorkTab } from "./IterativeWorkTab.js";
+import { ScheduledJobsTab } from "./ScheduledJobsTab.js";
 import { MCPTab } from "./MCPTab.js";
 import { ProjectActivityTab } from "./ProjectActivityTab.js";
 import { ProjectManagement } from "./ProjectManagement.js";
@@ -84,7 +84,7 @@ const CANVAS_LABELS: Record<string, string> = {
   repository: "Repository",
   environment: "Environment",
   hosting: "Hosting",
-  "iterative-work": "Iterative Work",
+  "iterative-work": "Scheduled Jobs",
   mcp: "MCP",
   // s150 t637 — "magic-apps" tab dropped; MApps config now lives inside the
   // Hosting tab when type is Desktop-served. Label removed from this map.
@@ -713,7 +713,7 @@ export function ProjectDetail({
               )}
               {tabBelongsToMode("iterative-work")
                 && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
-                <TabsTrigger value="iterative-work" className={SUB_PILL_CLASS} data-testid="project-tab-iterative-work">Iterative Work</TabsTrigger>
+                <TabsTrigger value="iterative-work" className={SUB_PILL_CLASS} data-testid="project-tab-iterative-work">Scheduled Jobs</TabsTrigger>
               )}
               {tabBelongsToMode("plans") && (
                 <TabsTrigger value="plans" className={SUB_PILL_CLASS} data-testid="project-tab-plans">Plans</TabsTrigger>
@@ -1479,7 +1479,7 @@ export function ProjectDetail({
 
         {(project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
           <TabsContent value="iterative-work" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-            <IterativeWorkTab project={project} />
+            <ScheduledJobsTab project={project} />
           </TabsContent>
         )}
 

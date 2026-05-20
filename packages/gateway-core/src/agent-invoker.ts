@@ -561,16 +561,15 @@ export class AgentInvoker extends EventEmitter {
     // tools it cannot actually call.
     const willOfferTools = shouldOfferTools(sanitizedText, requestType) && availableTools.length > 0;
 
-    // Iterative-work mode — when the project opts in via
-    // `iterativeWork.enabled: true`, hot-load agi/prompts/iterative-work.md so
-    // Aion participates in the tynn workflow on this turn. Read at use time
-    // (per `feedback_hot_config`); errors are swallowed so a missing prompt
-    // file never breaks invocation.
+    // Iterative-work mode — when the project has an enabled pm-loop job,
+    // hot-load agi/prompts/iterative-work.md so Aion participates in the tynn
+    // workflow on this turn. Read at use time (per `feedback_hot_config`);
+    // errors are swallowed so a missing prompt file never breaks invocation.
+    const hasPmLoop = projectConfigForTurn?.scheduledJobs?.some(
+      (j) => j.type === "pm-loop" && j.enabled,
+    ) ?? false;
     let iterativeWorkPrompt: string | undefined;
-    if (
-      requestType === "project" &&
-      projectConfigForTurn?.iterativeWork?.enabled === true
-    ) {
+    if (requestType === "project" && hasPmLoop) {
       try {
         const { readFileSync } = await import("node:fs");
         const { resolve: resolvePath } = await import("node:path");

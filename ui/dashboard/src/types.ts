@@ -382,8 +382,41 @@ export interface ProjectTypeInfo {
   logSources?: LogSourceDefinition[];
 }
 
-/** Cadence keys offered by the iterative-work tab dropdown (s118 t442 D1). */
+/** Cadence keys available for all scheduled job types. */
 export type IterativeWorkCadence = "30m" | "1h" | "5h" | "12h" | "1d" | "5d" | "1w";
+
+// ---------------------------------------------------------------------------
+// Scheduled jobs (s118 redesign)
+// ---------------------------------------------------------------------------
+
+export type ScheduledJobType = "pm-loop" | "prompt" | "command" | "action";
+
+export interface ScheduledJobBase {
+  id: string;
+  name: string;
+  enabled: boolean;
+  cadence?: IterativeWorkCadence;
+  cron?: string;
+}
+export interface PmLoopJob extends ScheduledJobBase { type: "pm-loop" }
+export interface PromptJob extends ScheduledJobBase { type: "prompt"; prompt: string }
+export interface CommandJob extends ScheduledJobBase { type: "command"; command: string }
+export interface ActionJob extends ScheduledJobBase { type: "action"; actionId: string; params?: Record<string, unknown> }
+
+export type ScheduledJob = PmLoopJob | PromptJob | CommandJob | ActionJob;
+
+/** Per-job runtime snapshot returned alongside the job list. */
+export interface ScheduledJobStatus {
+  jobId: string;
+  type: string;
+  name: string;
+  enabled: boolean;
+  cron: string | null;
+  cadence: string | null;
+  inFlight: boolean;
+  lastFiredAt: string | null;
+  nextFireAt: string | null;
+}
 
 /** Cadence options visible per category (mirrors gateway-core cadenceOptionsFor). */
 export const ITERATIVE_WORK_CADENCE_OPTIONS: Record<string, IterativeWorkCadence[]> = {
