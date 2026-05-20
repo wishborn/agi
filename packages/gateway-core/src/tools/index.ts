@@ -83,6 +83,14 @@ import {
 } from "./lookup-knowledge.js";
 import type { PrimeLoader } from "../prime-loader.js";
 
+// Doc search tool (s112 Phase 3)
+import {
+  createSearchDocsHandler,
+  SEARCH_DOCS_MANIFEST,
+  SEARCH_DOCS_INPUT_SCHEMA,
+} from "./search-docs.js";
+import type { DocIndexer } from "../doc-indexer.js";
+
 // Plan tools — handlers/manifests retired (plans now via pm tool Wish #17)
 
 // Project tools
@@ -163,6 +171,8 @@ export interface ToolRegistrationConfig {
   userContextStore?: UserContextStore;
   /** Optional PRIME knowledge loader — enables search_prime and lookup_knowledge tools. */
   primeLoader?: PrimeLoader;
+  /** Optional doc indexer — enables search_docs tool. */
+  docIndexer?: DocIndexer;
   /** Workspace project directories — enables manage_project tool. */
   projectDirs?: string[];
   /** ProjectConfigManager for validated project config I/O. */
@@ -341,6 +351,15 @@ export function registerAllTools(
       LOOKUP_KNOWLEDGE_MANIFEST as ToolManifestEntry,
       createLookupKnowledgeHandler({ primeLoader: config.primeLoader }),
       LOOKUP_KNOWLEDGE_INPUT_SCHEMA,
+    );
+  }
+
+  // Doc search tool (s112 Phase 3 — always available when docIndexer is wired)
+  if (config.docIndexer !== undefined) {
+    register(
+      SEARCH_DOCS_MANIFEST as ToolManifestEntry,
+      createSearchDocsHandler({ docIndexer: config.docIndexer }),
+      SEARCH_DOCS_INPUT_SCHEMA,
     );
   }
 

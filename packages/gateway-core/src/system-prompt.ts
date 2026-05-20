@@ -481,11 +481,50 @@ function buildSkillsSection(skills: SkillPromptEntry[]): string {
 function buildMemorySection(memories: MemoryPromptEntry[]): string {
   if (memories.length === 0) return "";
 
-  const entries = memories.map((m) =>
-    `- [${m.category}] ${m.content}`
-  );
+  // s112 Phase 5 — structured sections: global events, project events, facts, docs
+  const global: MemoryPromptEntry[] = [];
+  const project: MemoryPromptEntry[] = [];
+  const facts: MemoryPromptEntry[] = [];
+  const docs: MemoryPromptEntry[] = [];
+  const legacy: MemoryPromptEntry[] = [];
 
-  return `## Entity Memory\n\nRecalled context from previous interactions:\n${entries.join("\n")}`;
+  for (const m of memories) {
+    if (m.category === "memory") global.push(m);
+    else if (m.category === "project-memory") project.push(m);
+    else if (m.category === "fact") facts.push(m);
+    else if (m.category === "docs") docs.push(m);
+    else legacy.push(m);
+  }
+
+  // Legacy flat format (old MemoryEntry shape)
+  if (global.length === 0 && project.length === 0 && facts.length === 0 && docs.length === 0) {
+    const entries = legacy.map((m) => `- [${m.category}] ${m.content}`);
+    return `## Memory\n\n${entries.join("\n")}`;
+  }
+
+  const parts: string[] = ["## Memory"];
+
+  if (global.length > 0) {
+    parts.push("### Recalled context (global)");
+    for (const m of global) parts.push(`- ${m.content}`);
+  }
+
+  if (project.length > 0) {
+    parts.push("### Project context");
+    for (const m of project) parts.push(`- ${m.content}`);
+  }
+
+  if (facts.length > 0) {
+    parts.push("### Established facts");
+    for (const m of facts) parts.push(`- ${m.content}`);
+  }
+
+  if (docs.length > 0) {
+    parts.push("### Related docs");
+    for (const m of docs) parts.push(m.content);
+  }
+
+  return parts.join("\n\n");
 }
 
 function buildDevIdentitySection(): string {

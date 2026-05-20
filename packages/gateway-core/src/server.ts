@@ -18,6 +18,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ulid } from "ulid";
 import { dispatchJobsDir } from "./dispatch-paths.js";
 import { resolveMarketplaceSource } from "./dev-mode-sources.js";
@@ -107,7 +108,12 @@ import { ChatEventBuffer } from "./chat-event-buffer.js";
 import { registerAllTools, registerAgentTools } from "./tools/index.js";
 import { createIssueHandler, ISSUE_TOOL_MANIFEST, ISSUE_TOOL_INPUT_SCHEMA } from "./tools/issue-tools.js";
 import { SkillRegistry } from "@agi/skills";
-import { CompositeMemoryAdapter, CandidateDatasetAccumulator } from "@agi/memory";
+import {
+  GraphMemoryAdapter,
+  EmbeddingEngine,
+  CandidateDatasetAccumulator,
+} from "@agi/memory";
+import { ConsolidationEngine } from "@agi/memory";
 import {
   VoicePipeline,
   WhisperSTTProvider,
@@ -127,6 +133,7 @@ import { HeartbeatScheduler } from "./heartbeat.js";
 import { PrimeLoader } from "./prime-loader.js";
 import { AlignmentScorer } from "./prime-alignment-scorer.js";
 import { EpisodeExtractor } from "./episode-extractor.js";
+import { DocIndexer } from "./doc-indexer.js";
 import { resolvePrimeDir } from "./resolve-paths.js";
 import { checkProtocolCompatibility } from "./protocol-check.js";
 import { PlanStore, migrateProjectPlans } from "./plan-store.js";
@@ -906,6 +913,11 @@ export async function startGatewayServer(
     logger,
   });
 
+  // Placeholder — DocIndexer is wired after memoryAdapter+embeddingEngine below.
+  // registerAllTools accepts undefined so the tool is simply not registered
+  // until the indexer is ready. The late-bound ref pattern keeps boot order intact.
+  let docIndexer: DocIndexer | undefined;
+
   const toolCount = registerAllTools(toolRegistry, {
     workspaceRoot,
     resourceEntityId: resourceId,
@@ -915,6 +927,7 @@ export async function startGatewayServer(
     },
     userContextStore,
     primeLoader,
+    // docIndexer registered after boot completes (late-bound below)
     projectDirs: projectPaths,
     projectConfigManager,
     imageBlobStore,
@@ -1010,13 +1023,42 @@ export async function startGatewayServer(
     skillRegistry.startWatching();
   }
 
-  // Memory adapter — composite (file + optional Cognee)
+  // s112 — Graph memory adapter (CoALA+TiMem, SQLite-backed, replaces Cognee/file).
   const memoryDir = config.memory?.directory ?? "./data/memory";
-  const memoryAdapter = new CompositeMemoryAdapter({
-    getState: () => stateMachine.getState(),
-    localMemDir: memoryDir,
+  const memoryAdapter = new GraphMemoryAdapter({
+    legacyMemDir: memoryDir,
   });
-  log.info(`memory adapter initialized (dir: ${memoryDir})`);
+  log.info("graph memory adapter initialized (~/.agi/memory/graph.db)");
+
+  // s112 Phase 2 — Embedding engine for semantic retrieval (Ollama, CPU-first).
+  const embeddingEngine = new EmbeddingEngine({
+    model: config.memory?.embeddingModel ?? "nomic-embed-text",
+  });
+  void embeddingEngine.checkAvailability().then((avail) => {
+    if (avail) {
+      log.info(`embedding engine ready (model: ${embeddingEngine.model})`);
+    } else {
+      log.info("embedding engine unavailable — using FTS5 BM25 fallback");
+    }
+  });
+
+  // s112 Phase 4 — Consolidation engine (session/job boundary relationship extraction).
+  const consolidationEngine = new ConsolidationEngine({
+    graph: memoryAdapter,
+    invoke: (prompt: string) => getLLMProvider().summarize(prompt, ""),
+    logger: log,
+  });
+
+  // Idle consolidation timer — runs every 30 minutes.
+  setInterval(
+    () => {
+      void consolidationEngine.maybeConsolidate({
+        entityId: resourceId,
+        trigger: "idle",
+      }).catch(() => { /* non-fatal */ });
+    },
+    30 * 60 * 1000,
+  );
 
   // s112 — Memory & Learning pipeline (EpisodeExtractor + CandidateDatasetAccumulator).
   // Fire-and-forget: every successful agent invocation extracts an EpisodicRecord,
@@ -1038,9 +1080,26 @@ export async function startGatewayServer(
     coaAlias: resourceId,
     alignmentScorer: _alignmentScorer,
     accumulator: _accumulator,
+    consolidationEngine,
     logger: log,
   });
   log.info("episodic memory pipeline initialized (extractor + accumulator)");
+
+  // s112 Phase 3 — Doc indexer (agi/docs/ + global k/ + per-project k/).
+  docIndexer = new DocIndexer({
+    graph: memoryAdapter,
+    embeddingEngine,
+    agiRoot: join(dirname(fileURLToPath(import.meta.url)), "../../.."),
+    globalKDir: join(dirname(fileURLToPath(import.meta.url)), "../../../../_aionima/k"),
+    projectDirs: projectPaths,
+    logger: log,
+  });
+  void docIndexer.indexAll().catch(() => { /* non-fatal */ });
+  docIndexer.watchForChanges();
+  // Late-register search_docs tool now that docIndexer is ready.
+  const { createSearchDocsHandler, SEARCH_DOCS_MANIFEST, SEARCH_DOCS_INPUT_SCHEMA } = await import("./tools/search-docs.js");
+  toolRegistry.register(SEARCH_DOCS_MANIFEST as import("./system-prompt.js").ToolManifestEntry, createSearchDocsHandler({ docIndexer }), SEARCH_DOCS_INPUT_SCHEMA);
+  log.info("doc indexer initialized + search_docs tool registered");
 
   // s152 t651 — UserNotes store. Constructed here (before AgentInvoker)
   // so the invoker can read notes per project + global on each turn and
@@ -1065,6 +1124,8 @@ export async function startGatewayServer(
     resourceId,
     nodeId,
     memoryAdapter,
+    graphAdapter: memoryAdapter,
+    docIndexer,
     skillRegistry,
     userContextStore,
     primeLoader,

@@ -245,6 +245,10 @@ export interface AgentInvokerDeps {
   /** s112 t384 — episode extraction pipeline. When wired, every successful chat
    *  turn triggers a fire-and-forget episode extraction + scoring + storage cycle. */
   episodeExtractor?: EpisodeExtractor;
+  /** s112 Phase 3/5 — graph memory adapter for project-scoped queries + relationship traversal. */
+  graphAdapter?: import("@agi/memory").GraphMemoryAdapter;
+  /** s112 Phase 3 — doc indexer for doc chunk injection into context. */
+  docIndexer?: import("./doc-indexer.js").DocIndexer;
 }
 
 export interface InvocationRequest {
@@ -482,16 +486,75 @@ export class AgentInvoker extends EventEmitter {
       channel,
     };
 
-    // Inject recalled memories (if memory adapter is wired)
+    // Inject recalled memories — s112 Phase 5: project-scoped + relationships + doc chunks
     let memories: Array<{ content: string; category: string }> | undefined;
-    if (this.deps.memoryAdapter !== undefined) {
+    const projectPath = request.projectContext ?? null;
+    const queryText = typeof content === "string" ? content.slice(0, 300) : "";
+
+    if (this.deps.graphAdapter !== undefined) {
+      try {
+        const graph = this.deps.graphAdapter;
+
+        // Global episodic events (entity-wide)
+        const globalEvents = graph.queryGraphEvents({
+          entityId: entity.id,
+          projectPath: null,
+          semantic: queryText,
+          limit: 4,
+        });
+
+        // Project-scoped episodic events
+        const projectEvents = projectPath
+          ? graph.queryGraphEvents({ entityId: entity.id, projectPath, semantic: queryText, limit: 4 })
+          : [];
+
+        // Established relationship facts
+        const relationships = graph.queryRelationships({
+          subjectEntityId: entity.id,
+          projectPath,
+          validAt: new Date(),
+          limit: 3,
+        });
+
+        // Doc chunks from k/ and agi/docs/
+        const docChunks = this.deps.docIndexer
+          ? await this.deps.docIndexer.query({
+              query: queryText || "memory context",
+              scope: projectPath ? `project:${projectPath}` : "global",
+              limit: 2,
+            }).catch(() => [])
+          : [];
+
+        const parts: Array<{ content: string; category: string }> = [];
+
+        for (const e of globalEvents) {
+          parts.push({ category: "memory", content: e.summary });
+        }
+        for (const e of projectEvents) {
+          parts.push({ category: "project-memory", content: e.summary });
+        }
+        for (const r of relationships) {
+          const since = new Date(r.validFrom).toISOString().slice(0, 10);
+          parts.push({ category: "fact", content: `${r.predicate}: ${r.objectLiteral} (since ${since})` });
+        }
+        for (const c of docChunks) {
+          const label = c.heading ? `**${c.heading}** (${c.sourcePath})` : c.sourcePath;
+          parts.push({ category: "docs", content: `${label}\n${c.content.slice(0, 200)}` });
+        }
+
+        if (parts.length > 0) memories = parts;
+      } catch {
+        // Memory recall failure is non-fatal
+      }
+    } else if (this.deps.memoryAdapter !== undefined) {
+      // Legacy fallback for non-graph adapters
       try {
         memories = await this.deps.memoryAdapter.query({
           entityId: entity.id,
           limit: 10,
         });
       } catch {
-        // Memory recall failure is non-fatal
+        // non-fatal
       }
     }
 

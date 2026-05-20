@@ -1,278 +1,150 @@
-# Memory & Learning Framework
+# Memory and Learning Framework
 
-> **Authoritative doc for s112.** Workers, plugins, and future agents building against the memory system should read this before touching any memory-related code.
-
-## Overview
-
-Aion's memory + learning system separates two distinct concerns:
-
-- **Memory** is for recall — facts, preferences, prior decisions, project state. Things the agent needs to retrieve and use at inference time.
-- **Fine-tuning** is for behavior — how to reason under the doctrine, how to weigh tradeoffs, how to structure responses. Things that belong in the model's weights, not a lookup table.
-
-Mixing these — trying to put every conversation into training data, or storing behavior policies in memory — is how self-improvement turns into self-sabotage. The layered architecture enforces the separation.
-
-The system is built on a four-layer model. Each layer has a distinct storage medium, a distinct retrieval path, and a distinct v0.4.0 status. Higher-numbered layers are progressively longer-lived and more expensive to update.
-
-Source spec: `_discovery/aion-blockchain-memory-draft-a.md`. PRIME memory protocol: `aionima-prime/core/0MEMORY.md`.
+> Canonical reference for s112 (v0.4.0). Storage: SQLite `~/.agi/memory/graph.db`. Embedding: Ollama `nomic-embed-text` (FTS5 BM25 fallback). Consolidation: session/job boundaries.
 
 ---
 
-## The 4-Layer Memory Model
+## Architecture overview
 
-| Layer | Name | Storage | Lifetime | v0.4.0 Status |
-|-------|------|---------|---------|---------------|
-| A | Working memory | In-process on `AgentSession` | Current task only | Wired — type contract only; not persisted |
-| B | Episodic memory | `~/.agi/memory/` + `agi_data` Postgres | Session-durable, GC'd by retention policy | Wired — schema + hash helper shipped (t381) |
-| C | Doctrine (PRIME corpus) | `aionima-prime/` git repo + drift checker | Versioned like source code; humans own changes | Interface only — PRIME reader blocked (t382) |
-| D | Blockchain anchor | `~/.agi/anchors/pending.jsonl` (noop); Ethereum/L2 in v0.6.0 | Permanent, cryptographically verifiable | Noop stub shipped (t383); live chain in v0.6.0 (s113) |
+Aion's memory system is a **CoALA + TiMem hybrid** — the cognitive taxonomy of CoALA (4-layer agent memory) merged with TiMem's temporal-hierarchical graph (raw events → consolidated semantic relationships with validity windows).
 
-### Why four layers?
+### The four layers
 
-- **A (working)** — fast ephemeral context for the current turn. Can't be anchored; too volatile.
-- **B (episodic)** — summarized events with hash + confidence + COA fingerprint. Retrieved at session open to prime the agent's context. Scored by G4 to build training candidates.
-- **C (doctrine)** — the frozen constitution. PRIME owns the semantics. The agent reads doctrine; it does not write it. Doctrine regression tests run against C before promoting any adapter.
-- **D (anchor)** — hash ledger only. Content lives in B/C; only the hash + provenance + governance signal touches the chain. Verifiable across time and across machines without paying chain costs for content.
+| Layer | Name | What lives here | Storage |
+|-------|------|-----------------|---------|
+| A | Working memory | Current conversation context (messages, tool calls) | In-process `AgentSession` |
+| B | Episodic memory | Fire-and-forget extraction after each invocation | SQLite `events` table |
+| B→C | Semantic graph | Consolidated relationship triples (Layer B→semantic bridge) | SQLite `relationships` table |
+| C | PRIME (procedural) | Hardened knowledge files — persona, purpose, directives | File system (`aionima-prime/`) |
 
----
-
-## Memory Record Schemas
-
-### Layer A — WorkingMemory
-
-```ts
-// packages/memory/src/episodic.ts
-export interface WorkingMemory {
-  currentGoals: string[];        // What the agent is trying to accomplish
-  activeDocuments: string[];     // Files/docs loaded into context this turn
-  operationChain: string[];      // Operations executed so far this turn
-  temporaryAssumptions: string[];
-  capturedAt: string;            // ISO 8601 snapshot timestamp
-}
-```
-
-Not persisted. Lives on the `AgentSession` during a turn. Used for introspection and cross-module handoff (e.g. prompt-inspector, "what am I doing right now" surface).
+Layer D (blockchain anchor) is stubbed as `NoopAnchor` in v0.4.0; a live Ethereum/L2 implementation is planned for v0.6.0.
 
 ---
 
-### Layer B — EpisodicRecord
+## Episodic pipeline (Layer B)
 
-```ts
-// packages/memory/src/episodic.ts
-export interface EpisodicRecord {
-  id: string;            // ULID — caller responsibility
-  timestamp: string;     // ISO 8601 UTC of the event being summarized
-  actor: {
-    entityId: string;
-    coaAlias: string;    // e.g. "#E0", "$A0"
-  };
-  summary: string;       // Human-readable one-paragraph digest
-  tags: string[];        // Categorical retrieval: ["preference", "tool-use", ...]
-  embedding?: number[];  // Similarity vector — null in v0.4.0; populated by s116 embedder
-  confidence: number;    // Scorer signal: 0..1 — usefulness + alignment + correctness
-  primeAlignment?: number; // PRIME-alignment score: 0..1 — null in v0.4.0 (G2 blocked)
-  sourceLinks: string[]; // Chat session IDs, doc paths, tool call IDs sourced for this episode
-  hash: string;          // Canonical content hash — computed by canonicalEpisodicHash()
-  coaFingerprint: string; // Ties this record to the COA<>COI chain
-  modelVersion?: string; // Which model produced the source content
-}
-```
+After every successful chat turn, `EpisodeExtractor.extractAndStore()` runs **fire-and-forget**:
 
-**Computing the hash:**
+1. **Extract** — short LLM call produces `{ summary, decisions, preferences, facts, tags }` from the exchange
+2. **Score** — second LLM call rates `{ useful, aligned, correct }` → `confidence`
+3. **Hash** — canonical SHA-256 hash for dedup
+4. **Anchor** — `NoopAnchor.anchor()` (no-op in v0.4.0)
+5. **Store** — `GraphMemoryAdapter.store()` → `events` table
+6. **Accumulate** — 4-gate eval pipeline for training dataset admission
+7. **Consolidate** — triggers `ConsolidationEngine.maybeConsolidate()` at session boundary
 
-```ts
-import { canonicalEpisodicHash } from "@agi/memory";
-
-// hash excludes: embedding, primeAlignment, confidence
-// so re-scoring doesn't change a record's identity
-const hash = canonicalEpisodicHash(record);
-```
-
-The hash over `(actor, coaFingerprint, id, modelVersion, sourceLinks, summary, tags, timestamp)` — keys in insertion order, with array fields sorted — gives a stable identity for the *event*, not the scorer's opinion of the event.
+`EpisodicRecord` key fields:
+- `id` — ULID
+- `summary` — plain-language digest of the exchange
+- `tags` — categorical retrieval labels
+- `confidence` — 0..1, scorer-assigned quality score
+- `primeAlignment` — optional G2 PRIME alignment score
+- `hash` — SHA-256 for dedup and anchor reference
+- `coaFingerprint` — links to the COA chain of the originating action
+- `projectPath` — `null` for global events; path string for project-scoped
 
 ---
 
-### Layer D — AnchorRecord / BlockchainAnchor
+## Consolidation pipeline (Layer B→semantic bridge)
 
-```ts
-// packages/aion-sdk/src/anchor.ts
-export interface AnchorRecord {
-  hash: string;           // sha256 of the content artifact (episodic record, dataset, adapter)
-  owner: string;          // Entity that produced/owns the artifact ("$A0", "#E0")
-  timestamp: string;      // ISO 8601 UTC
-  provenance: {
-    source: string;       // "episodic-memory", "training-dataset", "adapter-promotion", ...
-    modelVersion?: string;
-  };
-  evalScore?: number;      // Eval score snapshot — used for adapter promotion anchors
-  governanceApproval?: {   // Optional DAO/human approval for major promotions
-    approver: string;
-    signedAt: string;
-  };
-}
+At session/job/idle boundaries, `ConsolidationEngine.maybeConsolidate()` runs:
 
-export interface BlockchainAnchor {
-  anchor(record: AnchorRecord): Promise<AnchorResult>;
-  verify(hash: string): Promise<{ exists: boolean; record?: AnchorRecord }>;
-  listByOwner(owner: string, limit?: number): Promise<AnchorRecord[]>;
-}
-```
+1. Fetches unconsolidated events (`consolidated_at IS NULL`) — minimum 3 before running
+2. Calls LLM with `consolidation-extract.md` prompt → JSON array of relationship triples
+3. For definitive relationships (no `validUntil`): invalidates any prior open relationship with same `subject+predicate+scope`
+4. Writes `RelationshipRecord` entries with `valid_from`/`valid_until` temporal windows and `sourceEventIds` provenance
+5. Marks events as consolidated; writes to `consolidation_log`
 
-**v0.4.0 implementation — `NoopAnchor`:**
+**Predicate vocabulary (closed set):**
+`worked_on` | `decided` | `learned` | `used_tool` | `blocked_by` | `completed` | `discovered` | `prefers` | `created` | `fixed`
 
-```ts
-import { NoopAnchor } from "@agi/memory";
-
-const anchor = new NoopAnchor(); // writes to ~/.agi/anchors/pending.jsonl
-const result = await anchor.anchor(record);
-// result.txHash: "noop:<sha256-of-record-json>" — stable, deterministic
-```
-
-**Bridging Layer B → Layer D:**
-
-```ts
-import { episodicToAnchor } from "@agi/memory";
-
-// Keeps content out of anchor (content lives in B storage; only hash + provenance anchored)
-const anchorRecord = episodicToAnchor(episodicRecord);
-const { txHash } = await anchor.anchor(anchorRecord);
-```
+Trigger sites:
+- `EpisodeExtractor.extractAndStore()` — post-invocation
+- `IterativeWorkScheduler.recordCompletion()` — job completion
+- Server idle timer — every 30 minutes
 
 ---
 
-### Layer C — DoctrineEntry (PRIME corpus)
+## Embedding + retrieval (Phase 2)
 
-Not yet defined as a TypeScript schema — G2 is blocked on PRIME schema realignment. When it lands (t382), it will expose:
+`EmbeddingEngine` wraps Ollama's `/api/embeddings` endpoint:
+- Default model: `nomic-embed-text` (768 dims, Apache 2.0)
+- Alternative: `all-minilm:l6-v2` (384 dims, faster)
+- Config: `gateway.json` → `memory.embeddingModel`
 
-- Axioms + value hierarchy
-- Economic ontology + definitions
-- Anti-patterns + case-law precedents
+**Query path:**
+1. Embed the query text via `EmbeddingEngine.embed()`
+2. Pre-filter: FTS5 `events_fts MATCH ?` → top 25 candidates
+3. Cosine-rerank in TypeScript → return top `limit` (default 10)
 
-The PRIME corpus lives in `aionima-prime/` and is read-only at runtime. The agent reads doctrine; doctrine changes go through the PRIME repo + human review. This is intentional: the layer that constrains the model must not be writable by the model.
+**Off-grid fallback:** when Ollama is unavailable, `isAvailable() = false` → pure FTS5 BM25 ordering. No crash, no silent failure.
 
 ---
 
-## The Training Loop
+## Doc indexer (Phase 3)
 
-Self-improvement in this architecture means: **propose → judge → train → verify → adopt**. Not: append every conversation to weights.
+`DocIndexer` indexes markdown files into the `doc_chunks` table at gateway boot:
+
+| Source | Scope |
+|--------|-------|
+| `agi/docs/**/*.md` | `global` |
+| `_aionima/k/**/*.md` | `global` |
+| `<projectRoot>/k/**/*.md` | `project:<projectRoot>` |
+
+**Chunking:** split at H1/H2/H3 boundaries, 100–800 char range. Larger sections split by paragraph.
+
+**Staleness detection:** SHA-256 content hash per file. Unchanged files are skipped.
+
+**`search_docs` tool:** always available (no state/tier gate); semantic query over doc chunks.
+
+---
+
+## Memory injection into context (Phase 5)
+
+`AgentInvoker` injects memory context into each invocation's system prompt:
 
 ```
-User interaction
-  → Memory extraction       (s112 G4 scorer — episode scoring pipeline)
-  → Episode scoring         (confidence, primeAlignment — when G4 ships)
-  → Candidate dataset       (s112 G5 accumulator — gates: coherence, novelty, doctrine alignment)
-  → SFT or DPO batch job    (HF Transformers + PEFT + TRL — s112 G6 scaffold)
-  → New LoRA adapter
-  → Eval suite              (4 gates below)
-  → Governance decision     (threshold improvement + no critical regressions)
-  → Promote or reject
-  → Anchor hash/provenance  (NoopAnchor in v0.4.0; live chain in v0.6.0)
+## Memory
+
+### Recalled context (global)
+- {summary}   ← up to 4 global episodic events
+
+### Project context            ← only for project-scoped requests
+- {summary}   ← up to 4 project-scoped events
+
+### Established facts
+- {predicate}: {objectLiteral} (since {date})  ← up to 3 active relationships
+
+### Related docs               ← up to 2 chunks from k/ or agi/docs/
+**{heading}** ({sourcePath})
+{content snippet, max 200 chars}
 ```
 
-### v0.4.0 status of each loop step
-
-| Step | Status |
-|------|--------|
-| Memory extraction | Manual — no auto-extraction yet |
-| Episode scoring (G4) | Blocked (t384) |
-| Candidate dataset (G5) | Blocked (t385) |
-| Training pipeline (G6) | Blocked (t386) |
-| LoRA adapter | Not yet |
-| Eval suite (4 gates) | Scaffold only — gate contracts defined, not wired |
-| Governance decision | Not yet — manual human review |
-| Anchor hash/provenance | NoopAnchor ships (t383) ✓ |
+Token budget: ~400 (global) + ~400 (project) + ~120 (facts) + ~400 (docs) = ~1320 tokens within the 2000-token budget.
 
 ---
 
-## The 4 Eval Gates
+## Training dataset pipeline (4-gate eval, Phase G5)
 
-Every candidate adapter passes four gates before promotion. Failing any gate → reject the adapter.
+Each stored `EpisodicRecord` runs through `CandidateDatasetAccumulator` which applies 4 gates:
 
-### Gate 1 — Data quality gate
+| Gate | Purpose | Cutoff |
+|------|---------|--------|
+| G1 Data Quality | Rejects malformed/trivial entries | confidence < 0.3 |
+| G2 PRIME Alignment | Checks alignment with PRIME directives | primeAlignment < 0.4 |
+| G3 Governance | Filters PII, harmful content, policy violations | hard block |
+| G4 Rollback | Removes duplicates and contradictions | hash collision |
 
-Filters training examples before they join the candidate set:
-
-- Coherence check (is the episode internally consistent?)
-- Factuality check (where verifiable)
-- Doctrine alignment check (does it reinforce or contradict PRIME?)
-- Novelty check (not a near-duplicate of existing training data)
-- Duplicate detection (via `canonicalEpisodicHash` dedup)
-
-**v0.4.0 status:** interface contract only — no automated gate, manual curation.
-
-### Gate 2 — Reward / evaluation gate
-
-Every adapter is tested against held-out evals before promotion:
-
-- Held-out eval set
-- Adversarial set
-- Regression set
-- Philosophy consistency set (against PRIME doctrine)
-- Safety set
-
-**v0.4.0 status:** infrastructure stub — fixture paths defined, not populated.
-
-### Gate 3 — Governance gate
-
-Guards against promoting an adapter that scored slightly higher on average while regressing on something critical:
-
-- Threshold improvement required (not just +0.01%)
-- No critical regressions on any eval category
-- Optional human review (required for major upgrades)
-- Optional blockchain-recorded approval event (v0.6.0)
-
-**v0.4.0 status:** not wired — all promotions are manual.
-
-### Gate 4 — Rollback gate
-
-Every promoted adapter must carry:
-
-- Version id
-- Parent version
-- Training data snapshot hash
-- Reproducible training config
-- Instant rollback path
-
-Without rollback, self-improvement becomes self-sabotage. **v0.4.0 status:** NoopAnchor provides the hash ledger for this; rollback tooling is not yet built.
+Admitted entries accumulate in a monthly dataset file. Future iteration: LoRA fine-tuning on admitted candidates to close the self-improvement loop.
 
 ---
 
-## Identity Drift Prevention
+## SQLite schema reference
 
-The hardest part of self-improvement is not the chain or the fine-tuning. It is **identity drift**: the model slowly stops being your impact-economics agent and becomes an average of recent interactions.
+Full schema in `docs/agents/memory-graph.md`. Key tables:
 
-Preventive controls, in order of importance:
-
-1. **Fixed constitution** — Layer C (PRIME doctrine) is read-only for the agent. Doctrine changes require human commits to `aionima-prime/`.
-2. **Frozen gold evals** — the eval suite's regression set is never overwritten by training data. New examples get added; old ones stay.
-3. **Doctrine regression tests** — Gate 2's philosophy-consistency set runs the adapter against PRIME-derived test cases before any promotion.
-4. **Weighted sampling** — when building training batches, canonical doctrine data is over-weighted relative to recent interaction data. Recent noise cannot drown out foundational alignment.
-5. **Human/governance veto** — Gate 3 makes major upgrades require explicit review. The AnchorRecord's `governanceApproval` field carries the audit trail.
-
----
-
-## What ships in v0.5.0+
-
-These are explicitly deferred from v0.4.0:
-
-| Feature | Tynn story |
-|---------|-----------|
-| Live self-improvement loop (auto-trigger LoRA training) | s114 |
-| Live blockchain anchoring (Ethereum/L2 + IPFS encrypted blobs) | s113 |
-| Embedding plugin + vector retrieval (populates `EpisodicRecord.embedding`) | s116 |
-| Decentralized memory network (replicate artifacts across nodes) | s117 (phase 5) |
-| PRIME corpus reader + drift detector (Layer C wired) | t382 |
-| Episode scoring pipeline (G4) | t384 |
-| Candidate dataset accumulator + 4-gate eval scaffolding (G5) | t385 |
-| LoRA training pipeline scaffold (G6) | t386 |
-
----
-
-## Cross-References
-
-- `_discovery/aion-blockchain-memory-draft-a.md` — source architecture spec; the design rationale behind every layer and gate
-- `aionima-prime/core/0MEMORY.md` — PRIME's memory protocol (0M/0K/0L pointer system; PRIME owns the doctrine semantics; agi owns the memory + training implementation)
-- `aionima-prime/WIP/knowledge/impactonomics-whitepaper.md` — TRUE COST framing that episodic memory + training decisions are measured against
-- `packages/memory/src/episodic.ts` — Layer A + B type definitions + `canonicalEpisodicHash` + `episodicToAnchor`
-- `packages/memory/src/anchors/noop.ts` — Layer D NoopAnchor (v0.4.0)
-- `packages/aion-sdk/src/anchor.ts` — `AnchorRecord` / `BlockchainAnchor` interface contracts
-- `docs/agents/system-prompt-assembly.md` — how episodic memories get injected into the system prompt at session open
+- `events` — episodic records with FTS5 index (`events_fts`)
+- `relationships` — consolidated semantic graph with temporal validity
+- `doc_chunks` — indexed documentation + k/ files with FTS5 index (`doc_chunks_fts`)
+- `consolidation_log` — audit trail for consolidation runs
+- `_meta` — migration markers (e.g., `migrated_from_file_adapter`)
