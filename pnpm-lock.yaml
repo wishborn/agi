@@ -476,9 +476,15 @@ importers:
 
   packages/memory:
     dependencies:
+      '@agi/db-schema':
+        specifier: workspace:*
+        version: link:../db-schema
       '@agi/sdk':
         specifier: workspace:*
         version: link:../aion-sdk
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@electric-sql/pglite@0.4.4)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(better-sqlite3@11.10.0)(gel@2.2.0)(pg@8.20.0)
       ulid:
         specifier: ^2.3.0
         version: 2.4.0

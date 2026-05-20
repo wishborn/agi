@@ -7569,7 +7569,7 @@ export async function createGatewayRuntimeState(
     const limit = Math.min(parseInt(q.limit ?? "50", 10) || 50, 200);
     const projectPath = q.projectPath === "null" ? null : q.projectPath;
     try {
-      const events = deps.graphAdapter.queryGraphEvents({
+      const events = await deps.graphAdapter.queryGraphEvents({
         entityId: q.entityId,
         projectPath,
         semantic: q.q,

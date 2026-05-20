@@ -496,7 +496,7 @@ export class AgentInvoker extends EventEmitter {
         const graph = this.deps.graphAdapter;
 
         // Global episodic events (entity-wide)
-        const globalEvents = graph.queryGraphEvents({
+        const globalEvents = await graph.queryGraphEvents({
           entityId: entity.id,
           projectPath: null,
           semantic: queryText,
@@ -505,11 +505,11 @@ export class AgentInvoker extends EventEmitter {
 
         // Project-scoped episodic events
         const projectEvents = projectPath
-          ? graph.queryGraphEvents({ entityId: entity.id, projectPath, semantic: queryText, limit: 4 })
+          ? await graph.queryGraphEvents({ entityId: entity.id, projectPath, semantic: queryText, limit: 4 })
           : [];
 
         // Established relationship facts
-        const relationships = graph.queryRelationships({
+        const relationships = await graph.queryRelationships({
           subjectEntityId: entity.id,
           projectPath,
           validAt: new Date(),
@@ -1324,6 +1324,7 @@ export class AgentInvoker extends EventEmitter {
           model: result.model,
           coaFingerprint: outboundFingerprint,
           sessionKey: sKey,
+          projectPath: request.projectContext ?? null,
         });
       }
 

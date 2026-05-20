@@ -1,43 +1,45 @@
 /**
- * Tests for @agi/memory — GraphMemoryAdapter (s112 CoALA+TiMem rewrite).
+ * Tests for @agi/memory — GraphMemoryAdapter (s112 CoALA+TiMem, Postgres).
  *
- * Each test suite gets its own temp SQLite file via mkdtempSync so there is
- * zero cross-test state. No mocks — tests run against the real node:sqlite engine.
+ * Tests run against the test VM's real agi_data Postgres (story #106 pattern).
+ * Isolation via unique entity IDs per test — no shared mutable state.
+ * Requires the test VM running: `agi test-vm create` + `agi test-vm services-start`.
+ *
+ * Migration 0004_special_bishop creates the memory_* tables.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { ulid } from "ulid";
+import { createDbClient, type DbClient } from "@agi/db-schema";
 import { GraphMemoryAdapter } from "./graph-adapter.js";
 import type { EpisodicRecord } from "./episodic.js";
 import type { GraphEventRecord, RelationshipRecord } from "./graph-adapter.js";
 
 // ---------------------------------------------------------------------------
-// Test helpers
+// Test setup — one shared pool for the file (cheaper than per-test)
 // ---------------------------------------------------------------------------
 
-let tmpCount = 0;
+let dbClient: DbClient;
+let adapter: GraphMemoryAdapter;
 
-function makeTmpDir(): string {
-  tmpCount++;
-  return mkdtempSync(join(tmpdir(), `agi-mem-test-${String(tmpCount)}-`));
-}
+beforeAll(() => {
+  dbClient = createDbClient();
+  adapter = new GraphMemoryAdapter({ db: dbClient.db });
+});
 
-function makeAdapter(dir: string): GraphMemoryAdapter {
-  return new GraphMemoryAdapter({ dbPath: join(dir, "graph.db") });
-}
+afterAll(async () => {
+  await dbClient.pool.end();
+});
 
 let episodeCounter = 0;
 
-// EpisodicRecord (rich shape for store() tests)
-function makeEpisodic(
-  entityId: string,
-  overrides: Partial<EpisodicRecord> = {},
-): EpisodicRecord {
+function uid(): string {
+  return ulid();
+}
+
+function makeEpisodic(entityId: string, overrides: Partial<EpisodicRecord> = {}): EpisodicRecord {
   episodeCounter++;
-  const id = ulid();
+  const id = uid();
   return {
     id,
     timestamp: new Date().toISOString(),
@@ -53,13 +55,9 @@ function makeEpisodic(
   };
 }
 
-// GraphEventRecord (native shape for storeEpisodicEvent)
-function makeGraphEvent(
-  entityId: string,
-  overrides: Partial<GraphEventRecord> = {},
-): GraphEventRecord {
+function makeGraphEvent(entityId: string, overrides: Partial<GraphEventRecord> = {}): GraphEventRecord {
   episodeCounter++;
-  const id = ulid();
+  const id = uid();
   return {
     id,
     entityId,
@@ -75,27 +73,15 @@ function makeGraphEvent(
 }
 
 // ---------------------------------------------------------------------------
-// 1. GraphMemoryAdapter — MemoryProvider interface
+// 1. MemoryProvider interface
 // ---------------------------------------------------------------------------
 
 describe("GraphMemoryAdapter — MemoryProvider interface", () => {
-  let dir: string;
-  let adapter: GraphMemoryAdapter;
-
-  beforeEach(() => {
-    dir = makeTmpDir();
-    adapter = makeAdapter(dir);
-    episodeCounter = 0;
-  });
-
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
-
   it("stores a MemoryEntry (legacy shape) and retrieves it via query()", async () => {
+    const entityId = `E-mem-${uid()}`;
     await adapter.store({
-      id: "mem-001",
-      entityId: "E1",
+      id: uid(),
+      entityId,
       content: "user prefers dark mode",
       category: "preference",
       source: "explicit",
@@ -104,159 +90,149 @@ describe("GraphMemoryAdapter — MemoryProvider interface", () => {
       accessCount: 0,
     });
 
-    const results = await adapter.query({ entityId: "E1" });
+    const results = await adapter.query({ entityId });
     expect(results.length).toBeGreaterThan(0);
     expect(results[0]!.content).toBe("user prefers dark mode");
   });
 
   it("stores an EpisodicRecord (rich shape) and retrieves it via query()", async () => {
-    const ep = makeEpisodic("E2", { summary: "completed scheduler rewrite" });
+    const entityId = `E-ep-${uid()}`;
+    const ep = makeEpisodic(entityId, { summary: "completed scheduler rewrite" });
     await adapter.store(ep);
 
-    const results = await adapter.query({ entityId: "E2" });
+    const results = await adapter.query({ entityId });
     expect(results.length).toBeGreaterThan(0);
     expect(results[0]!.content).toContain("completed scheduler rewrite");
   });
 
   it("only returns entries for the requested entity", async () => {
-    await adapter.store({ id: "m1", entityId: "EA", content: "entity A", category: "fact", source: "explicit", createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(), accessCount: 0 });
-    await adapter.store({ id: "m2", entityId: "EB", content: "entity B", category: "fact", source: "explicit", createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(), accessCount: 0 });
+    const eaId = `EA-${uid()}`;
+    const ebId = `EB-${uid()}`;
+    await adapter.store({ id: uid(), entityId: eaId, content: "entity A", category: "fact", source: "explicit", createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(), accessCount: 0 });
+    await adapter.store({ id: uid(), entityId: ebId, content: "entity B", category: "fact", source: "explicit", createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(), accessCount: 0 });
 
-    const results = await adapter.query({ entityId: "EA" });
-    expect(results.every((r) => r.entityId === "EA")).toBe(true);
+    const results = await adapter.query({ entityId: eaId });
+    expect(results.every((r) => r.entityId === eaId)).toBe(true);
   });
 
   it("respects the limit parameter", async () => {
+    const entityId = `E-lim-${uid()}`;
     for (let i = 0; i < 8; i++) {
-      await adapter.store({ id: `m-lim-${String(i)}`, entityId: "EL", content: `memory ${String(i)}`, category: "fact", source: "explicit", createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(), accessCount: 0 });
+      await adapter.store({ id: uid(), entityId, content: `memory ${String(i)}`, category: "fact", source: "explicit", createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(), accessCount: 0 });
     }
 
-    const results = await adapter.query({ entityId: "EL", limit: 3 });
+    const results = await adapter.query({ entityId, limit: 3 });
     expect(results.length).toBeLessThanOrEqual(3);
   });
 
-  it("isAvailable always returns true (local SQLite)", async () => {
+  it("isAvailable always returns true (Postgres is always local)", () => {
     expect(adapter.isAvailable()).toBe(true);
   });
 
   it("count returns 0 for unknown entity", async () => {
-    expect(await adapter.count("ghost")).toBe(0);
+    expect(await adapter.count(`ghost-${uid()}`)).toBe(0);
   });
 
   it("count returns correct number after stores", async () => {
-    await adapter.store({ id: "c1", entityId: "EC", content: "a", category: "fact", source: "explicit", createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(), accessCount: 0 });
-    await adapter.store({ id: "c2", entityId: "EC", content: "b", category: "fact", source: "explicit", createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(), accessCount: 0 });
-    expect(await adapter.count("EC")).toBe(2);
+    const entityId = `EC-${uid()}`;
+    await adapter.store({ id: uid(), entityId, content: "a", category: "fact", source: "explicit", createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(), accessCount: 0 });
+    await adapter.store({ id: uid(), entityId, content: "b", category: "fact", source: "explicit", createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(), accessCount: 0 });
+    expect(await adapter.count(entityId)).toBe(2);
   });
 
   it("delete removes the entry and decrements count", async () => {
-    await adapter.store({ id: "del1", entityId: "ED", content: "to delete", category: "fact", source: "explicit", createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(), accessCount: 0 });
-    expect(await adapter.count("ED")).toBe(1);
-    await adapter.delete("del1");
-    expect(await adapter.count("ED")).toBe(0);
+    const entityId = `ED-${uid()}`;
+    const id = uid();
+    await adapter.store({ id, entityId, content: "to delete", category: "fact", source: "explicit", createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(), accessCount: 0 });
+    expect(await adapter.count(entityId)).toBe(1);
+    await adapter.delete(id);
+    expect(await adapter.count(entityId)).toBe(0);
   });
 
   it("deleteAllForEntity removes all entries for that entity only", async () => {
-    await adapter.store({ id: "da1", entityId: "E_A", content: "a1", category: "fact", source: "explicit", createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(), accessCount: 0 });
-    await adapter.store({ id: "da2", entityId: "E_A", content: "a2", category: "fact", source: "explicit", createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(), accessCount: 0 });
-    await adapter.store({ id: "db1", entityId: "E_B", content: "b1", category: "fact", source: "explicit", createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(), accessCount: 0 });
-    await adapter.deleteAllForEntity("E_A");
-    expect(await adapter.count("E_A")).toBe(0);
-    expect(await adapter.count("E_B")).toBe(1);
+    const eaId = `DA-${uid()}`;
+    const ebId = `DB-${uid()}`;
+    await adapter.store({ id: uid(), entityId: eaId, content: "a1", category: "fact", source: "explicit", createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(), accessCount: 0 });
+    await adapter.store({ id: uid(), entityId: eaId, content: "a2", category: "fact", source: "explicit", createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(), accessCount: 0 });
+    await adapter.store({ id: uid(), entityId: ebId, content: "b1", category: "fact", source: "explicit", createdAt: new Date().toISOString(), lastAccessedAt: new Date().toISOString(), accessCount: 0 });
+    await adapter.deleteAllForEntity(eaId);
+    expect(await adapter.count(eaId)).toBe(0);
+    expect(await adapter.count(ebId)).toBe(1);
   });
 });
 
 // ---------------------------------------------------------------------------
-// 2. GraphMemoryAdapter — EpisodicRecord + graph methods
+// 2. EpisodicRecord + graph methods
 // ---------------------------------------------------------------------------
 
 describe("GraphMemoryAdapter — episodic + graph methods", () => {
-  let dir: string;
-  let adapter: GraphMemoryAdapter;
+  it("stores and retrieves a GraphEventRecord via storeEpisodicEvent", async () => {
+    const entityId = `GE-${uid()}`;
+    const ev = makeGraphEvent(entityId, { summary: "fixed scheduler deadlock" });
+    await adapter.storeEpisodicEvent(ev);
 
-  beforeEach(() => {
-    dir = makeTmpDir();
-    adapter = makeAdapter(dir);
-    episodeCounter = 0;
-  });
-
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it("stores and retrieves a GraphEventRecord via storeEpisodicEvent", () => {
-    const ev = makeGraphEvent("$A0", { summary: "fixed scheduler deadlock" });
-    adapter.storeEpisodicEvent(ev);
-
-    const events = adapter.queryGraphEvents({ entityId: "$A0", limit: 10 });
+    const events = await adapter.queryGraphEvents({ entityId, limit: 10 });
     expect(events.length).toBe(1);
     expect(events[0]!.summary).toBe("fixed scheduler deadlock");
   });
 
-  it("queryGraphEvents filters by projectPath", () => {
-    const global = makeGraphEvent("$A0", { summary: "global event", projectPath: null });
-    const proj = makeGraphEvent("$A0", { summary: "project event", projectPath: "/my/project" });
-    adapter.storeEpisodicEvent(global);
-    adapter.storeEpisodicEvent(proj);
+  it("queryGraphEvents filters by projectPath", async () => {
+    const entityId = `GPP-${uid()}`;
+    const global = makeGraphEvent(entityId, { summary: "global event", projectPath: null });
+    const proj = makeGraphEvent(entityId, { summary: "project event", projectPath: "/my/project" });
+    await adapter.storeEpisodicEvent(global);
+    await adapter.storeEpisodicEvent(proj);
 
-    const globalOnly = adapter.queryGraphEvents({ entityId: "$A0", projectPath: null, limit: 10 });
+    const globalOnly = await adapter.queryGraphEvents({ entityId, projectPath: null, limit: 10 });
     expect(globalOnly.every((e) => e.projectPath === null || e.projectPath === undefined)).toBe(true);
     expect(globalOnly.some((e) => e.summary === "global event")).toBe(true);
 
-    const projOnly = adapter.queryGraphEvents({ entityId: "$A0", projectPath: "/my/project", limit: 10 });
+    const projOnly = await adapter.queryGraphEvents({ entityId, projectPath: "/my/project", limit: 10 });
     expect(projOnly.some((e) => e.summary === "project event")).toBe(true);
   });
 
-  it("does not store duplicate hashes (idempotent on same hash)", () => {
-    const ev = makeGraphEvent("$A0");
-    adapter.storeEpisodicEvent(ev);
-    adapter.storeEpisodicEvent(ev); // same record, same hash → INSERT OR IGNORE
-    const events = adapter.queryGraphEvents({ entityId: "$A0", limit: 10 });
+  it("does not store duplicate hashes (idempotent on same hash)", async () => {
+    const entityId = `GDH-${uid()}`;
+    const ev = makeGraphEvent(entityId);
+    await adapter.storeEpisodicEvent(ev);
+    await adapter.storeEpisodicEvent(ev); // same hash → onConflictDoNothing
+    const events = await adapter.queryGraphEvents({ entityId, limit: 10 });
     expect(events.length).toBe(1);
   });
 
-  it("getUnconsolidated returns events without consolidated_at", () => {
-    const ev1 = makeGraphEvent("$A0");
-    const ev2 = makeGraphEvent("$A0");
-    adapter.storeEpisodicEvent(ev1);
-    adapter.storeEpisodicEvent(ev2);
+  it("getUnconsolidated returns events without consolidated_at", async () => {
+    const entityId = `GUC-${uid()}`;
+    const ev1 = makeGraphEvent(entityId);
+    const ev2 = makeGraphEvent(entityId);
+    await adapter.storeEpisodicEvent(ev1);
+    await adapter.storeEpisodicEvent(ev2);
 
-    const unconsolidated = adapter.getUnconsolidated("$A0", undefined, 10);
+    const unconsolidated = await adapter.getUnconsolidated(entityId, undefined, 10);
     expect(unconsolidated.length).toBe(2);
   });
 
-  it("markConsolidated sets consolidated_at and removes from getUnconsolidated", () => {
-    const ev = makeGraphEvent("$A0");
-    adapter.storeEpisodicEvent(ev);
-    expect(adapter.getUnconsolidated("$A0", undefined, 10).length).toBe(1);
+  it("markConsolidated sets consolidated_at and removes from getUnconsolidated", async () => {
+    const entityId = `GMC-${uid()}`;
+    const ev = makeGraphEvent(entityId);
+    await adapter.storeEpisodicEvent(ev);
+    expect((await adapter.getUnconsolidated(entityId, undefined, 10)).length).toBe(1);
 
-    adapter.markConsolidated([ev.id]);
-    expect(adapter.getUnconsolidated("$A0", undefined, 10).length).toBe(0);
+    await adapter.markConsolidated([ev.id]);
+    expect((await adapter.getUnconsolidated(entityId, undefined, 10)).length).toBe(0);
   });
 });
 
 // ---------------------------------------------------------------------------
-// 3. GraphMemoryAdapter — relationships
+// 3. Relationships
 // ---------------------------------------------------------------------------
 
 describe("GraphMemoryAdapter — relationships", () => {
-  let dir: string;
-  let adapter: GraphMemoryAdapter;
   const now = Date.now();
 
-  beforeEach(() => {
-    dir = makeTmpDir();
-    adapter = makeAdapter(dir);
-  });
-
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  function makeRel(overrides: Partial<RelationshipRecord> = {}): RelationshipRecord {
+  function makeRel(entityId: string, overrides: Partial<RelationshipRecord> = {}): RelationshipRecord {
     return {
-      id: ulid(),
-      subjectEntityId: overrides.subjectEntityId ?? "$A0",
+      id: uid(),
+      subjectEntityId: entityId,
       predicate: overrides.predicate ?? "worked_on",
       objectEntityId: null,
       objectLiteral: overrides.objectLiteral ?? "some task",
@@ -269,46 +245,47 @@ describe("GraphMemoryAdapter — relationships", () => {
     };
   }
 
-  it("stores and retrieves a relationship", () => {
-    const rel = makeRel({ objectLiteral: "memory system rewrite" });
-    adapter.storeRelationship(rel);
+  it("stores and retrieves a relationship", async () => {
+    const entityId = `RL-${uid()}`;
+    const rel = makeRel(entityId, { objectLiteral: "memory system rewrite" });
+    await adapter.storeRelationship(rel);
 
-    const results = adapter.queryRelationships({ subjectEntityId: "$A0", limit: 10 });
+    const results = await adapter.queryRelationships({ subjectEntityId: entityId, limit: 10 });
     expect(results.length).toBe(1);
     expect(results[0]!.objectLiteral).toBe("memory system rewrite");
   });
 
-  it("queryRelationships filters by predicate", () => {
-    adapter.storeRelationship(makeRel({ predicate: "completed", objectLiteral: "task A" }));
-    adapter.storeRelationship(makeRel({ predicate: "learned", objectLiteral: "insight B" }));
+  it("queryRelationships filters by predicate", async () => {
+    const entityId = `RP-${uid()}`;
+    await adapter.storeRelationship(makeRel(entityId, { predicate: "completed", objectLiteral: "task A" }));
+    await adapter.storeRelationship(makeRel(entityId, { predicate: "learned", objectLiteral: "insight B" }));
 
-    const completed = adapter.queryRelationships({ subjectEntityId: "$A0", predicate: "completed" });
+    const completed = await adapter.queryRelationships({ subjectEntityId: entityId, predicate: "completed" });
     expect(completed.length).toBe(1);
     expect(completed[0]!.objectLiteral).toBe("task A");
   });
 
-  it("queryRelationships respects validAt — excludes expired relationships", () => {
+  it("queryRelationships respects validAt — excludes expired relationships", async () => {
+    const entityId = `RVA-${uid()}`;
     const past = now - 1000;
-    const expired = makeRel({ validFrom: past, validUntil: past + 100, objectLiteral: "expired" });
-    const active = makeRel({ validFrom: past, validUntil: null, objectLiteral: "active" });
-    adapter.storeRelationship(expired);
-    adapter.storeRelationship(active);
+    await adapter.storeRelationship(makeRel(entityId, { validFrom: past, validUntil: past + 100, objectLiteral: "expired" }));
+    await adapter.storeRelationship(makeRel(entityId, { validFrom: past, validUntil: null, objectLiteral: "active" }));
 
-    const results = adapter.queryRelationships({ subjectEntityId: "$A0", validAt: new Date(now) });
+    const results = await adapter.queryRelationships({ subjectEntityId: entityId, validAt: new Date(now) });
     const literals = results.map((r) => r.objectLiteral);
     expect(literals).not.toContain("expired");
     expect(literals).toContain("active");
   });
 
-  it("invalidatePriorRelationship sets validUntil on open relationships", () => {
-    const rel = makeRel({ predicate: "worked_on", objectLiteral: "old task" });
-    adapter.storeRelationship(rel);
+  it("invalidatePriorRelationship sets validUntil on open relationships", async () => {
+    const entityId = `RI-${uid()}`;
+    const rel = makeRel(entityId, { predicate: "worked_on", objectLiteral: "old task" });
+    await adapter.storeRelationship(rel);
 
-    adapter.invalidatePriorRelationship("$A0", "worked_on", null, now + 5000);
+    await adapter.invalidatePriorRelationship(entityId, "worked_on", null, now + 5000);
 
-    // After invalidation, no active relationships should remain for that predicate
-    const active = adapter.queryRelationships({
-      subjectEntityId: "$A0",
+    const active = await adapter.queryRelationships({
+      subjectEntityId: entityId,
       predicate: "worked_on",
       validAt: new Date(now + 6000),
     });
@@ -317,47 +294,37 @@ describe("GraphMemoryAdapter — relationships", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. GraphMemoryAdapter — doc chunks
+// 4. Doc chunks
 // ---------------------------------------------------------------------------
 
 describe("GraphMemoryAdapter — doc chunks", () => {
-  let dir: string;
-  let adapter: GraphMemoryAdapter;
-
-  beforeEach(() => {
-    dir = makeTmpDir();
-    adapter = makeAdapter(dir);
-  });
-
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it("stores and retrieves a doc chunk", () => {
-    adapter.storeDocChunk({
-      id: ulid(),
-      sourcePath: "/agi/docs/memory.md",
+  it("stores and retrieves a doc chunk by scope", async () => {
+    const id = uid();
+    await adapter.storeDocChunk({
+      id,
+      sourcePath: `/agi/docs/memory-${id}.md`,
       scope: "global",
       heading: "Memory System",
-      content: "The memory system uses SQLite with FTS5.",
+      content: "The memory system uses Postgres with pgvector.",
       chunkIndex: 0,
-      contentHash: "abc123",
+      contentHash: `hash-${id}`,
       indexedAt: Date.now(),
     });
 
-    const results = adapter.queryDocChunks({ semantic: "memory sqlite", limit: 5 });
-    expect(results.length).toBeGreaterThan(0);
-    expect(results[0]!.sourcePath).toBe("/agi/docs/memory.md");
+    const results = await adapter.queryDocChunks({ scope: "global", limit: 50 });
+    expect(results.some((r) => r.id === id)).toBe(true);
   });
 
-  it("getDocChunkHash returns null for unknown path", () => {
-    expect(adapter.getDocChunkHash("/unknown/path.md")).toBe(null);
+  it("getDocChunkHash returns null for unknown path", async () => {
+    expect(await adapter.getDocChunkHash("/unknown/path-nonexistent.md")).toBe(null);
   });
 
-  it("getDocChunkHash returns hash after storing", () => {
-    adapter.storeDocChunk({
-      id: ulid(),
-      sourcePath: "/k/notes.md",
+  it("getDocChunkHash returns hash after storing", async () => {
+    const id = uid();
+    const path = `/k/notes-${id}.md`;
+    await adapter.storeDocChunk({
+      id,
+      sourcePath: path,
       scope: "global",
       heading: null,
       content: "some content",
@@ -366,28 +333,33 @@ describe("GraphMemoryAdapter — doc chunks", () => {
       indexedAt: Date.now(),
     });
 
-    expect(adapter.getDocChunkHash("/k/notes.md")).toBe("myhash456");
+    expect(await adapter.getDocChunkHash(path)).toBe("myhash456");
   });
 
-  it("deleteDocChunksForPath removes all chunks for that path", () => {
-    const path = "/agi/docs/test.md";
-    adapter.storeDocChunk({ id: ulid(), sourcePath: path, scope: "global", heading: null, content: "chunk 1", chunkIndex: 0, contentHash: "h1", indexedAt: Date.now() });
-    adapter.storeDocChunk({ id: ulid(), sourcePath: path, scope: "global", heading: null, content: "chunk 2", chunkIndex: 1, contentHash: "h1", indexedAt: Date.now() });
+  it("deleteDocChunksForPath removes all chunks for that path", async () => {
+    const id1 = uid();
+    const id2 = uid();
+    const path = `/agi/docs/test-${id1}.md`;
+    await adapter.storeDocChunk({ id: id1, sourcePath: path, scope: "global", heading: null, content: "chunk 1", chunkIndex: 0, contentHash: "h1", indexedAt: Date.now() });
+    await adapter.storeDocChunk({ id: id2, sourcePath: path, scope: "global", heading: null, content: "chunk 2", chunkIndex: 1, contentHash: "h1", indexedAt: Date.now() });
 
-    adapter.deleteDocChunksForPath(path);
+    await adapter.deleteDocChunksForPath(path);
 
-    const results = adapter.queryDocChunks({ scope: "global", limit: 10 });
-    expect(results.every((c) => c.sourcePath !== path)).toBe(true);
+    expect(await adapter.getDocChunkHash(path)).toBe(null);
   });
 
-  it("queryDocChunks filters by scope", () => {
-    adapter.storeDocChunk({ id: ulid(), sourcePath: "/global.md", scope: "global", heading: "Global", content: "global knowledge content", chunkIndex: 0, contentHash: "gh", indexedAt: Date.now() });
-    adapter.storeDocChunk({ id: ulid(), sourcePath: "/proj.md", scope: "project:/my/proj", heading: "Project", content: "project knowledge content", chunkIndex: 0, contentHash: "ph", indexedAt: Date.now() });
+  it("queryDocChunks filters by scope", async () => {
+    const gId = uid();
+    const pId = uid();
+    const gScope = `global-test-${gId}`;
+    const pScope = `project:/my/proj-${pId}`;
+    await adapter.storeDocChunk({ id: gId, sourcePath: `/g-${gId}.md`, scope: gScope, heading: "Global", content: "global knowledge content", chunkIndex: 0, contentHash: "gh", indexedAt: Date.now() });
+    await adapter.storeDocChunk({ id: pId, sourcePath: `/p-${pId}.md`, scope: pScope, heading: "Project", content: "project knowledge content", chunkIndex: 0, contentHash: "ph", indexedAt: Date.now() });
 
-    const global = adapter.queryDocChunks({ scope: "global", semantic: "knowledge", limit: 10 });
-    expect(global.every((c) => c.scope === "global")).toBe(true);
+    const globalResults = await adapter.queryDocChunks({ scope: gScope, limit: 10 });
+    expect(globalResults.every((c) => c.scope === gScope)).toBe(true);
 
-    const proj = adapter.queryDocChunks({ scope: "project:/my/proj", semantic: "knowledge", limit: 10 });
-    expect(proj.every((c) => c.scope === "project:/my/proj")).toBe(true);
+    const projResults = await adapter.queryDocChunks({ scope: pScope, limit: 10 });
+    expect(projResults.every((c) => c.scope === pScope)).toBe(true);
   });
 });

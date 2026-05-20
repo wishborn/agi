@@ -524,6 +524,14 @@ function buildMemorySection(memories: MemoryPromptEntry[]): string {
     for (const m of docs) parts.push(m.content);
   }
 
+  parts.push(
+    "### Memory guidance\n" +
+    "These memory sections are automatically populated from prior sessions. " +
+    "Use `search_docs` to look up specific AGI platform docs or project knowledge files not already in context. " +
+    "Use `search_prime` to retrieve Impactivism/COA/PRIME knowledge. " +
+    "You do not need to call any tool to store memories — every invocation is captured automatically.",
+  );
+
   return parts.join("\n\n");
 }
 

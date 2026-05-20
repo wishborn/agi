@@ -73,6 +73,7 @@ export const SEARCH_DOCS_INPUT_SCHEMA = {
       description: "Scope: 'global' = agi/docs/ + global k/, 'project' = current project k/, 'all' = everything. Default: 'all'",
     },
     limit: { type: "number", description: "Maximum results (default: 5, max: 20)" },
+    projectPath: { type: "string", description: "Absolute project path — required when scope is 'project'" },
   },
   required: ["query"],
 };

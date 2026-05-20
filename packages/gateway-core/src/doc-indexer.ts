@@ -180,7 +180,7 @@ export class DocIndexer {
       ? (await this.embeddingEngine.embed(opts.query).catch(() => null)) ?? undefined
       : undefined;
 
-    const chunks = this.graph.queryDocChunks({
+    const chunks = await this.graph.queryDocChunks({
       scope: opts.scope,
       semantic: opts.query,
       limit,
@@ -235,14 +235,14 @@ export class DocIndexer {
     if (chunks.length === 0) return;
 
     // Check if file already indexed with same hash
-    const existingHash = this.graph.getDocChunkHash(filePath);
+    const existingHash = await this.graph.getDocChunkHash(filePath);
     if (existingHash === fileHash) {
       result.skipped++;
       return;
     }
 
     // Remove old chunks for this file
-    this.graph.deleteDocChunksForPath(filePath);
+    await this.graph.deleteDocChunksForPath(filePath);
 
     // Store new chunks
     for (let i = 0; i < chunks.length; i++) {
@@ -256,7 +256,7 @@ export class DocIndexer {
         if (emb) embedding = emb;
       }
 
-      this.graph.storeDocChunk({
+      await this.graph.storeDocChunk({
         id: ulid(),
         sourcePath: filePath,
         scope,

@@ -1022,12 +1022,13 @@ export async function startGatewayServer(
     skillRegistry.startWatching();
   }
 
-  // s112 — Graph memory adapter (CoALA+TiMem, SQLite-backed, replaces Cognee/file).
+  // s112 — Graph memory adapter (CoALA+TiMem, Postgres-backed via agi_data).
   const memoryDir = config.memory?.directory ?? "./data/memory";
   const memoryAdapter = new GraphMemoryAdapter({
+    db,
     legacyMemDir: memoryDir,
   });
-  log.info("graph memory adapter initialized (~/.agi/memory/graph.db)");
+  log.info("graph memory adapter initialized (agi_data memory_events/relationships/doc_chunks)");
 
   // s112 Phase 2 — Embedding engine for semantic retrieval (Ollama, CPU-first).
   const embeddingEngine = new EmbeddingEngine({

@@ -1,20 +1,30 @@
 /**
- * GraphMemoryAdapter — SQLite-backed temporal event graph (s112 CoALA+TiMem).
+ * GraphMemoryAdapter — Postgres-backed temporal event graph (s112 CoALA+TiMem).
  *
- * Replaces the Cognee/file dual-backend with a single offline-capable store.
- * Storage: ~/.agi/memory/graph.db (node:sqlite, FTS5, no external deps).
+ * Migrated from node:sqlite → agi_data Postgres (single-DB rule, pgvector support).
  *
- * Four tables:
- *   events          — Layer B episodic records with temporal provenance
- *   relationships   — consolidated fact graph (valid_from / valid_until)
- *   doc_chunks      — indexed agi/docs/ + k/ folder chunks (DocIndexer)
- *   consolidation_log — audit trail for the consolidation pipeline
+ * Four tables (defined in @agi/db-schema src/memory.ts):
+ *   memory_events            — Layer B episodic records with temporal provenance
+ *   memory_relationships     — consolidated fact graph (valid_from / valid_until)
+ *   memory_doc_chunks        — indexed agi/docs/ + k/ folder chunks (DocIndexer)
+ *   memory_consolidation_log — audit trail for the consolidation pipeline
+ *
+ * Full-text search: PostgreSQL tsvector GIN index via plainto_tsquery (replaces FTS5).
+ * Embeddings: pgvector vector(768) stored as number[]; cosine rerank in TS after FTS pre-filter.
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { and, desc, eq, inArray, isNull, lt, notInArray, sql } from "drizzle-orm";
+
+import type {
+  AnyDb,
+  memoryDocChunks,
+  memoryEvents,
+  memoryRelationships,
+} from "@agi/db-schema";
 
 import type {
   MemoryProvider,
@@ -25,39 +35,11 @@ import type {
   MemorySource,
 } from "./types.js";
 
-// node:sqlite is experimental in Node 22.x — the project pins >=22.0.0,
-// and FTS5 is confirmed working at 22.22.0.
-// biome-ignore lint/suspicious/noExplicitAny: dynamic import of experimental module
-type DatabaseSyncType = any;
-let _DatabaseSync: new (path: string) => DatabaseSyncType;
-
-function getDb(path: string): DatabaseSyncType {
-  if (!_DatabaseSync) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const mod = require("node:sqlite") as { DatabaseSync: typeof _DatabaseSync };
-      _DatabaseSync = mod.DatabaseSync;
-    } catch {
-      throw new Error(
-        "node:sqlite unavailable — GraphMemoryAdapter requires Node >=22.5.0",
-      );
-    }
-  }
-  return new _DatabaseSync(path);
-}
-
 // ---------------------------------------------------------------------------
-// Config & extended types
+// Re-exported types (same shape as before)
 // ---------------------------------------------------------------------------
 
-export interface GraphMemoryConfig {
-  /** Absolute path to SQLite file. Default: ~/.agi/memory/graph.db */
-  dbPath?: string;
-  /** Legacy FileMemoryProvider directory — scanned for migration on first boot. */
-  legacyMemDir?: string;
-}
-
-/** Internal event record (maps to the events table). */
+/** Internal event record (maps to the memory_events table). */
 export interface GraphEventRecord {
   id: string;
   entityId: string;
@@ -129,125 +111,27 @@ export interface DocQuery {
   scope?: string;
   semantic?: string;
   limit?: number;
-  /** When provided, cosine-reranks FTS5 candidates against this embedding. */
   queryEmbedding?: Float32Array;
 }
 
 // ---------------------------------------------------------------------------
-// Schema initialization (individual prepare().run() calls — no exec())
+// Config
 // ---------------------------------------------------------------------------
 
-const SCHEMA_STMTS = [
-  "PRAGMA journal_mode = WAL",
-  "PRAGMA synchronous = NORMAL",
-  "PRAGMA foreign_keys = ON",
-  `CREATE TABLE IF NOT EXISTS events (
-    id               TEXT PRIMARY KEY,
-    entity_id        TEXT NOT NULL,
-    project_path     TEXT,
-    session_id       TEXT,
-    summary          TEXT NOT NULL,
-    tags             TEXT NOT NULL DEFAULT '[]',
-    confidence       REAL NOT NULL DEFAULT 0.5,
-    prime_alignment  REAL,
-    source_links     TEXT NOT NULL DEFAULT '[]',
-    hash             TEXT UNIQUE NOT NULL,
-    coa_fingerprint  TEXT NOT NULL DEFAULT 'legacy',
-    model_version    TEXT,
-    created_at       INTEGER NOT NULL,
-    consolidated_at  INTEGER,
-    embedding        BLOB
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_events_entity ON events(entity_id)",
-  "CREATE INDEX IF NOT EXISTS idx_events_project ON events(entity_id, project_path)",
-  "CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC)",
-  `CREATE INDEX IF NOT EXISTS idx_events_unconsolidated
-    ON events(entity_id, consolidated_at) WHERE consolidated_at IS NULL`,
-  `CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
-    summary, tags,
-    content='events',
-    content_rowid='rowid'
-  )`,
-  `CREATE TRIGGER IF NOT EXISTS events_ai AFTER INSERT ON events
-   BEGIN
-     INSERT INTO events_fts(rowid, summary, tags) VALUES (new.rowid, new.summary, new.tags);
-   END`,
-  `CREATE TRIGGER IF NOT EXISTS events_ad AFTER DELETE ON events
-   BEGIN
-     INSERT INTO events_fts(events_fts, rowid, summary, tags)
-       VALUES ('delete', old.rowid, old.summary, old.tags);
-   END`,
-  `CREATE TRIGGER IF NOT EXISTS events_au AFTER UPDATE ON events
-   BEGIN
-     INSERT INTO events_fts(events_fts, rowid, summary, tags)
-       VALUES ('delete', old.rowid, old.summary, old.tags);
-     INSERT INTO events_fts(rowid, summary, tags) VALUES (new.rowid, new.summary, new.tags);
-   END`,
-  `CREATE TABLE IF NOT EXISTS relationships (
-    id                TEXT PRIMARY KEY,
-    subject_entity_id TEXT NOT NULL,
-    predicate         TEXT NOT NULL,
-    object_entity_id  TEXT,
-    object_literal    TEXT,
-    project_path      TEXT,
-    valid_from        INTEGER NOT NULL,
-    valid_until       INTEGER,
-    confidence        REAL NOT NULL DEFAULT 1.0,
-    source_event_ids  TEXT NOT NULL DEFAULT '[]',
-    created_at        INTEGER NOT NULL
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_rel_subject ON relationships(subject_entity_id, valid_until)",
-  "CREATE INDEX IF NOT EXISTS idx_rel_project ON relationships(subject_entity_id, project_path, valid_until)",
-  `CREATE TABLE IF NOT EXISTS doc_chunks (
-    id           TEXT PRIMARY KEY,
-    source_path  TEXT NOT NULL,
-    scope        TEXT NOT NULL,
-    heading      TEXT,
-    content      TEXT NOT NULL,
-    chunk_index  INTEGER NOT NULL,
-    content_hash TEXT NOT NULL,
-    indexed_at   INTEGER NOT NULL,
-    embedding    BLOB
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_doc_scope ON doc_chunks(scope)",
-  "CREATE INDEX IF NOT EXISTS idx_doc_path  ON doc_chunks(source_path)",
-  `CREATE VIRTUAL TABLE IF NOT EXISTS doc_chunks_fts USING fts5(
-    content, heading, source_path,
-    content='doc_chunks',
-    content_rowid='rowid'
-  )`,
-  `CREATE TRIGGER IF NOT EXISTS doc_ai AFTER INSERT ON doc_chunks
-   BEGIN
-     INSERT INTO doc_chunks_fts(rowid, content, heading, source_path)
-       VALUES (new.rowid, new.content, new.heading, new.source_path);
-   END`,
-  `CREATE TRIGGER IF NOT EXISTS doc_ad AFTER DELETE ON doc_chunks
-   BEGIN
-     INSERT INTO doc_chunks_fts(doc_chunks_fts, rowid, content, heading, source_path)
-       VALUES ('delete', old.rowid, old.content, old.heading, old.source_path);
-   END`,
-  `CREATE TABLE IF NOT EXISTS consolidation_log (
-    id                  TEXT PRIMARY KEY,
-    trigger             TEXT NOT NULL,
-    entity_id           TEXT,
-    project_path        TEXT,
-    events_processed    INTEGER,
-    relationships_added INTEGER,
-    started_at          INTEGER NOT NULL,
-    completed_at        INTEGER
-  )`,
-  `CREATE TABLE IF NOT EXISTS _meta (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  )`,
-  "INSERT OR IGNORE INTO _meta(key, value) VALUES ('schema_version', '1')",
-];
-
-function initSchema(db: DatabaseSyncType): void {
-  for (const sql of SCHEMA_STMTS) {
-    db.prepare(sql).run();
-  }
+export interface GraphMemoryConfig {
+  /** Drizzle AnyDb instance. Passed in by the gateway at boot. */
+  db: AnyDb;
+  /** Legacy FileMemoryProvider directory — scanned for migration on first boot. */
+  legacyMemDir?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Type aliases for drizzle table inferred types
+// ---------------------------------------------------------------------------
+
+type EventRow = typeof memoryEvents.$inferSelect;
+type RelRow = typeof memoryRelationships.$inferSelect;
+type DocRow = typeof memoryDocChunks.$inferSelect;
 
 // ---------------------------------------------------------------------------
 // GraphMemoryAdapter
@@ -257,18 +141,12 @@ export class GraphMemoryAdapter implements MemoryProvider {
   readonly name = "graph-memory";
   readonly requiresNetwork = false;
 
-  private readonly db: DatabaseSyncType;
+  private readonly db: AnyDb;
 
-  constructor(config: GraphMemoryConfig = {}) {
-    const dbPath =
-      config.dbPath ?? join(homedir(), ".agi", "memory", "graph.db");
-    mkdirSync(dirname(dbPath), { recursive: true });
-
-    this.db = getDb(dbPath);
-    initSchema(this.db);
-
+  constructor(config: GraphMemoryConfig) {
+    this.db = config.db;
     if (config.legacyMemDir) {
-      this.migrateFromFileAdapter(config.legacyMemDir);
+      void this.migrateFromFileAdapter(config.legacyMemDir);
     }
   }
 
@@ -277,11 +155,9 @@ export class GraphMemoryAdapter implements MemoryProvider {
   // ---------------------------------------------------------------------------
 
   async store(entry: MemoryEntry | unknown): Promise<void> {
-    // Accept both MemoryEntry (legacy callers) and EpisodicRecord (EpisodeExtractor
-    // types its memoryAdapter as { store(e: unknown) }).
     if (isEpisodicRecord(entry)) {
       const ep = entry as EpisodicRecordLike;
-      this.insertEvent({
+      await this.insertEvent({
         id: ep.id,
         entityId: ep.actor.entityId,
         projectPath: null,
@@ -301,7 +177,7 @@ export class GraphMemoryAdapter implements MemoryProvider {
       return;
     }
     const mem = entry as MemoryEntry;
-    this.insertEvent({
+    await this.insertEvent({
       id: mem.id,
       entityId: mem.entityId,
       projectPath: null,
@@ -325,221 +201,205 @@ export class GraphMemoryAdapter implements MemoryProvider {
   }
 
   async query(params: MemoryQueryParams): Promise<MemoryEntry[]> {
-    const rows = this.selectEvents({
+    const rows = await this.selectEvents({
       entityId: params.entityId,
       semantic: params.query,
       tags: params.categories,
       minConfidence: params.minRelevance,
       limit: params.limit ?? 10,
     });
-    return rows.map(rowToMemoryEntry);
+    return rows.map(eventRowToMemoryEntry);
   }
 
   async delete(memoryId: string): Promise<void> {
-    this.db.prepare("DELETE FROM events WHERE id = ?").run(memoryId);
+    const { memoryEvents } = await import("@agi/db-schema");
+    await this.db.delete(memoryEvents).where(eq(memoryEvents.id, memoryId));
   }
 
   async deleteAllForEntity(entityId: string): Promise<void> {
-    this.db.prepare("DELETE FROM events WHERE entity_id = ?").run(entityId);
+    const { memoryEvents } = await import("@agi/db-schema");
+    await this.db.delete(memoryEvents).where(eq(memoryEvents.entityId, entityId));
   }
 
   async prune(params: PruneParams): Promise<number> {
-    const clauses: string[] = [];
-    const bindings: unknown[] = [];
+    const { memoryEvents } = await import("@agi/db-schema");
+    const conditions = [];
 
-    if (params.entityId) {
-      clauses.push("entity_id = ?");
-      bindings.push(params.entityId);
-    }
+    if (params.entityId) conditions.push(eq(memoryEvents.entityId, params.entityId));
     if (params.olderThan) {
-      clauses.push("created_at < ?");
-      bindings.push(new Date(params.olderThan).getTime());
+      conditions.push(lt(memoryEvents.createdAt, new Date(params.olderThan).getTime()));
     }
 
-    const whereClause =
-      clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    const result = this.db
-      .prepare(`DELETE FROM events ${whereClause}`)
-      .run(...bindings) as { changes: number };
+    const result = await this.db
+      .delete(memoryEvents)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .returning({ id: memoryEvents.id });
 
-    if (
-      params.maxPerEntity !== undefined &&
-      params.entityId !== undefined
-    ) {
-      const overflow = this.db
-        .prepare(
-          `SELECT id FROM events WHERE entity_id = ?
-           ORDER BY created_at DESC LIMIT -1 OFFSET ?`,
-        )
-        .all(params.entityId, params.maxPerEntity) as { id: string }[];
-      for (const row of overflow) {
-        this.db.prepare("DELETE FROM events WHERE id = ?").run(row.id);
+    if (params.maxPerEntity !== undefined && params.entityId !== undefined) {
+      const overflow = await this.db
+        .select({ id: memoryEvents.id })
+        .from(memoryEvents)
+        .where(eq(memoryEvents.entityId, params.entityId))
+        .orderBy(desc(memoryEvents.createdAt))
+        .offset(params.maxPerEntity);
+
+      if (overflow.length > 0) {
+        await this.db
+          .delete(memoryEvents)
+          .where(notInArray(memoryEvents.id, overflow.map((r) => r.id)));
       }
     }
 
-    return result.changes;
+    return result.length;
   }
 
   async count(entityId: string): Promise<number> {
-    const row = this.db
-      .prepare("SELECT COUNT(*) AS n FROM events WHERE entity_id = ?")
-      .get(entityId) as { n: number };
-    return row.n;
+    const { memoryEvents } = await import("@agi/db-schema");
+    const [row] = await this.db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(memoryEvents)
+      .where(eq(memoryEvents.entityId, entityId));
+    return row?.n ?? 0;
   }
 
   isAvailable(): boolean {
-    return true; // SQLite is always local
+    return true; // Postgres is always available (gateway fails to boot without it)
   }
 
   // ---------------------------------------------------------------------------
   // Extended graph API (used by EpisodeExtractor, ConsolidationEngine, DocIndexer)
   // ---------------------------------------------------------------------------
 
-  /** Store a typed episodic event with optional projectPath. */
-  storeEpisodicEvent(
+  async storeEpisodicEvent(
     record: Omit<GraphEventRecord, "embedding"> & {
       projectPath?: string | null;
     },
-  ): void {
-    this.insertEvent({ ...record, embedding: null });
+  ): Promise<void> {
+    await this.insertEvent({ ...record, embedding: null });
   }
 
-  storeRelationship(rel: RelationshipRecord): void {
-    this.db
-      .prepare(
-        `INSERT OR REPLACE INTO relationships
-         (id, subject_entity_id, predicate, object_entity_id, object_literal,
-          project_path, valid_from, valid_until, confidence, source_event_ids, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        rel.id,
-        rel.subjectEntityId,
-        rel.predicate,
-        rel.objectEntityId ?? null,
-        rel.objectLiteral ?? null,
-        rel.projectPath ?? null,
-        rel.validFrom,
-        rel.validUntil ?? null,
-        rel.confidence,
-        JSON.stringify(rel.sourceEventIds),
-        rel.createdAt,
-      );
+  async storeRelationship(rel: RelationshipRecord): Promise<void> {
+    const { memoryRelationships } = await import("@agi/db-schema");
+    await this.db
+      .insert(memoryRelationships)
+      .values({
+        id: rel.id,
+        subjectEntityId: rel.subjectEntityId,
+        predicate: rel.predicate,
+        objectEntityId: rel.objectEntityId ?? null,
+        objectLiteral: rel.objectLiteral ?? null,
+        projectPath: rel.projectPath ?? null,
+        validFrom: rel.validFrom,
+        validUntil: rel.validUntil ?? null,
+        confidence: rel.confidence,
+        sourceEventIds: JSON.stringify(rel.sourceEventIds),
+        createdAt: rel.createdAt,
+      })
+      .onConflictDoUpdate({
+        target: memoryRelationships.id,
+        set: {
+          validUntil: rel.validUntil ?? null,
+          confidence: rel.confidence,
+          sourceEventIds: JSON.stringify(rel.sourceEventIds),
+        },
+      });
   }
 
-  /** Set valid_until on any open relationship with the same subject+predicate+scope. */
-  invalidatePriorRelationship(
+  async invalidatePriorRelationship(
     subjectEntityId: string,
     predicate: string,
     projectPath: string | null,
     validUntil: number,
-  ): void {
-    this.db
-      .prepare(
-        `UPDATE relationships SET valid_until = ?
-         WHERE subject_entity_id = ?
-           AND predicate = ?
-           AND (project_path = ? OR (project_path IS NULL AND ? IS NULL))
-           AND valid_until IS NULL`,
-      )
-      .run(validUntil, subjectEntityId, predicate, projectPath, projectPath);
+  ): Promise<void> {
+    const { memoryRelationships } = await import("@agi/db-schema");
+    await this.db
+      .update(memoryRelationships)
+      .set({ validUntil })
+      .where(
+        and(
+          eq(memoryRelationships.subjectEntityId, subjectEntityId),
+          eq(memoryRelationships.predicate, predicate),
+          projectPath === null
+            ? isNull(memoryRelationships.projectPath)
+            : eq(memoryRelationships.projectPath, projectPath),
+          isNull(memoryRelationships.validUntil),
+        ),
+      );
   }
 
-  /** Graph-aware event query — returns GraphEventRecord[] (superset of MemoryEntry). */
-  queryGraphEvents(params: EventQuery): GraphEventRecord[] {
-    const rows = this.selectEvents(params);
-    return rows.map(rowToGraphEvent);
+  async queryGraphEvents(params: EventQuery): Promise<GraphEventRecord[]> {
+    const rows = await this.selectEvents(params);
+    return rows.map(eventRowToGraphEvent);
   }
 
-  queryRelationships(params: RelationshipQuery): RelationshipRecord[] {
-    const clauses: string[] = [];
-    const bindings: unknown[] = [];
+  async queryRelationships(params: RelationshipQuery): Promise<RelationshipRecord[]> {
+    const { memoryRelationships } = await import("@agi/db-schema");
+    const conditions = [];
 
-    if (params.subjectEntityId) {
-      clauses.push("subject_entity_id = ?");
-      bindings.push(params.subjectEntityId);
-    }
-    if (params.predicate) {
-      clauses.push("predicate = ?");
-      bindings.push(params.predicate);
-    }
+    if (params.subjectEntityId) conditions.push(eq(memoryRelationships.subjectEntityId, params.subjectEntityId));
+    if (params.predicate) conditions.push(eq(memoryRelationships.predicate, params.predicate));
     if ("projectPath" in params) {
       if (params.projectPath === null) {
-        clauses.push("project_path IS NULL");
+        conditions.push(isNull(memoryRelationships.projectPath));
       } else if (params.projectPath !== undefined) {
-        clauses.push("project_path = ?");
-        bindings.push(params.projectPath);
+        conditions.push(eq(memoryRelationships.projectPath, params.projectPath));
       }
     }
     if (params.validAt) {
       const ts = params.validAt.getTime();
-      clauses.push(
-        "valid_from <= ? AND (valid_until IS NULL OR valid_until > ?)",
+      conditions.push(
+        sql`${memoryRelationships.validFrom} <= ${ts} AND (${memoryRelationships.validUntil} IS NULL OR ${memoryRelationships.validUntil} > ${ts})`,
       );
-      bindings.push(ts, ts);
     }
 
-    const where =
-      clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM relationships ${where}
-         ORDER BY valid_from DESC LIMIT ?`,
-      )
-      .all(...bindings, params.limit ?? 10) as Record<string, unknown>[];
+    const rows = await this.db
+      .select()
+      .from(memoryRelationships)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(memoryRelationships.validFrom))
+      .limit(params.limit ?? 10);
 
-    return rows.map(rowToRelationship);
+    return rows.map(relRowToRelationship);
   }
 
-  markConsolidated(eventIds: string[]): void {
+  async markConsolidated(eventIds: string[]): Promise<void> {
     if (eventIds.length === 0) return;
+    const { memoryEvents } = await import("@agi/db-schema");
     const now = Date.now();
-    const placeholders = eventIds.map(() => "?").join(", ");
-    this.db
-      .prepare(
-        `UPDATE events SET consolidated_at = ?
-         WHERE id IN (${placeholders})`,
-      )
-      .run(now, ...eventIds);
+    await this.db
+      .update(memoryEvents)
+      .set({ consolidatedAt: now })
+      .where(inArray(memoryEvents.id, eventIds));
   }
 
-  getUnconsolidated(
+  async getUnconsolidated(
     entityId: string,
     projectPath: string | null | undefined,
     limit = 20,
-  ): GraphEventRecord[] {
-    let rows: Record<string, unknown>[];
+  ): Promise<GraphEventRecord[]> {
+    const { memoryEvents } = await import("@agi/db-schema");
+    const conditions = [
+      eq(memoryEvents.entityId, entityId),
+      isNull(memoryEvents.consolidatedAt),
+    ];
 
     if (projectPath === null) {
-      rows = this.db
-        .prepare(
-          `SELECT * FROM events
-           WHERE entity_id = ? AND project_path IS NULL AND consolidated_at IS NULL
-           ORDER BY created_at ASC LIMIT ?`,
-        )
-        .all(entityId, limit) as Record<string, unknown>[];
+      conditions.push(isNull(memoryEvents.projectPath));
     } else if (projectPath !== undefined) {
-      rows = this.db
-        .prepare(
-          `SELECT * FROM events
-           WHERE entity_id = ? AND project_path = ? AND consolidated_at IS NULL
-           ORDER BY created_at ASC LIMIT ?`,
-        )
-        .all(entityId, projectPath, limit) as Record<string, unknown>[];
-    } else {
-      rows = this.db
-        .prepare(
-          `SELECT * FROM events
-           WHERE entity_id = ? AND consolidated_at IS NULL
-           ORDER BY created_at ASC LIMIT ?`,
-        )
-        .all(entityId, limit) as Record<string, unknown>[];
+      conditions.push(eq(memoryEvents.projectPath, projectPath));
     }
 
-    return rows.map(rowToGraphEvent);
+    const rows = await this.db
+      .select()
+      .from(memoryEvents)
+      .where(and(...conditions))
+      .orderBy(memoryEvents.createdAt)
+      .limit(limit);
+
+    return rows.map(eventRowToGraphEvent);
   }
 
-  storeConsolidationLog(entry: {
+  async storeConsolidationLog(entry: {
     id: string;
     trigger: string;
     entityId?: string | null;
@@ -548,236 +408,210 @@ export class GraphMemoryAdapter implements MemoryProvider {
     relationshipsAdded: number;
     startedAt: number;
     completedAt?: number | null;
-  }): void {
-    this.db
-      .prepare(
-        `INSERT OR REPLACE INTO consolidation_log
-         (id, trigger, entity_id, project_path, events_processed,
-          relationships_added, started_at, completed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        entry.id,
-        entry.trigger,
-        entry.entityId ?? null,
-        entry.projectPath ?? null,
-        entry.eventsProcessed,
-        entry.relationshipsAdded,
-        entry.startedAt,
-        entry.completedAt ?? null,
-      );
+  }): Promise<void> {
+    const { memoryConsolidationLog } = await import("@agi/db-schema");
+    await this.db
+      .insert(memoryConsolidationLog)
+      .values({
+        id: entry.id,
+        trigger: entry.trigger,
+        entityId: entry.entityId ?? null,
+        projectPath: entry.projectPath ?? null,
+        eventsProcessed: entry.eventsProcessed,
+        relationshipsAdded: entry.relationshipsAdded,
+        startedAt: entry.startedAt,
+        completedAt: entry.completedAt ?? null,
+      })
+      .onConflictDoUpdate({
+        target: memoryConsolidationLog.id,
+        set: { completedAt: entry.completedAt ?? null },
+      });
   }
 
   // ---------------------------------------------------------------------------
   // Doc chunk API (used by DocIndexer — Phase 3)
   // ---------------------------------------------------------------------------
 
-  storeDocChunk(chunk: DocChunkRecord): void {
-    this.db
-      .prepare(
-        `INSERT OR REPLACE INTO doc_chunks
-         (id, source_path, scope, heading, content, chunk_index,
-          content_hash, indexed_at, embedding)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        chunk.id,
-        chunk.sourcePath,
-        chunk.scope,
-        chunk.heading ?? null,
-        chunk.content,
-        chunk.chunkIndex,
-        chunk.contentHash,
-        chunk.indexedAt,
-        chunk.embedding ? Buffer.from(chunk.embedding.buffer) : null,
-      );
+  async storeDocChunk(chunk: DocChunkRecord): Promise<void> {
+    const { memoryDocChunks } = await import("@agi/db-schema");
+    await this.db
+      .insert(memoryDocChunks)
+      .values({
+        id: chunk.id,
+        sourcePath: chunk.sourcePath,
+        scope: chunk.scope,
+        heading: chunk.heading ?? null,
+        content: chunk.content,
+        chunkIndex: chunk.chunkIndex,
+        contentHash: chunk.contentHash,
+        indexedAt: chunk.indexedAt,
+        embedding: chunk.embedding ? Array.from(chunk.embedding) : null,
+      })
+      .onConflictDoUpdate({
+        target: memoryDocChunks.id,
+        set: {
+          content: chunk.content,
+          heading: chunk.heading ?? null,
+          contentHash: chunk.contentHash,
+          indexedAt: chunk.indexedAt,
+          embedding: chunk.embedding ? Array.from(chunk.embedding) : null,
+        },
+      });
   }
 
-  deleteDocChunksForPath(sourcePath: string): void {
-    this.db
-      .prepare("DELETE FROM doc_chunks WHERE source_path = ?")
-      .run(sourcePath);
+  async deleteDocChunksForPath(sourcePath: string): Promise<void> {
+    const { memoryDocChunks } = await import("@agi/db-schema");
+    await this.db.delete(memoryDocChunks).where(eq(memoryDocChunks.sourcePath, sourcePath));
   }
 
-  getDocChunkHash(sourcePath: string): string | null {
-    const row = this.db
-      .prepare(
-        "SELECT content_hash FROM doc_chunks WHERE source_path = ? LIMIT 1",
-      )
-      .get(sourcePath) as { content_hash: string } | undefined;
-    return row?.content_hash ?? null;
+  async getDocChunkHash(sourcePath: string): Promise<string | null> {
+    const { memoryDocChunks } = await import("@agi/db-schema");
+    const [row] = await this.db
+      .select({ contentHash: memoryDocChunks.contentHash })
+      .from(memoryDocChunks)
+      .where(eq(memoryDocChunks.sourcePath, sourcePath))
+      .limit(1);
+    return row?.contentHash ?? null;
   }
 
-  queryDocChunks(params: DocQuery): DocChunkRecord[] {
+  async queryDocChunks(params: DocQuery): Promise<DocChunkRecord[]> {
+    const { memoryDocChunks } = await import("@agi/db-schema");
     const query = params.semantic ?? "";
     const limit = params.limit ?? 5;
     const fetchLimit = params.queryEmbedding ? Math.min(limit * 5, 50) : limit;
 
     if (query.trim().length > 0) {
-      const ftsQuery = sanitizeFtsQuery(query);
-      let sql = `
-        SELECT d.* FROM doc_chunks d
-        JOIN doc_chunks_fts f ON d.rowid = f.rowid
-        WHERE doc_chunks_fts MATCH ?`;
-      const bindings: unknown[] = [ftsQuery];
+      // FTS pre-filter using PostgreSQL tsvector + plainto_tsquery
+      const tsQuery = sql`plainto_tsquery('english', ${query})`;
+      const tsVector = sql`to_tsvector('english', ${memoryDocChunks.content} || ' ' || coalesce(${memoryDocChunks.heading}, ''))`;
 
-      if (params.scope) {
-        sql += " AND d.scope = ?";
-        bindings.push(params.scope);
-      }
-      sql += " ORDER BY rank LIMIT ?";
-      bindings.push(fetchLimit);
+      const conditions = [sql`${tsVector} @@ ${tsQuery}`];
+      if (params.scope) conditions.push(eq(memoryDocChunks.scope, params.scope));
 
-      const candidates = (
-        this.db.prepare(sql).all(...bindings) as Record<string, unknown>[]
-      ).map((r) => rowToDocChunkWithEmbedding(r));
+      const candidates = await this.db
+        .select()
+        .from(memoryDocChunks)
+        .where(and(...conditions))
+        .orderBy(sql`ts_rank(${tsVector}, ${tsQuery}) DESC`)
+        .limit(fetchLimit);
 
       if (params.queryEmbedding) {
-        return cosineRerankDocs(candidates, params.queryEmbedding, limit);
+        return cosineRerankDocs(candidates.map(docRowToChunk), params.queryEmbedding, limit);
       }
-      return candidates.map(stripEmbedding).slice(0, limit);
+      return candidates.slice(0, limit).map(stripEmbedding);
     }
 
-    let sql = "SELECT * FROM doc_chunks";
-    const bindings: unknown[] = [];
-    if (params.scope) {
-      sql += " WHERE scope = ?";
-      bindings.push(params.scope);
-    }
-    sql += " ORDER BY indexed_at DESC LIMIT ?";
-    bindings.push(limit);
+    // No query — recency order
+    const conditions = params.scope ? [eq(memoryDocChunks.scope, params.scope)] : [];
+    const rows = await this.db
+      .select()
+      .from(memoryDocChunks)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(memoryDocChunks.indexedAt))
+      .limit(limit);
 
-    return (
-      this.db.prepare(sql).all(...bindings) as Record<string, unknown>[]
-    ).map(rowToDocChunk);
+    return rows.map(stripEmbedding);
   }
 
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
 
-  private insertEvent(r: GraphEventRecord): void {
-    try {
-      this.db
-        .prepare(
-          `INSERT OR IGNORE INTO events
-           (id, entity_id, project_path, session_id, summary, tags, confidence,
-            prime_alignment, source_links, hash, coa_fingerprint,
-            model_version, created_at, consolidated_at, embedding)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          r.id,
-          r.entityId,
-          r.projectPath ?? null,
-          r.sessionId ?? null,
-          r.summary,
-          JSON.stringify(r.tags),
-          r.confidence,
-          r.primeAlignment ?? null,
-          JSON.stringify(r.sourceLinks),
-          r.hash,
-          r.coaFingerprint,
-          r.modelVersion ?? null,
-          r.createdAt,
-          r.consolidatedAt ?? null,
-          r.embedding ? Buffer.from(r.embedding.buffer) : null,
-        );
-    } catch {
-      // Hash collision (duplicate event) — silently ignore
-    }
+  private async insertEvent(r: GraphEventRecord): Promise<void> {
+    const { memoryEvents } = await import("@agi/db-schema");
+    await this.db
+      .insert(memoryEvents)
+      .values({
+        id: r.id,
+        entityId: r.entityId,
+        projectPath: r.projectPath ?? null,
+        sessionId: r.sessionId ?? null,
+        summary: r.summary,
+        tags: JSON.stringify(r.tags),
+        confidence: r.confidence,
+        primeAlignment: r.primeAlignment ?? null,
+        sourceLinks: JSON.stringify(r.sourceLinks),
+        hash: r.hash,
+        coaFingerprint: r.coaFingerprint,
+        modelVersion: r.modelVersion ?? null,
+        createdAt: r.createdAt,
+        consolidatedAt: r.consolidatedAt ?? null,
+        embedding: r.embedding ? Array.from(r.embedding) : null,
+      })
+      .onConflictDoNothing(); // Hash collision = duplicate event, silently skip
   }
 
-  private selectEvents(params: EventQuery): Record<string, unknown>[] {
-    const {
-      entityId,
-      semantic,
-      tags,
-      minConfidence = 0,
-      limit = 10,
-    } = params;
+  private async selectEvents(params: EventQuery): Promise<EventRow[]> {
+    const { memoryEvents } = await import("@agi/db-schema");
+    const { semantic, entityId, tags, minConfidence = 0, limit = 10 } = params;
 
     if (semantic && semantic.trim().length > 0) {
-      const ftsQuery = sanitizeFtsQuery(semantic);
-      let sql = `
-        SELECT e.* FROM events e
-        JOIN events_fts f ON e.rowid = f.rowid
-        WHERE events_fts MATCH ? AND e.confidence >= ?`;
-      const bindings: unknown[] = [ftsQuery, minConfidence];
+      // FTS pre-filter → optional cosine rerank in caller
+      const tsQuery = sql`plainto_tsquery('english', ${semantic})`;
+      const tsVector = sql`to_tsvector('english', ${memoryEvents.summary} || ' ' || ${memoryEvents.tags})`;
 
-      if (entityId) {
-        sql += " AND e.entity_id = ?";
-        bindings.push(entityId);
-      }
-      if ("projectPath" in params) {
-        if (params.projectPath === null) {
-          sql += " AND e.project_path IS NULL";
-        } else if (params.projectPath !== undefined) {
-          sql += " AND e.project_path = ?";
-          bindings.push(params.projectPath);
-        }
-      }
-      // Fetch extra for future cosine re-rank (Phase 2 embedding engine)
-      sql += " ORDER BY rank LIMIT ?";
-      bindings.push(Math.min((limit ?? 10) * 3, 50));
+      const conditions = [
+        sql`${tsVector} @@ ${tsQuery}`,
+        sql`${memoryEvents.confidence} >= ${minConfidence}`,
+      ];
+      if (entityId) conditions.push(eq(memoryEvents.entityId, entityId));
+      this.addProjectPathCondition(conditions, memoryEvents, params);
 
-      return this.db.prepare(sql).all(...bindings) as Record<
-        string,
-        unknown
-      >[];
+      return this.db
+        .select()
+        .from(memoryEvents)
+        .where(and(...conditions))
+        .orderBy(sql`ts_rank(${tsVector}, ${tsQuery}) DESC`)
+        .limit(Math.min(limit * 3, 50));
     }
 
-    // No semantic query — recency order
-    const clauses: string[] = ["e.confidence >= ?"];
-    const bindings: unknown[] = [minConfidence];
+    // Recency order
+    const conditions = [sql`${memoryEvents.confidence} >= ${minConfidence}`];
+    if (entityId) conditions.push(eq(memoryEvents.entityId, entityId));
+    this.addProjectPathCondition(conditions, memoryEvents, params);
 
-    if (entityId) {
-      clauses.push("e.entity_id = ?");
-      bindings.push(entityId);
-    }
-    if ("projectPath" in params) {
-      if (params.projectPath === null) {
-        clauses.push("e.project_path IS NULL");
-      } else if (params.projectPath !== undefined) {
-        clauses.push("e.project_path = ?");
-        bindings.push(params.projectPath);
-      }
-    }
     if (tags && tags.length > 0) {
-      const tagChecks = tags.map(() => "e.tags LIKE ?").join(" OR ");
-      clauses.push(`(${tagChecks})`);
-      for (const t of tags) bindings.push(`%"${t}"%`);
+      const tagChecks = tags.map((t) => sql`${memoryEvents.tags} LIKE ${"%" + JSON.stringify(t).slice(1, -1) + "%"}`);
+      conditions.push(sql`(${sql.join(tagChecks, sql` OR `)})`);
     }
     if (params.timeRange) {
-      clauses.push("e.created_at >= ?");
-      bindings.push(params.timeRange.from.getTime());
+      conditions.push(sql`${memoryEvents.createdAt} >= ${params.timeRange.from.getTime()}`);
       if (params.timeRange.to) {
-        clauses.push("e.created_at <= ?");
-        bindings.push(params.timeRange.to.getTime());
+        conditions.push(sql`${memoryEvents.createdAt} <= ${params.timeRange.to.getTime()}`);
       }
     }
 
-    const where = `WHERE ${clauses.join(" AND ")}`;
     return this.db
-      .prepare(
-        `SELECT e.* FROM events e ${where}
-         ORDER BY e.created_at DESC LIMIT ?`,
-      )
-      .all(...bindings, limit) as Record<string, unknown>[];
+      .select()
+      .from(memoryEvents)
+      .where(and(...conditions))
+      .orderBy(desc(memoryEvents.createdAt))
+      .limit(limit);
   }
 
-  /** One-shot idempotent migration from old FileMemoryProvider JSON files. */
-  private migrateFromFileAdapter(legacyMemDir: string): void {
-    const dir = legacyMemDir.startsWith("/")
-      ? legacyMemDir
-      : join(process.cwd(), legacyMemDir);
+  // biome-ignore lint/suspicious/noExplicitAny: drizzle table type is complex
+  private addProjectPathCondition(conditions: ReturnType<typeof sql>[], table: any, params: EventQuery): void {
+    if ("projectPath" in params) {
+      if (params.projectPath === null) {
+        conditions.push(isNull(table.projectPath));
+      } else if (params.projectPath !== undefined) {
+        conditions.push(eq(table.projectPath, params.projectPath));
+      }
+    }
+  }
 
+  private async migrateFromFileAdapter(legacyMemDir: string): Promise<void> {
+    const dir = legacyMemDir.startsWith("/") ? legacyMemDir : join(process.cwd(), legacyMemDir);
     if (!existsSync(dir)) return;
 
-    const alreadyRan = this.db
-      .prepare("SELECT value FROM _meta WHERE key = 'file_migration_done'")
-      .get() as { value: string } | undefined;
-    if (alreadyRan) return;
+    // Check if already migrated (look for any events from the legacy source)
+    const { memoryEvents } = await import("@agi/db-schema");
+    const [existing] = await this.db
+      .select({ id: memoryEvents.id })
+      .from(memoryEvents)
+      .where(eq(memoryEvents.coaFingerprint, "migrated"))
+      .limit(1);
+    if (existing) return;
 
     let count = 0;
     try {
@@ -787,14 +621,10 @@ export class GraphMemoryAdapter implements MemoryProvider {
           for (const file of readdirSync(entityPath)) {
             if (!file.endsWith(".json")) continue;
             try {
-              const raw = JSON.parse(
-                readFileSync(join(entityPath, file), "utf-8"),
-              ) as Record<string, unknown>;
-              const content =
-                typeof raw.content === "string" ? raw.content : "";
-              const createdAt =
-                typeof raw.createdAt === "string" ? raw.createdAt : new Date().toISOString();
-              this.insertEvent({
+              const raw = JSON.parse(readFileSync(join(entityPath, file), "utf-8")) as Record<string, unknown>;
+              const content = typeof raw.content === "string" ? raw.content : "";
+              const createdAt = typeof raw.createdAt === "string" ? raw.createdAt : new Date().toISOString();
+              await this.insertEvent({
                 id: typeof raw.id === "string" ? raw.id : `migrated-${file}`,
                 entityId: typeof raw.entityId === "string" ? raw.entityId : entity,
                 projectPath: null,
@@ -812,26 +642,14 @@ export class GraphMemoryAdapter implements MemoryProvider {
                 embedding: null,
               });
               count++;
-            } catch {
-              // Skip malformed file
-            }
+            } catch { /* skip malformed */ }
           }
-        } catch {
-          // Skip unreadable entity dir
-        }
+        } catch { /* skip unreadable entity dir */ }
       }
-    } catch {
-      // Legacy dir unreadable — skip
-    }
-
-    this.db
-      .prepare("INSERT OR REPLACE INTO _meta(key, value) VALUES (?, ?)")
-      .run("file_migration_done", String(Date.now()));
+    } catch { /* legacy dir unreadable */ }
 
     if (count > 0) {
-      process.stderr.write(
-        `[memory] Migrated ${String(count)} entries from file adapter to graph.db\n`,
-      );
+      process.stderr.write(`[memory] Migrated ${String(count)} entries from file adapter to Postgres\n`);
     }
   }
 }
@@ -840,83 +658,75 @@ export class GraphMemoryAdapter implements MemoryProvider {
 // Row converters
 // ---------------------------------------------------------------------------
 
-function rowToMemoryEntry(row: Record<string, unknown>): MemoryEntry {
-  const tags = parseJson<string[]>(row.tags as string, []);
-  const links = parseJson<string[]>(row.source_links as string, []);
-  const createdAt = new Date(row.created_at as number).toISOString();
+function eventRowToMemoryEntry(row: EventRow): MemoryEntry {
+  const tags = parseJson<string[]>(row.tags, []);
+  const links = parseJson<string[]>(row.sourceLinks, []);
+  const createdAt = new Date(row.createdAt).toISOString();
   return {
-    id: row.id as string,
-    entityId: row.entity_id as string,
-    content: row.summary as string,
+    id: row.id,
+    entityId: row.entityId,
+    content: row.summary,
     category: (tags[0] ?? "fact") as MemoryCategory,
     source: (links[0] ?? "system") as MemorySource,
     createdAt,
     lastAccessedAt: createdAt,
     accessCount: 0,
-    relevanceScore: row.confidence as number,
+    relevanceScore: row.confidence,
   };
 }
 
-function rowToGraphEvent(row: Record<string, unknown>): GraphEventRecord {
+function eventRowToGraphEvent(row: EventRow): GraphEventRecord {
   return {
-    id: row.id as string,
-    entityId: row.entity_id as string,
-    projectPath: (row.project_path as string | null) ?? null,
-    sessionId: (row.session_id as string | null) ?? null,
-    summary: row.summary as string,
-    tags: parseJson<string[]>(row.tags as string, []),
-    confidence: row.confidence as number,
-    primeAlignment: (row.prime_alignment as number | null) ?? null,
-    sourceLinks: parseJson<string[]>(row.source_links as string, []),
-    hash: row.hash as string,
-    coaFingerprint: row.coa_fingerprint as string,
-    modelVersion: (row.model_version as string | null) ?? null,
-    createdAt: row.created_at as number,
-    consolidatedAt: (row.consolidated_at as number | null) ?? null,
-    embedding: null,
+    id: row.id,
+    entityId: row.entityId,
+    projectPath: row.projectPath ?? null,
+    sessionId: row.sessionId ?? null,
+    summary: row.summary,
+    tags: parseJson<string[]>(row.tags, []),
+    confidence: row.confidence,
+    primeAlignment: row.primeAlignment ?? null,
+    sourceLinks: parseJson<string[]>(row.sourceLinks, []),
+    hash: row.hash,
+    coaFingerprint: row.coaFingerprint,
+    modelVersion: row.modelVersion ?? null,
+    createdAt: row.createdAt,
+    consolidatedAt: row.consolidatedAt ?? null,
+    embedding: row.embedding ? new Float32Array(row.embedding) : null,
   };
 }
 
-function rowToRelationship(row: Record<string, unknown>): RelationshipRecord {
+function relRowToRelationship(row: RelRow): RelationshipRecord {
   return {
-    id: row.id as string,
-    subjectEntityId: row.subject_entity_id as string,
-    predicate: row.predicate as string,
-    objectEntityId: (row.object_entity_id as string | null) ?? null,
-    objectLiteral: (row.object_literal as string | null) ?? null,
-    projectPath: (row.project_path as string | null) ?? null,
-    validFrom: row.valid_from as number,
-    validUntil: (row.valid_until as number | null) ?? null,
-    confidence: row.confidence as number,
-    sourceEventIds: parseJson<string[]>(row.source_event_ids as string, []),
-    createdAt: row.created_at as number,
+    id: row.id,
+    subjectEntityId: row.subjectEntityId,
+    predicate: row.predicate,
+    objectEntityId: row.objectEntityId ?? null,
+    objectLiteral: row.objectLiteral ?? null,
+    projectPath: row.projectPath ?? null,
+    validFrom: row.validFrom,
+    validUntil: row.validUntil ?? null,
+    confidence: row.confidence,
+    sourceEventIds: parseJson<string[]>(row.sourceEventIds, []),
+    createdAt: row.createdAt,
   };
 }
 
-function rowToDocChunk(row: Record<string, unknown>): DocChunkRecord {
+function docRowToChunk(row: DocRow): DocChunkRecord {
   return {
-    id: row.id as string,
-    sourcePath: row.source_path as string,
-    scope: row.scope as string,
-    heading: (row.heading as string | null) ?? null,
-    content: row.content as string,
-    chunkIndex: row.chunk_index as number,
-    contentHash: row.content_hash as string,
-    indexedAt: row.indexed_at as number,
-    embedding: null,
+    id: row.id,
+    sourcePath: row.sourcePath,
+    scope: row.scope,
+    heading: row.heading ?? null,
+    content: row.content,
+    chunkIndex: Number(row.chunkIndex),
+    contentHash: row.contentHash,
+    indexedAt: Number(row.indexedAt),
+    embedding: row.embedding ? new Float32Array(row.embedding) : null,
   };
 }
 
-function rowToDocChunkWithEmbedding(row: Record<string, unknown>): DocChunkRecord {
-  const embBlob = row.embedding as Buffer | null;
-  const embedding = embBlob && embBlob.length > 0
-    ? new Float32Array(embBlob.buffer, embBlob.byteOffset, embBlob.byteLength / 4)
-    : null;
-  return { ...rowToDocChunk(row), embedding };
-}
-
-function stripEmbedding(r: DocChunkRecord): DocChunkRecord {
-  return { ...r, embedding: null };
+function stripEmbedding(row: DocRow): DocChunkRecord {
+  return { ...docRowToChunk(row), embedding: null };
 }
 
 function cosineRerankDocs(
@@ -924,12 +734,12 @@ function cosineRerankDocs(
   queryEmb: Float32Array,
   limit: number,
 ): DocChunkRecord[] {
-  const scored = candidates.map((c) => {
-    const score = c.embedding ? cosineSim(queryEmb, c.embedding) : -1;
-    return { c, score };
-  });
+  const scored = candidates.map((c) => ({
+    c,
+    score: c.embedding ? cosineSim(queryEmb, c.embedding) : -1,
+  }));
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, limit).map((s) => stripEmbedding(s.c));
+  return scored.slice(0, limit).map((s) => ({ ...s.c, embedding: null }));
 }
 
 function cosineSim(a: Float32Array, b: Float32Array): number {
@@ -957,22 +767,8 @@ function parseJson<T>(value: string | null | undefined, fallback: T): T {
   }
 }
 
-function sanitizeFtsQuery(q: string): string {
-  // Quote each token individually to prevent FTS5 operator injection while
-  // using AND matching (implicit in FTS5) rather than phrase matching.
-  // Phrase matching (`"a b"`) fails when terms are non-adjacent.
-  const terms = q.trim().split(/\s+/).filter(Boolean);
-  if (terms.length === 0) return '""';
-  return terms.map((t) => `"${t.replace(/"/g, '""')}"`).join(" ");
-}
-
 function hashFromParts(content: string, createdAt: string): string {
-  return (
-    "sha256:" +
-    createHash("sha256")
-      .update(content + createdAt)
-      .digest("hex")
-  );
+  return "sha256:" + createHash("sha256").update(content + createdAt).digest("hex");
 }
 
 interface EpisodicRecordLike {

@@ -294,9 +294,7 @@ const SkillsConfigSchema = z
 
 const MemoryConfigSchema = z
   .object({
-    /** Absolute path for SQLite graph DB. Default: ~/.agi/memory/graph.db */
-    dbPath: z.string().optional(),
-    /** Legacy directory kept for one-shot file-adapter migration. */
+    /** Legacy directory scanned once for file-adapter migration. */
     directory: z.string().default("./data/memory"),
     /** Ollama embedding model name. */
     embeddingModel: z.string().default("nomic-embed-text"),

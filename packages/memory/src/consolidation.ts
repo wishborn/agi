@@ -81,7 +81,7 @@ export class ConsolidationEngine {
     const startedAt = Date.now();
     const logId = ulid();
 
-    const pending = this.graph.getUnconsolidated(
+    const pending = await this.graph.getUnconsolidated(
       entityId,
       projectPath,
       20,
@@ -111,7 +111,7 @@ export class ConsolidationEngine {
       try {
         // Invalidate any prior open relationship with same subject+predicate+scope
         if (!triple.validUntil) {
-          this.graph.invalidatePriorRelationship(
+          await this.graph.invalidatePriorRelationship(
             entityId,
             triple.predicate,
             projectPath ?? null,
@@ -131,15 +131,15 @@ export class ConsolidationEngine {
           sourceEventIds: pending.map((e) => e.id),
           createdAt: now,
         };
-        this.graph.storeRelationship(rel);
+        await this.graph.storeRelationship(rel);
         added++;
       } catch {
         // Continue on individual relationship errors
       }
     }
 
-    this.graph.markConsolidated(pending.map((e) => e.id));
-    this.graph.storeConsolidationLog({
+    await this.graph.markConsolidated(pending.map((e) => e.id));
+    await this.graph.storeConsolidationLog({
       id: logId,
       trigger,
       entityId,
