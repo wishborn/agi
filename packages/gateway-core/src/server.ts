@@ -18,7 +18,6 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
-import { fileURLToPath } from "node:url";
 import { ulid } from "ulid";
 import { dispatchJobsDir } from "./dispatch-paths.js";
 import { resolveMarketplaceSource } from "./dev-mode-sources.js";
@@ -1086,11 +1085,14 @@ export async function startGatewayServer(
   log.info("episodic memory pipeline initialized (extractor + accumulator)");
 
   // s112 Phase 3 — Doc indexer (agi/docs/ + global k/ + per-project k/).
+  // agiRoot comes from config.workspace.selfRepo (the deployed AGI repo path).
+  // globalKDir is optional: set memory.globalKDir in gateway.json to index
+  // a global knowledge directory such as _aionima/k/.
   docIndexer = new DocIndexer({
     graph: memoryAdapter,
     embeddingEngine,
-    agiRoot: join(dirname(fileURLToPath(import.meta.url)), "../../.."),
-    globalKDir: join(dirname(fileURLToPath(import.meta.url)), "../../../../_aionima/k"),
+    agiRoot,
+    globalKDir: config.memory?.globalKDir,
     projectDirs: projectPaths,
     logger: log,
   });

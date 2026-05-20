@@ -387,7 +387,7 @@ export class GraphMemoryAdapter implements MemoryProvider {
     return row.n;
   }
 
-  async isAvailable(): Promise<boolean> {
+  isAvailable(): boolean {
     return true; // SQLite is always local
   }
 
@@ -958,8 +958,12 @@ function parseJson<T>(value: string | null | undefined, fallback: T): T {
 }
 
 function sanitizeFtsQuery(q: string): string {
-  // Phrase-match wrapping prevents FTS5 operator injection
-  return `"${q.replace(/"/g, '""')}"`;
+  // Quote each token individually to prevent FTS5 operator injection while
+  // using AND matching (implicit in FTS5) rather than phrase matching.
+  // Phrase matching (`"a b"`) fails when terms are non-adjacent.
+  const terms = q.trim().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return '""';
+  return terms.map((t) => `"${t.replace(/"/g, '""')}"`).join(" ");
 }
 
 function hashFromParts(content: string, createdAt: string): string {

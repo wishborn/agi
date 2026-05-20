@@ -82,8 +82,8 @@ export interface MemoryProvider {
   /** Count memories for an entity. */
   count(entityId: string): Promise<number>;
 
-  /** Check if the provider is available. */
-  isAvailable(): Promise<boolean>;
+  /** Check if the provider is available. Synchronous — SQLite is always local. */
+  isAvailable(): boolean;
 }
 
 // ---------------------------------------------------------------------------

@@ -300,6 +300,8 @@ const MemoryConfigSchema = z
     directory: z.string().default("./data/memory"),
     /** Ollama embedding model name. */
     embeddingModel: z.string().default("nomic-embed-text"),
+    /** Absolute path to global k/ knowledge directory (e.g. _aionima/k/). Optional. */
+    globalKDir: z.string().optional(),
   })
   .strict();
 
