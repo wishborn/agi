@@ -37,7 +37,6 @@ export interface CoreRepoSpec {
   slug:
     | "agi"
     | "prime"
-    | "id"
     | "hive-id"
     | "marketplace"
     | "mapp-marketplace"
@@ -61,7 +60,6 @@ export interface CoreRepoSpec {
   configKey:
     | "agiRepo"
     | "primeRepo"
-    | "idRepo"
     | "hiveIdRepo"
     | "marketplaceRepo"
     | "mappMarketplaceRepo"
@@ -80,7 +78,7 @@ export const CORE_REPOS: readonly CoreRepoSpec[] = Object.freeze([
   // so they continue to use CANONICAL_OWNER = "Civicognita").
   { slug: "agi",              upstream: "agi",                  displayName: "AGI",              configKey: "agiRepo" },
   { slug: "prime",            upstream: "aionima",              displayName: "PRIME",            configKey: "primeRepo" },
-  { slug: "id",               upstream: "aionima-id",           displayName: "Local-ID",         configKey: "idRepo" },
+  // (Local-ID removed — absorbed into AGI gateway-core via s180)
   // s149 t625 — Hive-ID (cloud federation hub, privately deployed). Added
   // to CORE_REPOS so Contributing Mode provisions + clones the fork locally.
   // Distinct from Local-ID (id.ai.on LAN service) — Hive-ID runs on Railway/Azure.

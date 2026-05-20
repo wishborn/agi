@@ -2217,7 +2217,7 @@ export async function startGatewayServer(
   // ModelStore + DatasetStore use the shared db connection.
   // Degrade gracefully when Postgres is unreachable — a gateway with HF models
   // unavailable is better than a gateway that refuses to boot. Test VMs
-  // and fresh installs (before `agi-local-id` is up) hit this path.
+  // and fresh installs before Postgres is provisioned hit this path.
   const modelStore = new ModelStore(db);
   try {
     const reconciledModels = await modelStore.reconcileFromDisk(

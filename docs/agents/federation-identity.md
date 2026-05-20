@@ -12,13 +12,15 @@ Before reading further, every new third-party API integration starts with one qu
 
 | Answer | Class | OAuth/flow runs at | Tokens live at | API calls go through |
 |--------|-------|--------------------|----------------|----------------------|
-| **No** (public-client OAuth, e.g. RFC 8628 Device Grant) | Local-ID class | Local-ID (`id.ai.on`) | Local-ID `connections.accessToken` | agi → API directly (Bearer `access_token`) |
-| **Yes** | Proxied class | Hive-ID (cloud, public HTTPS) | Hive-ID `connections` (never leave) | agi → Local-ID `/api/proxy/<provider>/<endpoint>` → Hive-ID → API |
+| **No** (public-client OAuth, e.g. RFC 8628 Device Grant) | Gateway-native class | AGI gateway identity routes | AGI gateway DB (`connections.accessToken`) | agi → API directly (Bearer `access_token`) |
+| **Yes** | Proxied class | Hive-ID (cloud, public HTTPS) | Hive-ID `connections` (never leave) | agi → AGI gateway `/api/proxy/<provider>/<endpoint>` → Hive-ID → API |
 
 **Why this split:**
-- `id.ai.on` is LAN-only DNS — it physically cannot satisfy public HTTPS callback requirements (OAuth redirect URIs, webhooks). (`feedback_oauth_with_secret_routes_through_hive_id`)
+- The AGI gateway is LAN-only — it physically cannot satisfy public HTTPS callback requirements (OAuth redirect URIs, webhooks). (`feedback_oauth_with_secret_routes_through_hive_id`)
 - agi source is public; never hardcode per-deployment secrets there. (`feedback_localid_private_be_careful_what_ships_in_agi`)
-- GitHub is the only current Local-ID class provider; all others are proxied.
+- GitHub is the only current gateway-native class provider; all others are proxied.
+
+> **s180 note:** "Local-ID" in older docs and comments refers to the previously separate `agi-local-id` service whose functionality was absorbed into the AGI gateway. Any reference to `Local-ID` or `id.ai.on` as a separate process is historical — the gateway now handles identity directly.
 
 ---
 
@@ -31,11 +33,11 @@ Aionima nodes hold **DTokens** (32-byte random bearers) instead of raw provider 
 - Revocable independently of the upstream provider
 - Never re-retrievable from Hive-ID after issuance (returned plaintext once, stored encrypted node-side)
 
-Every proxied API call from agi passes the DToken to Local-ID, which forwards it to Hive-ID's proxy gateway. Hive-ID resolves the token → connection → upstream credentials, calls the API, and returns the mapped response.
+Every proxied API call from agi passes the DToken to the gateway's proxy route, which forwards it to Hive-ID's proxy gateway. Hive-ID resolves the token → connection → upstream credentials, calls the API, and returns the mapped response.
 
 ```
 agi (no secrets)
-  └─► Local-ID /api/proxy/<provider>/<endpoint>  Authorization: Bearer dtok_…
+  └─► AGI gateway /api/proxy/<provider>/<endpoint>  Authorization: Bearer dtok_…
         └─► Hive-ID /api/proxy/<provider>/<endpoint>  DToken lookup → connection
               └─► Third-party API  (client_id + client_secret + access_token)
 ```

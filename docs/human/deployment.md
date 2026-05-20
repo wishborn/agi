@@ -14,9 +14,8 @@ Aionima uses a **multi-repo architecture** with independent git repositories:
 | **PRIME** | `/opt/agi-prime` | Knowledge corpus (Mycelium Protocol) |
 | **Plugin Marketplace** | `/opt/agi-marketplace` | Code plugins (runtimes, stacks, workers, etc.) |
 | **MApp Marketplace** | `/opt/agi-mapp-marketplace` | Declarative JSON MagicApps |
-| **ID** | `/opt/agi-local-id` | OAuth credential broker and identity service |
 
-Each repo is a standalone git clone on the server. There are no submodules. If a companion repo directory doesn't exist during deployment, upgrade.sh auto-clones it.
+Identity (OAuth, entity registration) is built into the AGI gateway — there is no separate `/opt/agi-local-id` repo. Each repo is a standalone git clone on the server. There are no submodules.
 
 The upgrade flow is:
 
@@ -45,10 +44,9 @@ git clone git@github.com:Civicognita/aionima.git /opt/agi-prime
 
 # MARKETPLACE (plugin marketplace — optional)
 git clone git@github.com:Civicognita/agi-marketplace.git /opt/agi-marketplace
-
-# ID (identity service — optional)
-git clone git@github.com:Civicognita/agi-local-id.git /opt/agi-local-id
 ```
+
+> Note: there is no separate ID repo — identity is built into AGI.
 
 ### Step 2 -- Install Node.js and pnpm
 
@@ -88,19 +86,9 @@ Add repo paths to `~/.agi/gateway.json`:
   },
   "marketplace": {
     "dir": "/opt/agi-marketplace"
-  },
-  "idService": {
-    "local": {
-      "enabled": true,
-      "port": 3200,
-      "subdomain": "id"
-    },
-    "dir": "/opt/agi-local-id"
   }
 }
 ```
-
-When `idService.local.enabled` is `true`, the gateway manages a local ID service at `id.ai.on` instead of using the central `id.aionima.ai` service.
 
 ### Step 6 -- Run the Deployment Script
 
@@ -145,23 +133,6 @@ cd /opt/agi-marketplace && git pull --ff-only
 ```
 
 Non-fatal -- plugins still work from the previous build cache.
-
-### Phase 3c -- Pull ID
-
-```bash
-cd /opt/agi-local-id && git pull --ff-only
-```
-
-Non-fatal -- if ID pull fails, the identity service continues running from its last good state.
-
-### Phase 3d -- Build ID Service
-
-When `idService.local.enabled` is `true` in the config, the ID service is built and restarted:
-
-1. `npm install` — installs all dependencies (including devDependencies like `typescript`)
-2. `npm run build` — compiles TypeScript
-3. `npx drizzle-kit migrate` — runs database migrations (non-fatal if it fails)
-4. `sudo systemctl restart agi-local-id` — restarts the service
 
 ### Phase 4 -- Protocol Compatibility Check
 

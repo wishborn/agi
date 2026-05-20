@@ -70,7 +70,7 @@ Every feature has a deeper doc — follow the link when you want details.
 | **Project hosting** | Every project gets a `*.ai.on` virtual host (Caddy + dnsmasq + Podman rootless) | [`docs/human/project-hosting.md`](docs/human/project-hosting.md) |
 | **Stack management** | Database / cache / queue stacks per project | [`docs/human/stack-management.md`](docs/human/stack-management.md) · [`docs/agents/stack-management.md`](docs/agents/stack-management.md) |
 | **Cloudflare Tunnels** | Public-share any hosted project (quick + named tunnel modes) | [`docs/human/project-hosting.md`](docs/human/project-hosting.md#tunnels) |
-| **Federation + ID** | Local-ID per-node OAuth/session broker + Hive-ID federation hub | [`docs/human/federation.md`](docs/human/federation.md) · [`docs/agents/federation-identity.md`](docs/agents/federation-identity.md) |
+| **Federation + ID** | Built-in identity (OAuth, entity registration) + Hive-ID federation hub | [`docs/human/federation.md`](docs/human/federation.md) · [`docs/agents/federation-identity.md`](docs/agents/federation-identity.md) |
 | **Compliance / security** | GDPR + HIPAA controls, incident tracking, vendor management | [`docs/human/security.md`](docs/human/security.md) · [`docs/agents/compliance.md`](docs/agents/compliance.md) |
 
 ### Extensions
@@ -192,7 +192,6 @@ Five independent git repos (not submodules):
 | **aionima** (PRIME corpus) | Knowledge corpus (Mycelium Protocol, Impactinomics) | `/opt/agi-prime` |
 | **agi-marketplace** | Plugin Marketplace (code plugins) | `/opt/agi-marketplace` |
 | **agi-mapp-marketplace** | MApp Marketplace (JSON apps) | `/opt/agi-mapp-marketplace` |
-| **agi-local-id** | Local-ID — OAuth credential broker, session gateway | `/opt/agi-local-id` |
 
 Each repo carries a `protocol.json` for semver compatibility checks at boot.
 
@@ -207,7 +206,6 @@ ADF UI primitives live as workspace siblings under [`@particle-academy/*`](https
 | Port | Service |
 |------|---------|
 | 3100 | Gateway (HTTP + WebSocket) |
-| 3200 | Local-ID Service |
 | 443 | Caddy (HTTPS, project hosting) |
 | 53 | dnsmasq (wildcard DNS) |
 

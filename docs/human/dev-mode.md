@@ -123,23 +123,23 @@ Dev Mode flips the upgrade path from "pull from Civicognita" to "pull from the o
 
 The rewrite is performed by `scripts/upgrade.sh`'s `ensure_origin_remote()` helper, added in v0.4.66. On each upgrade cycle, the helper:
 
-1. Reads `dev.agiRepo`, `dev.primeRepo`, `dev.idRepo` from `~/.agi/gateway.json`.
-2. Checks the current origin URL of `/opt/agi`, `/opt/agi-prime`, `/opt/agi-local-id`.
+1. Reads `dev.agiRepo`, `dev.primeRepo` from `~/.agi/gateway.json`.
+2. Checks the current origin URL of `/opt/agi`, `/opt/agi-prime`.
 3. If the origin doesn't match the configured fork URL, rewrites it with `git remote set-url`.
-4. Emits structured log entries (`origin-agi`, `origin-prime`, `origin-id`) with status `verify` (origin aligned), `info` (repointed), `skip` (dir missing / no config), or `error` (rewrite failed). The dashboard upgrade log surfaces these.
+4. Emits structured log entries (`origin-agi`, `origin-prime`) with status `verify` (origin aligned), `info` (repointed), `skip` (dir missing / no config), or `error` (rewrite failed). The dashboard upgrade log surfaces these.
 
 **Expected sequence on first Dev Mode enable:**
 
 1. Toggle Dev Mode in `Settings → Gateway → Contributing` (or your plugin's Dev Mode button).
    - `/api/dev/switch` creates/reuses owner forks on GitHub via the owner's OAuth token.
-   - The five `dev.*Repo` fields populate in `gateway.json`.
+   - The `dev.*Repo` fields populate in `gateway.json`.
    - The core-fork workspace clones appear under `~/_projects/_aionima/`.
    - `/opt/*` origins still point at Civicognita — this is expected at this stage.
 
 2. Run `agi upgrade` (or click Upgrade in the dashboard).
    - `ensure_origin_remote` fires for the first time with the newly populated fork URLs.
    - Each `/opt/*` origin is rewritten to `https://github.com/<your-login>/<repo>.git`.
-   - The upgrade log shows three `origin-* info` + `origin-* verify` entries.
+   - The upgrade log shows `origin-* info` + `origin-* verify` entries.
    - The pull step then fetches from your fork, so the code deployed is your fork's HEAD.
 
 3. Every subsequent `agi upgrade` is just a fast-forward from your fork.
@@ -158,7 +158,6 @@ The rewrite is performed by `scripts/upgrade.sh`'s `ensure_origin_remote()` help
 ▼ Dev Mode
   ✓ AGI origin: https://github.com/wishborn/agi.git
   ✓ PRIME origin: https://github.com/wishborn/aionima.git
-  ✓ ID origin: https://github.com/wishborn/agi-local-id.git
   ✓ NPU hardware: /dev/accel/accel0
 ```
 

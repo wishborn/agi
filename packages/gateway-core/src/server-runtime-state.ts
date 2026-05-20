@@ -5241,7 +5241,6 @@ export async function createGatewayRuntimeState(
       "pull-agi": "pulling",
       "pull-prime": "pulling",
       "pull-marketplace": "pulling",
-      "pull-id": "pulling",
       "preflight": "pulling",
       "submodules": "pulling",
       "protocol-check": "pulling",

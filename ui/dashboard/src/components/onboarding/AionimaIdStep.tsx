@@ -1,9 +1,9 @@
 /**
- * AionimaIdStep — Connect to Aionima Local-ID service.
+ * AionimaIdStep — Identity & OAuth connection step.
  *
- * Onboarding only connects to the ID service itself. Individual provider
- * connections (GitHub, Google, Discord) happen through Local-ID's own
- * interface — not through AGI's onboarding.
+ * As of s180, identity management is built into the AGI gateway (no separate
+ * Local-ID service). This step confirms the gateway's identity system is
+ * reachable and shows connected OAuth providers.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -67,8 +67,8 @@ export function AionimaIdStep({ onNext, onSkip, status }: Props) {
           Connect your Identity
         </h2>
         <p className="text-[13px] sm:text-sm text-muted-foreground leading-relaxed">
-          Link your gateway to Aionima ID — your local identity service that manages
-          authentication, OAuth connections, and entity registration.
+          Aion's identity system is built into the gateway — authentication, OAuth connections,
+          and entity registration are managed here, with no separate service to install.
         </p>
       </div>
 
@@ -85,7 +85,7 @@ export function AionimaIdStep({ onNext, onSkip, status }: Props) {
               ID
             </div>
             <div>
-              <div className="text-[13px] font-semibold">Aionima ID</div>
+              <div className="text-[13px] font-semibold">Identity Service</div>
               <div className="text-[11px] text-muted-foreground font-mono">
                 {idUrl ?? "Resolving..."}
               </div>
@@ -106,8 +106,8 @@ export function AionimaIdStep({ onNext, onSkip, status }: Props) {
         {idStatus === "unreachable" && (
           <div className="mt-3 space-y-2">
             <p className="text-[11px] text-red">
-              Cannot reach the local ID service. Make sure it is running and the Caddy
-              reverse proxy is configured.
+              Cannot reach the gateway identity service. Make sure the AGI gateway is
+              running and the Caddy reverse proxy is configured.
             </p>
             <Button variant="outline" size="sm" onClick={() => void checkIdService()}>
               Retry
@@ -133,15 +133,15 @@ export function AionimaIdStep({ onNext, onSkip, status }: Props) {
         {idStatus === "healthy" && idUrl && (
           <div className="mt-3 pt-3 border-t border-border">
             <p className="text-[11px] text-muted-foreground mb-2">
-              Manage your service connections (GitHub, Google, Discord) through the ID service dashboard:
+              Manage your OAuth connections (GitHub, Google, Discord) in Settings → Identity:
             </p>
             <a
-              href={idUrl}
-              target="_blank"
+              href={idUrl ?? "/settings/identity"}
+              target={idUrl ? "_blank" : undefined}
               rel="noopener noreferrer"
               className="text-[12px] text-primary underline font-mono"
             >
-              Open Aionima ID →
+              Open Identity Settings →
             </a>
           </div>
         )}
