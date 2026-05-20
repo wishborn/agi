@@ -100,8 +100,8 @@ bash scripts/upgrade.sh
 ### Step 7 -- Start the Service
 
 ```bash
-sudo systemctl start aionima
-sudo systemctl status aionima
+sudo systemctl start agi
+sudo systemctl status agi
 ```
 
 ---
@@ -193,21 +193,37 @@ The dashboard reads this to detect available updates.
 
 ## Systemd Service
 
-The service unit is installed at `/etc/systemd/system/agi.service`.
+The service unit is installed at `/etc/systemd/system/agi.service`. The canonical source is `scripts/agi.service` in the AGI repo.
 
 ```ini
 [Unit]
 Description=Aionima Gateway
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=wishborn
+Group=wishborn
 WorkingDirectory=/opt/agi
-ExecStart=node cli/dist/index.js run
-Restart=on-failure
-RestartSec=5s
-EnvironmentFile=/opt/agi/.env
+
+# Trust Caddy's local CA so Node.js accepts self-signed certs for *.ai.on domains.
+Environment=NODE_EXTRA_CA_CERTS=/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+
+ExecStart=/usr/bin/node /opt/agi/cli/dist/index.js run
+# Restart=always (not on-failure) — the dashboard's Gateway Restart button
+# (POST /api/gateway/restart) and `agi restart` both send SIGTERM to the
+# process, which the gateway handles as a clean shutdown (exit 0). With
+# Restart=on-failure, systemd treats clean exits as success and does NOT
+# bring the service back up. Restart=always brings it back regardless of
+# exit code; `systemctl stop agi` still stops it cleanly.
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+KillMode=mixed
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agi
 
 [Install]
 WantedBy=multi-user.target
@@ -217,22 +233,22 @@ WantedBy=multi-user.target
 
 ```bash
 # Start the service
-sudo systemctl start aionima
+sudo systemctl start agi
 
 # Stop the service
-sudo systemctl stop aionima
+sudo systemctl stop agi
 
 # Restart the service
-sudo systemctl restart aionima
+sudo systemctl restart agi
 
 # View service status
-sudo systemctl status aionima
+sudo systemctl status agi
 
 # View live logs
-sudo journalctl -u aionima -f
+sudo journalctl -u agi -f
 
 # View recent logs
-sudo journalctl -u aionima -n 100
+sudo journalctl -u agi -n 100
 ```
 
 ---
@@ -263,7 +279,7 @@ At boot, the gateway reads `protocol.json` from all deployed repos and checks se
 There is no automated rollback. If a deployment breaks the service:
 
 1. SSH into the server.
-2. Check the service logs: `sudo journalctl -u aionima -n 50`.
+2. Check the service logs: `sudo journalctl -u agi -n 50`.
 3. If the issue is in the code, revert the commit in the repo and redeploy.
 4. If the config was changed, edit `/opt/agi/gateway.json` and restart.
 

@@ -1,5 +1,7 @@
 # Federation & Identity
 
+> **Note (v0.4.747+):** The `aionima-local-id` service was retired and absorbed into the AGI gateway. Identity brokering, session management, and OAuth flows are now handled directly by the gateway at port 3100. Only the remote `aionima-hive-id` service (port 4100, hosted on Railway/Azure) remains as a separate service.
+
 Aionima supports a federated identity system where every node is a sovereign identity provider. Entities get cryptographic identities, can carry their reputation across nodes, and visitors from other nodes can authenticate without creating local passwords.
 
 ---

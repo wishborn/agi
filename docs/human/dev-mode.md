@@ -1,13 +1,35 @@
 # Contributing Mode
 
-Contributing Mode (formerly Dev Mode) lets you switch Aionima between production repositories (Civicognita) and personal fork directories for development work.
+Contributing Mode (formerly Dev Mode) lets you switch Aionima between production repositories (Civicognita / Particle-Academy) and personal fork directories for development work.
 
 ## Core Repos
 
-| Repo | Primary (Civicognita) | Fork (default) |
-|------|----------------------|----------------|
+Contributing Mode provisions **thirteen repositories** across two upstream organizations:
+
+### Civicognita core (5 repos)
+
+| Repo | Upstream | Fork (default) |
+|------|----------|----------------|
 | AGI | `Civicognita/agi` | `wishborn/agi` |
 | PRIME | `Civicognita/aionima` | `wishborn/aionima` |
+| Hive-ID | `Civicognita/agi-hive-id` | `wishborn/agi-hive-id` |
+| Plugin Marketplace | `Civicognita/agi-marketplace` | `wishborn/agi-marketplace` |
+| MApp Marketplace | `Civicognita/agi-mapp-marketplace` | `wishborn/agi-mapp-marketplace` |
+
+### Particle-Academy UI packages / PAx (8 repos)
+
+| Repo | Upstream | Fork (default) |
+|------|----------|----------------|
+| react-fancy | `Particle-Academy/react-fancy` | `wishborn/react-fancy` |
+| fancy-code | `Particle-Academy/fancy-code` | `wishborn/fancy-code` |
+| fancy-sheets | `Particle-Academy/fancy-sheets` | `wishborn/fancy-sheets` |
+| fancy-echarts | `Particle-Academy/fancy-echarts` | `wishborn/fancy-echarts` |
+| fancy-3d | `Particle-Academy/fancy-3d` | `wishborn/fancy-3d` |
+| fancy-screens | `Particle-Academy/fancy-screens` | `wishborn/fancy-screens` |
+| fancy-whiteboard | `Particle-Academy/fancy-whiteboard` | `wishborn/fancy-whiteboard` |
+| agent-integrations | `Particle-Academy/agent-integrations` | `wishborn/agent-integrations` |
+
+All thirteen forks clone to `~/_projects/_aionima/repos/<name>/`. The single source of truth for this list is `packages/gateway-core/src/dev-mode-forks.ts:CORE_REPOS`.
 
 ## How It Works
 
@@ -59,11 +81,18 @@ After toggling, the config file is updated and a **restart is required** for pat
 
 ### Sacred Projects
 
-When Contributing mode is on, the Projects page shows a **Sacred Projects** section at the top (AGI, PRIME, ID). These cards use a gold star + indigo card and are immutable (no rename/delete). If a repo is missing, the card shows **Not provisioned** until it’s created.
+When Contributing mode is on, the Projects page shows two **Sacred Projects** portal cards at the top:
+
+- **Civicognita Sacred Projects** — AGI, PRIME, Hive-ID, Plugin Marketplace, MApp Marketplace.
+- **PAx Sacred Projects** — react-fancy, fancy-code, fancy-sheets, fancy-echarts, fancy-3d, fancy-screens, fancy-whiteboard, agent-integrations.
+
+All Sacred Project cards use a gold star + indigo card style and are immutable (no rename/delete). If a repo is missing, the card shows **Not provisioned** until it’s created.
+
+Note: Local-ID (`aionima-local-id`) was removed from the core-repo list when its functionality was absorbed into `gateway-core` (s180). It no longer appears in Contributing Mode.
 
 ### Repo Status Cards
 
-Three cards show the current state of each repo:
+Cards show the current state of each repo:
 - Current remote URL
 - Branch
 - Entry count (for PRIME corpus)
@@ -96,7 +125,7 @@ Response includes the directories that will be active after restart:
 
 ## Merging upstream into your fork
 
-Once Dev Mode has provisioned the five owner forks under `~/_projects/_aionima/`, each one shows up in the dashboard Projects list with a restricted UX: only an **Editor** and a **Repository** tab. The Repository tab is specialised for core forks.
+Once Dev Mode has provisioned all thirteen owner forks under `~/_projects/_aionima/repos/`, each one shows up in the dashboard Projects list with a restricted UX: only an **Editor** and a **Repository** tab. The Repository tab is specialised for core forks.
 
 The tab surfaces three numbers: the branch the gateway is subscribed to (from `gateway.updateChannel`), the fork's HEAD SHA, and the upstream (Civicognita) HEAD SHA. Two badges — `↑ N ahead`, `↓ N behind` — summarise divergence vs `upstream/<branch>`.
 
@@ -112,10 +141,37 @@ The **Open PR to upstream** button next to it opens a pre-filled GitHub compare 
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/dev/core-forks/status` | Returns `{ forks: CoreForkStatus[], branch }` for all five core forks. Bounded `git fetch upstream` per repo. |
+| `GET` | `/api/dev/core-forks/status` | Returns `{ forks: CoreForkStatus[], branch }` for all thirteen forks (five Civicognita core + eight PAx). Bounded `git fetch upstream` per repo. |
 | `POST` | `/api/dev/core-forks/:slug/merge` | Body `{ strategy?: "ff-only" \| "agentic" }`. Returns a `CoreForkMergeResult` — either `{ ok: true, ff, agentic, newSha, pushed }` on success, `{ ok: false, conflict: true, files, ... }` on conflict, or `{ ok: false, conflict: false, reason }` on refusal (dirty tree, unknown slug). |
 
 Both routes require the same private-network + admin-role guard as `/api/dev/status`.
+
+## Contributing to Particle-Academy (PAx) packages
+
+The eight PAx packages (`react-fancy`, `fancy-code`, `fancy-sheets`, `fancy-echarts`, `fancy-3d`, `fancy-screens`, `fancy-whiteboard`, `agent-integrations`) are ADF UI primitives maintained under the `Particle-Academy` GitHub org. Contributing Mode provisions personal forks at `wishborn/<repo>` and clones them into `~/_projects/_aionima/repos/<name>/`, identical to how the Civicognita core repos are handled.
+
+### Development workflow
+
+1. **Sync first.** Before starting any PAx work, pull the latest upstream dev branch to avoid immediately-stale feature branches:
+   ```bash
+   git fetch origin && git pull origin dev
+   ```
+2. **Create a feature branch:**
+   ```bash
+   git checkout -b <feature-name>
+   ```
+3. **Build and test** the component inside the PAx repo.
+4. **Commit and push** to your fork (`wishborn/<repo>`):
+   ```bash
+   git push origin <feature-name>
+   ```
+5. **Open a cross-repo PR:** `wishborn/<repo>:<feature-name> → Particle-Academy/<repo>:main`.
+
+### Important constraints
+
+- **Never `git push upstream`** — `upstream` points at `Particle-Academy/<repo>` and is read-only. All pushes go to `origin` (`wishborn/<repo>`).
+- The AGI side consumes a new PAx primitive only **after** the PR merges and a new package version is published. Pre-merge, leave a hand-rolled placeholder in AGI with a comment pointing at the open PR.
+- If you hit a bug in a PAx package, file an issue in the corresponding `Particle-Academy/<repo>` repository. Do not work around it locally with a permanent hand-rolled fallback.
 
 ## How Dev Mode upgrades work
 
