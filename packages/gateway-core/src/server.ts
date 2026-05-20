@@ -3305,7 +3305,9 @@ export async function startGatewayServer(
       primeLoader,
       primeDir,
       aionMicro: aionMicroManager,
-        marketplaceManager,
+      marketplaceManager,
+      graphAdapter: memoryAdapter,
+      docIndexer,
       onPluginInstalled: async (installPath: string) => {
         try {
           // installPath is the plugin's own directory (e.g. ~/.agi/plugins/cache/<id>).

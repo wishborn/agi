@@ -1501,6 +1501,55 @@ export async function fetchDocsTree(): Promise<FileNode[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Memory Browser API — /api/memory/*
+// ---------------------------------------------------------------------------
+
+export interface MemoryEvent {
+  id: string;
+  summary: string;
+  tags: string[];
+  confidence: number;
+  createdAt: string;
+  projectPath: string | null;
+  coaFingerprint: string;
+}
+
+export interface MemoryDocChunk {
+  heading: string | null;
+  content: string;
+  sourcePath: string;
+  scope: string;
+}
+
+export async function fetchMemoryEvents(params?: {
+  q?: string;
+  projectPath?: string | null;
+  entityId?: string;
+  limit?: number;
+}): Promise<MemoryEvent[]> {
+  const url = new URL("/api/memory/events", window.location.origin);
+  if (params?.q) url.searchParams.set("q", params.q);
+  if (params?.projectPath !== undefined) url.searchParams.set("projectPath", params.projectPath ?? "null");
+  if (params?.entityId) url.searchParams.set("entityId", params.entityId);
+  if (params?.limit) url.searchParams.set("limit", String(params.limit));
+  const res = await fetch(url.toString(), { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`Memory events fetch failed: ${res.status}`);
+  const data = await res.json() as { events: MemoryEvent[] };
+  return data.events;
+}
+
+export async function searchMemoryDocs(q: string, scope?: string, limit = 10): Promise<MemoryDocChunk[]> {
+  const url = new URL("/api/memory/search-docs", window.location.origin);
+  url.searchParams.set("q", q);
+  if (scope) url.searchParams.set("scope", scope);
+  url.searchParams.set("limit", String(limit));
+  const res = await fetch(url.toString(), { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`Doc search failed: ${res.status}`);
+  const data = await res.json() as { chunks: MemoryDocChunk[] };
+  return data.chunks;
+}
+
+// ---------------------------------------------------------------------------
 // Project File API — /api/files/project-*
 // ---------------------------------------------------------------------------
 

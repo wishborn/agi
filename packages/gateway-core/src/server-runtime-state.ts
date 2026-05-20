@@ -320,6 +320,10 @@ export interface RuntimeStateDeps {
   preListenHooks?: ((fastify: import("fastify").FastifyInstance) => void)[];
   /** Drizzle DB instance — passed to route groups that do direct DB auth (user mgmt, etc.). */
   db?: import("@agi/db-schema/client").Db;
+  /** GraphMemoryAdapter — exposes /api/memory/* browser endpoints. */
+  graphAdapter?: import("@agi/memory").GraphMemoryAdapter;
+  /** DocIndexer — exposes /api/memory/search-docs browser endpoint. */
+  docIndexer?: import("./doc-indexer.js").DocIndexer;
 }
 
 export interface ReloadResult {
@@ -7549,6 +7553,53 @@ export async function createGatewayRuntimeState(
     try {
       renameSync(src, dest);
       return reply.send({ ok: true });
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Memory browser endpoints — s112 Phase UI
+  // -----------------------------------------------------------------------
+
+  // GET /api/memory/events — episodic events for the memory browser
+  fastify.get("/api/memory/events", async (request, reply) => {
+    if (!deps.graphAdapter) return reply.code(503).send({ error: "Memory adapter unavailable" });
+    const q = request.query as { q?: string; projectPath?: string; entityId?: string; limit?: string };
+    const limit = Math.min(parseInt(q.limit ?? "50", 10) || 50, 200);
+    const projectPath = q.projectPath === "null" ? null : q.projectPath;
+    try {
+      const events = deps.graphAdapter.queryGraphEvents({
+        entityId: q.entityId,
+        projectPath,
+        semantic: q.q,
+        limit,
+      });
+      return reply.send({
+        events: events.map((e) => ({
+          id: e.id,
+          summary: e.summary,
+          tags: e.tags,
+          confidence: e.confidence,
+          createdAt: String(e.createdAt),
+          projectPath: e.projectPath ?? null,
+          coaFingerprint: e.coaFingerprint,
+        })),
+      });
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // GET /api/memory/search-docs — full-text search over doc chunks
+  fastify.get("/api/memory/search-docs", async (request, reply) => {
+    if (!deps.docIndexer) return reply.code(503).send({ error: "Doc indexer unavailable" });
+    const q = request.query as { q?: string; scope?: string; limit?: string };
+    if (!q.q?.trim()) return reply.send({ chunks: [] });
+    const limit = Math.min(parseInt(q.limit ?? "10", 10) || 10, 50);
+    try {
+      const chunks = await deps.docIndexer.query({ query: q.q, scope: q.scope, limit });
+      return reply.send({ chunks });
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
     }
