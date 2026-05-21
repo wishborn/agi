@@ -478,6 +478,28 @@ function buildSkillsSection(skills: SkillPromptEntry[]): string {
   return `## Active Skills\n\nThe following skills are relevant to this interaction:\n\n${entries.join("\n\n---\n\n")}`;
 }
 
+/**
+ * Standing memory behavioral instructions — injected on every non-worker invocation.
+ * Tells Aion how its memory system works regardless of whether any memories are recalled.
+ */
+function buildMemoryInstructionsSection(): string {
+  return `## Memory System
+
+Your memory is persistent across all sessions and automatically recorded — you do not need to call any tool to store it. Every invocation is captured and consolidated into searchable episodic records.
+
+**Reading recalled context (when a ## Memory section appears below):**
+- **Recalled context (global)** — your prior observations and decisions across all work
+- **Project context** — prior work and decisions scoped to the current project
+- **Established facts** — consolidated relationship triples extracted from prior sessions (subject → predicate → object with temporal validity)
+- **Related docs** — relevant chunks from \`agi/docs/\` or project \`k/\` knowledge files
+
+**Active recall tools (use when context is insufficient):**
+- \`search_docs\` — semantic search over \`agi/docs/\`, the global \`k/\` folder, and the current project's \`k/\` folder. Use when you need specific platform documentation or project knowledge that isn't already in context.
+- \`search_prime\` — search the PRIME corpus for Impactivism, COA, entity model, or 0TRUTH knowledge.
+
+**Continuity discipline:** When recalled context is present, treat it as ground truth about prior work. Do not re-derive what is already established. Explicitly reference prior decisions when they are relevant to the current request.`;
+}
+
 function buildMemorySection(memories: MemoryPromptEntry[]): string {
   if (memories.length === 0) return "";
 
@@ -523,14 +545,6 @@ function buildMemorySection(memories: MemoryPromptEntry[]): string {
     parts.push("### Related docs");
     for (const m of docs) parts.push(m.content);
   }
-
-  parts.push(
-    "### Memory guidance\n" +
-    "These memory sections are automatically populated from prior sessions. " +
-    "Use `search_docs` to look up specific AGI platform docs or project knowledge files not already in context. " +
-    "Use `search_prime` to retrieve Impactivism/COA/PRIME knowledge. " +
-    "You do not need to call any tool to store memories — every invocation is captured automatically.",
-  );
 
   return parts.join("\n\n");
 }
@@ -1088,6 +1102,13 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
   // call won't pass `tools:` anyway (chat with no action verbs).
   sections.push(ctx.toolsAvailable === false ? buildToolsHintSection(ctx.tools) : buildToolsSection(ctx.tools));
 
+  // Memory behavioral instructions — always present so Aion knows how to use its
+  // memory system even on cold-start sessions where no memories are recalled yet.
+  // Skipped for worker and local-micro invocations (token budget too tight).
+  if (rt !== "worker" && !isLocal) {
+    sections.push(buildMemoryInstructionsSection());
+  }
+
   // State + owner (compact, one line each)
   sections.push(`Operational state: ${ctx.state}`);
   if (ctx.ownerName !== undefined) {
@@ -1267,6 +1288,13 @@ export function assembleSystemPromptWithBreakdown(
   }
 
   identitySections.push(ctx.toolsAvailable === false ? buildToolsHintSection(ctx.tools) : buildToolsSection(ctx.tools));
+
+  // Memory behavioral instructions — same rule as the single-prompt path:
+  // always present except for worker and local-micro invocations.
+  if (rt !== "worker" && !isLocal) {
+    identitySections.push(buildMemoryInstructionsSection());
+  }
+
   identitySections.push(`Operational state: ${ctx.state}`);
 
   if (ctx.ownerName !== undefined) {
