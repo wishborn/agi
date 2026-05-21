@@ -155,6 +155,12 @@ export function Projects({
         <div className="flex items-center gap-2">
           <h2 className="text-xl font-bold text-foreground">Projects</h2>
           <DevNotes title="Projects browser — dev notes">
+            <DevNotes.Item kind="info" heading="Cycle 228 — Aionima moved into list row (top)">
+              Removed separate Sacred section above the table. Aionima is now the
+              first row in both list view (indigo-tinted Table.Row) and grid view
+              (indigo card as the first grid cell). Same indigo/yellow styling as before;
+              no separate heading or spatial separation from the project list.
+            </DevNotes.Item>
             <DevNotes.Item kind="info" heading="Cycle 226 — Sacred Aionima card always visible">
               v0.4.664 — owner directive: the Sacred Aionima card is now visible
               regardless of dev/contributing mode. Dev mode only controls whether
@@ -265,54 +271,6 @@ export function Projects({
         </div>
       )}
 
-      {/* Aionima — single platform-contribution portal tile (s119 redesign).
-          Replaces the per-core-repo sacred tiles. Users don't ship updates
-          per package; they contribute across channels through the
-          consolidated /aionima view (upstream alignment + PR + MINT).
-          Impactium-blockchain COA<>COI ties back to THIS single entry.
-          Visible unconditionally per owner directive 2026-05-13: dev/
-          contributing mode only controls whether owner forks get cloned
-          into `_aionima/repos/`, not whether the Sacred card renders. */}
-      <div className="mb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <Star className="h-4 w-4 text-yellow" />
-            <h3 className="text-[13px] font-semibold text-foreground">Sacred</h3>
-          </div>
-          {/* s119 t705 — Aionima is now a self-managed project at
-              `_aionima`. The legacy /aionima consolidated view + the
-              separate /pax tile collapsed into this single card; both
-              routes redirect to `/projects/_aionima`. PAx repos live as
-              repos under `_aionima/repos/<name>` alongside the 5
-              Civicognita cores. */}
-          <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
-            <div
-              onClick={() => { void navigate("/projects/_aionima"); }}
-              className={cn(
-                "rounded-xl border transition-colors duration-150 cursor-pointer hover:border-yellow",
-                "bg-indigo-50/70 border-indigo-200/80",
-                "dark:bg-indigo-950/40 dark:border-indigo-700/60",
-              )}
-              data-testid="project-card-aionima"
-            >
-              <div className="p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <Star className="h-4 w-4 text-yellow" />
-                  <span className="text-[15px] font-semibold text-card-foreground">Aionima</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">
-                    platform
-                  </span>
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  Platform contribution portal — upstream alignment, PR submission, MINT impact ($WORK / $K / $RES). {isContributing
-                    ? <>Wraps the {sacredEntries.filter((e) => e.project !== null).length} core forks + {PAX_SACRED_PROJECTS.length} Particle-Academy ADF UI primitives as a single self-managed project (`_aionima/repos/`).</>
-                    : <>Enable contributing mode in Settings to clone the {SACRED_PROJECTS.length} core Aionima forks + {PAX_SACRED_PROJECTS.length} Particle-Academy ADF UI primitives into <code>_aionima/repos/</code>.</>}
-                </div>
-                <div className="text-[11px] text-yellow mt-2 font-medium">Open Aionima →</div>
-              </div>
-            </div>
-          </div>
-        </div>
-
       {/* s130 t516 slice 1 (cycle 102) — list view via react-fancy Table.
           Matches projects-ux-v2/projects-browser-v2.html mockup. Activity
           sparkline (fancy-echarts), Knowledge column, and click-to-expand
@@ -333,6 +291,40 @@ export function Projects({
               <Table.Column label="Health" />
             </Table.Head>
             <Table.Body>
+              {/* Aionima — sacred row pinned at top of list */}
+              <Table.Row
+                onClick={() => void navigate("/projects/_aionima")}
+                className={cn(
+                  "cursor-pointer",
+                  "bg-indigo-50/70 dark:bg-indigo-950/40",
+                  "hover:bg-indigo-100/80 dark:hover:bg-indigo-900/50",
+                )}
+                data-testid="project-card-aionima"
+              >
+                <Table.Cell>
+                  <Star className="h-3 w-3 text-yellow" />
+                </Table.Cell>
+                <Table.Cell>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[13px] font-semibold text-card-foreground">Aionima</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">platform</span>
+                  </div>
+                </Table.Cell>
+                <Table.Cell>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-400 font-medium">sacred</span>
+                </Table.Cell>
+                <Table.Cell>
+                  <span className="text-[11px] font-mono text-indigo-400 font-semibold" title={`${String(SACRED_PROJECTS.length)} Civicognita + ${String(PAX_SACRED_PROJECTS.length)} PAx`}>
+                    ⌗{SACRED_PROJECTS.length + PAX_SACRED_PROJECTS.length}
+                  </span>
+                </Table.Cell>
+                <Table.Cell><span className="text-[11px] text-muted-foreground/40">—</span></Table.Cell>
+                <Table.Cell><span className="text-[11px] text-muted-foreground/40">—</span></Table.Cell>
+                <Table.Cell><span className="text-[11px] text-muted-foreground/40">—</span></Table.Cell>
+                <Table.Cell><span className="text-[11px] text-muted-foreground/40">—</span></Table.Cell>
+                <Table.Cell><span className="text-[11px] text-muted-foreground/40">—</span></Table.Cell>
+                <Table.Cell><span className="text-[11px] text-muted-foreground/40">—</span></Table.Cell>
+              </Table.Row>
               {visibleProjects.map((p) => {
                 const slug = projectSlug(p.path);
                 const cat = p.category ?? p.projectType?.category;
@@ -670,6 +662,31 @@ export function Projects({
       {/* Project grid — original compact card layout, opt-in via viewMode toggle */}
       {viewMode === "grid" && (
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+        {/* Aionima — sacred card pinned at top of grid */}
+        <div
+          onClick={() => { void navigate("/projects/_aionima"); }}
+          className={cn(
+            "rounded-xl border transition-colors duration-150 cursor-pointer hover:border-yellow",
+            "bg-indigo-50/70 border-indigo-200/80",
+            "dark:bg-indigo-950/40 dark:border-indigo-700/60",
+          )}
+          data-testid="project-card-aionima"
+        >
+          <div className="p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Star className="h-4 w-4 text-yellow" />
+              <span className="text-[15px] font-semibold text-card-foreground">Aionima</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">platform</span>
+            </div>
+            <div className="text-[11px] text-muted-foreground">
+              Platform contribution portal — upstream alignment, PR submission, MINT impact ($WORK / $K / $RES).{" "}
+              {isContributing
+                ? <>Wraps the {sacredEntries.filter((e) => e.project !== null).length} core forks + {PAX_SACRED_PROJECTS.length} PAx primitives (`_aionima/repos/`).</>
+                : <>Enable contributing mode in Settings to clone the {SACRED_PROJECTS.length} core forks + {PAX_SACRED_PROJECTS.length} PAx primitives.</>}
+            </div>
+            <div className="text-[11px] text-yellow mt-2 font-medium">Open Aionima →</div>
+          </div>
+        </div>
         {visibleProjects.map((p) => {
           const slug = projectSlug(p.path);
           return (
