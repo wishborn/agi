@@ -22,6 +22,7 @@ import type { Logger } from "./logger.js";
 import type { SecretsManager } from "./secrets.js";
 import type { Db } from "@agi/db-schema/client";
 import { createHandoff, pollHandoff } from "./handoff-api.js";
+import { createEntityService } from "./entity-service.js";
 
 // ---------------------------------------------------------------------------
 // ID Service URL resolution
@@ -326,37 +327,44 @@ export function registerOnboardingRoutes(
     cfg.owner = owner;
     writeConfig(cfg);
 
-    // Register owner entity in Local-ID — creates #E0 + $A0
-    const idBaseUrl = resolveIdServiceUrl(cfg);
-    try {
-      const res = await fetch(`${idBaseUrl}/api/entities/register-owner`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ displayName: body.displayName.trim() }),
-      });
-
-      if (res.ok) {
-        const data = (await res.json()) as {
-          owner: { id: string; coaAlias: string; geid: string };
-          agent: { id: string; coaAlias: string; geid: string };
-          registrationId: string;
-        };
-
-        // Entity IDs are managed in Postgres by AGI (s180 Local-ID absorption).
-        // Do NOT write entityId/coaAlias/geid to gateway.json — OwnerConfigSchema
-        // and AgentConfigSchema both use .strict() and would crash on next start.
-        log.info(`Owner entity registered: ${data.owner.coaAlias} (${data.owner.geid})`);
-        log.info(`Agent entity registered: ${data.agent.coaAlias} (${data.agent.geid})`);
-      } else if (res.status === 409) {
-        // Genesis owner already exists — not an error (re-onboarding scenario)
-        log.info("Genesis owner already registered in Local-ID");
-      } else {
-        const errText = await res.text();
-        log.warn(`Local-ID register-owner failed (non-fatal): ${res.status} ${errText}`);
+    // Register owner entity directly — s180: Local-ID absorbed into gateway,
+    // no HTTP self-call needed (and it can't work during first-boot anyway).
+    let ownerGeid = "";
+    let ownerAlias = "";
+    let agentGeid = "";
+    let agentAlias = "";
+    if (deps.db && deps.encKey) {
+      try {
+        const entitySvc = createEntityService(deps.db, deps.encKey);
+        const hasOwner = await entitySvc.hasGenesisOwner();
+        if (!hasOwner) {
+          const result = await entitySvc.createOwnerEntity(body.displayName.trim());
+          ownerGeid = result.ownerGeid.geid;
+          ownerAlias = result.owner.coaAlias;
+          agentGeid = result.agentGeid.geid;
+          agentAlias = result.agent.coaAlias;
+          log.info(`Owner entity registered: ${ownerAlias} (${ownerGeid})`);
+          log.info(`Agent entity registered: ${agentAlias} (${agentGeid})`);
+        } else {
+          const ownerEntity = await entitySvc.getByAlias("#E0");
+          if (ownerEntity) {
+            const geidRecord = await entitySvc.getEntityGeid(ownerEntity.id);
+            ownerGeid = geidRecord?.geid ?? "";
+            ownerAlias = ownerEntity.coaAlias;
+            const agents = await entitySvc.getOwnerAgents(ownerEntity.id);
+            if (agents[0]) {
+              const agentGeidRecord = await entitySvc.getEntityGeid(agents[0].id);
+              agentGeid = agentGeidRecord?.geid ?? "";
+              agentAlias = agents[0].coaAlias;
+            }
+          }
+          log.info("Genesis owner already registered, reading existing identity");
+        }
+      } catch (e) {
+        log.warn(`Entity registration failed (non-fatal): ${String(e)}`);
       }
-    } catch (e) {
-      // Local-ID unreachable — non-fatal, entity can be created later
-      log.warn(`Local-ID unreachable during owner registration (non-fatal): ${String(e)}`);
+    } else {
+      log.warn("DB/encKey not available — entity registration skipped");
     }
 
     // Mark step completed
@@ -365,7 +373,53 @@ export function registerOnboardingRoutes(
     writeOnboardingState(state, dataDir);
 
     log.info(`Owner profile saved: ${body.displayName}`);
-    return reply.send({ ok: true });
+    return reply.send({
+      ok: true,
+      owner: { geid: ownerGeid, coaAlias: ownerAlias },
+      agent: { geid: agentGeid, coaAlias: agentAlias },
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/onboarding/owner-entity — read registered owner/agent GEID
+  // Used by AionimaIdStep after OwnerProfile step completes.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/onboarding/owner-entity", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err) return reply.code(403).send({ error: err });
+
+    if (!deps.db || !deps.encKey) {
+      return reply.code(503).send({ error: "Entity service unavailable" });
+    }
+
+    try {
+      const entitySvc = createEntityService(deps.db, deps.encKey);
+      const ownerEntity = await entitySvc.getByAlias("#E0");
+      if (!ownerEntity) {
+        return reply.send({ registered: false });
+      }
+      const ownerGeid = await entitySvc.getEntityGeid(ownerEntity.id);
+      const agents = await entitySvc.getOwnerAgents(ownerEntity.id);
+      const agent = agents[0] ?? null;
+      const agentGeid = agent ? await entitySvc.getEntityGeid(agent.id) : null;
+
+      return reply.send({
+        registered: true,
+        owner: {
+          displayName: ownerEntity.displayName,
+          coaAlias: ownerEntity.coaAlias,
+          geid: ownerGeid?.geid ?? "",
+        },
+        agent: {
+          coaAlias: agent?.coaAlias ?? "",
+          geid: agentGeid?.geid ?? "",
+        },
+      });
+    } catch (e) {
+      log.warn(`owner-entity lookup failed: ${String(e)}`);
+      return reply.code(500).send({ error: "Entity lookup failed" });
+    }
   });
 
   // -----------------------------------------------------------------------

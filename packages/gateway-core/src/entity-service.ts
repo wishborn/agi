@@ -368,6 +368,15 @@ export function createEntityService(db: Db, encKey: Buffer) {
     await db.update(users).set({ entityId }).where(eq(users.id, userId));
   }
 
+  async function deleteGuestEntity(id: string): Promise<{ ok: boolean; error?: string }> {
+    const entity = await getEntity(id);
+    if (!entity) return { ok: false, error: "Entity not found" };
+    if (entity.coaAlias === "#E0") return { ok: false, error: "Cannot delete the genesis owner entity" };
+    if (entity.type === "A") return { ok: false, error: "Cannot delete agent entities" };
+    await db.delete(entities).where(eq(entities.id, id));
+    return { ok: true };
+  }
+
   async function hasGenesisOwner(): Promise<boolean> {
     const [owner] = await db
       .select()
@@ -390,6 +399,7 @@ export function createEntityService(db: Db, encKey: Buffer) {
     linkUserToEntity,
     hasGenesisOwner,
     nextAlias,
+    deleteGuestEntity,
   };
 }
 

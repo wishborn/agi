@@ -30,6 +30,7 @@ import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover
 import { DevNotesIcon } from "@/components/ui/dev-notes.js";
 import { RouteDevNotes } from "@/lib/route-notes.js";
 import { ProfileCard } from "@/components/ProfileCard.js";
+import { ProfileManager } from "@/components/ProfileManager.js";
 import { useConfig, useDashboardWS, useHosting, useIsMobile, useLogStream, useOverview, useProjectConfigWS, useProjects } from "@/hooks.js";
 import { useTheme } from "@/lib/theme-provider";
 import { Chart, Icon } from "@particle-academy/react-fancy";
@@ -162,6 +163,7 @@ export default function RootLayout() {
   const [upgradeLogs, setUpgradeLogs] = useState<{ step: string; status: string; message: string; timestamp: string }[]>([]);
   const [upgradeDropdown, setUpgradeDropdown] = useState(false);
   const [upgradeReloading, setUpgradeReloading] = useState(false);
+  const [profileManagerOpen, setProfileManagerOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const upgradePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -829,12 +831,20 @@ export default function RootLayout() {
                     </div>
                   </PopoverTrigger>
                   <PopoverContent className="p-0 w-auto border-0 bg-transparent shadow-none z-[300]">
-                    <ProfileCard
-                      displayName={ownerName}
-                      channels={configHook.data?.owner?.channels}
-                      dmPolicy={configHook.data?.owner?.dmPolicy}
-                      showChannelIds
-                    />
+                    <div className="flex flex-col">
+                      <ProfileCard
+                        displayName={ownerName}
+                        channels={configHook.data?.owner?.channels}
+                        dmPolicy={configHook.data?.owner?.dmPolicy}
+                        showChannelIds
+                      />
+                      <button
+                        onClick={() => setProfileManagerOpen(true)}
+                        className="text-xs text-primary hover:underline px-4 py-2 text-left border-t border-border bg-card rounded-b-lg"
+                      >
+                        Manage People →
+                      </button>
+                    </div>
                   </PopoverContent>
                 </Popover>
               );
@@ -981,6 +991,12 @@ export default function RootLayout() {
           bottom-right toast stack. The IterativeWorkToastStack component
           is deprecated by this change; ChatFlyout consumes notifications
           directly + filters to its active session's project path. */}
+
+      {/* Profile Manager flyout — triggered from header avatar popover */}
+      <ProfileManager
+        open={profileManagerOpen}
+        onClose={() => setProfileManagerOpen(false)}
+      />
     </div>
   );
 }

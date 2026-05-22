@@ -7249,6 +7249,8 @@ export async function createGatewayRuntimeState(
       identityProvider: deps.identityProvider,
       oauthHandler: deps.oauthHandler ?? null,
       logger: deps.logger,
+      db: deps.db,
+      encKey: encryptionKey,
     });
   }
 
