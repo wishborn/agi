@@ -35,9 +35,9 @@ const ALL_STEPS = [
   { id: "aionimaId", label: "Identity", firstbootOnly: false, stateKey: "aionimaId" as const },
   { id: "channels", label: "Channels", firstbootOnly: false, stateKey: "channels" as const },
   { id: "federation", label: "Network", firstbootOnly: true, stateKey: "federation" as const },
-  { id: "zeroMeMind", label: "0ME: Mind", firstbootOnly: false, stateKey: "zeroMeMind" as const },
-  { id: "zeroMeSoul", label: "0ME: Soul", firstbootOnly: false, stateKey: "zeroMeSoul" as const },
-  { id: "zeroMeSkill", label: "0ME: Skill", firstbootOnly: false, stateKey: "zeroMeSkill" as const },
+  { id: "zeroMeMind", label: "0ME: Mind", firstbootOnly: true, stateKey: "zeroMeMind" as const },
+  { id: "zeroMeSoul", label: "0ME: Soul", firstbootOnly: true, stateKey: "zeroMeSoul" as const },
+  { id: "zeroMeSkill", label: "0ME: Skill", firstbootOnly: true, stateKey: "zeroMeSkill" as const },
   { id: "complete", label: "Complete", firstbootOnly: true, stateKey: null },
 ] as const;
 

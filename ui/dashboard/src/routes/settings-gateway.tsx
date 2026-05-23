@@ -17,7 +17,7 @@ type Tab = "general" | "identity" | "dev" | "network";
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "general", label: "General" },
-  { id: "identity", label: "Identity" },
+  { id: "identity", label: "Federation" },
   { id: "dev", label: "Contributing" },
   { id: "network", label: "Network" },
 ];

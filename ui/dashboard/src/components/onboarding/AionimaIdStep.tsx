@@ -284,7 +284,7 @@ function AgentCard({ agent }: { agent?: { coaAlias: string; geid: string } }) {
       </div>
       <p className="text-[11px] text-muted-foreground mt-1">
         Gateway-managed — GEID is read-only.{" "}
-        <a href="/settings?section=identity" className="text-primary underline">
+        <a href="/settings/identity" className="text-primary underline">
           Manage all identities →
         </a>
       </p>

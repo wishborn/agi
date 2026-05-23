@@ -51,6 +51,7 @@ import BackupsPage from "./routes/system-backups.js";
 import SecuritySettingsPage from "./routes/settings-security.js";
 import SystemSecurityPage from "./routes/system-security.js";
 import IdentityServicePage from "./routes/system-identity.js";
+import SettingsIdentityPage from "./routes/settings-identity.js";
 import IdentityPendingPage from "./routes/identity-pending.js";
 import SystemAgentsPage from "./routes/system-agents.js";
 import PromptInspectorPage from "./routes/prompt-inspector.js";
@@ -112,6 +113,7 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <Navigate to="/settings/gateway" replace /> },
           { path: "gateway", element: <SettingsGatewayPage /> },
+          { path: "identity", element: <SettingsIdentityPage /> },
           { path: "providers", element: <SettingsProvidersPage /> },
           { path: "channels", element: <SettingsChannelsPage /> },
           { path: "vault", element: <SettingsVaultPage /> },

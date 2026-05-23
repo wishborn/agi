@@ -16,7 +16,7 @@ export default function IdentityServicePage() {
         <p className="text-subtext0">
           Identity management is built into the gateway. Manage OAuth connections
           and federation settings in{" "}
-          <a href="/settings?tab=identity" className="underline text-blue">
+          <a href="/settings/identity" className="underline text-blue">
             Settings → Identity
           </a>
           .
