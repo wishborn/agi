@@ -42,6 +42,21 @@ export function IdentitySettings({
 
   return (
     <div className="space-y-6">
+      {/* Quick-access to Profile Manager */}
+      <Card className="p-4 flex items-center justify-between gap-4">
+        <div>
+          <p className="text-[13px] font-medium">People & Identities</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">Manage owner, guests (#E1+), and agents ($A) — view GEIDs and OAuth connections.</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new CustomEvent("open-profile-manager"))}
+          className="shrink-0 text-[12px] text-primary hover:text-primary/80 transition-colors whitespace-nowrap"
+        >
+          Manage People →
+        </button>
+      </Card>
+
       {/* Federation / HIVE Network */}
       <Card className="p-4">
         <SectionHeading>HIVE Network (Federation)</SectionHeading>

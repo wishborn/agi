@@ -168,6 +168,13 @@ export default function RootLayout() {
   const upgradePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Listen for "open-profile-manager" custom events from settings/onboarding surfaces
+  useEffect(() => {
+    const handler = () => setProfileManagerOpen(true);
+    window.addEventListener("open-profile-manager", handler);
+    return () => window.removeEventListener("open-profile-manager", handler);
+  }, []);
+
   // Auth gate state
   const [authChecked, setAuthChecked] = useState(false);
   const [authRequired, setAuthRequired] = useState(false);
