@@ -11,9 +11,9 @@
  * @see docs/governance/agent-invocation-spec.md §1
  */
 
-import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { hostname, homedir } from "node:os";
+import { hostname } from "node:os";
 import type { VerificationTier } from "@agi/entity-model";
 
 import type { GatewayState } from "./types.js";
@@ -453,39 +453,6 @@ Chat content markup — the dashboard chat renders your responses through Conten
 - <highlight>...</highlight> — inline span highlight (cyan). For drawing attention to a phrase within a paragraph. Do not use for whole sentences — Markdown bold or italics is better for that.
 
 Emit these tags raw in your response. Do NOT wrap them in code fences — that hides them from the renderer. Do not escape the angle brackets. If you're not sure whether a tag fits, plain Markdown always works as a fallback.`;
-}
-
-// ---------------------------------------------------------------------------
-// 0ME — owner profile (MIND / SOUL / SKILL) injected into owner context
-// ---------------------------------------------------------------------------
-
-interface Owner0MEProfiles {
-  mind?: string;
-  soul?: string;
-  skill?: string;
-}
-
-function loadOwner0MEProfiles(): Owner0MEProfiles {
-  const dir = join(homedir(), ".agi", "0ME");
-  const profiles: Owner0MEProfiles = {};
-  if (!existsSync(dir)) return profiles;
-  const read = (domain: string) => {
-    const p = join(dir, `${domain}.md`);
-    return existsSync(p) ? readFileSync(p, "utf8").trim() : undefined;
-  };
-  profiles.mind = read("MIND");
-  profiles.soul = read("SOUL");
-  profiles.skill = read("SKILL");
-  return profiles;
-}
-
-function buildOwner0MESection(profiles: Owner0MEProfiles): string {
-  const parts: string[] = [];
-  if (profiles.mind) parts.push(`### Mind (Intellectual Interests)\n${profiles.mind}`);
-  if (profiles.soul) parts.push(`### Soul (Purpose & Values)\n${profiles.soul}`);
-  if (profiles.skill) parts.push(`### Skill (Expertise & Tools)\n${profiles.skill}`);
-  if (parts.length === 0) return "";
-  return `## Owner Profile (0ME)\n\nThe owner completed a structured self-capture across three domains. Use this to understand their interests, values, and capabilities — reference it when scoping work, suggesting approaches, or calibrating depth.\n\n${parts.join("\n\n")}`;
 }
 
 /** Owner context section — tells the agent who owns this install. */
@@ -1146,10 +1113,6 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
   sections.push(`Operational state: ${ctx.state}`);
   if (ctx.ownerName !== undefined) {
     sections.push(buildOwnerContextSection(ctx.ownerName, ctx.isOwner ?? false));
-    if (ctx.isOwner) {
-      const zeroMe = buildOwner0MESection(loadOwner0MEProfiles());
-      if (zeroMe) sections.push(zeroMe);
-    }
   }
 
   // Response format (always — compact variant for local mode)
@@ -1336,10 +1299,6 @@ export function assembleSystemPromptWithBreakdown(
 
   if (ctx.ownerName !== undefined) {
     identitySections.push(buildOwnerContextSection(ctx.ownerName, ctx.isOwner ?? false));
-    if (ctx.isOwner) {
-      const zeroMe = buildOwner0MESection(loadOwner0MEProfiles());
-      if (zeroMe) identitySections.push(zeroMe);
-    }
   }
 
   identitySections.push(isLocal ? buildLocalResponseFormatSection() : buildResponseFormatSection());
