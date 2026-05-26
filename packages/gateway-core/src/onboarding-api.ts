@@ -933,6 +933,34 @@ export function registerOnboardingRoutes(
   });
 
   // -----------------------------------------------------------------------
+  // GET /api/onboarding/zero-me/twin — read twin entity without creating one
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/onboarding/zero-me/twin", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err) return reply.code(403).send({ error: err });
+
+    if (!deps.db || !deps.encKey) {
+      return reply.send({ twin: null });
+    }
+
+    try {
+      const entitySvc = createEntityService(deps.db, deps.encKey);
+      const genesis = await entitySvc.getByAlias("#E0");
+      if (!genesis) return reply.send({ twin: null });
+
+      const twin = await entitySvc.getTwinEntity(genesis.id);
+      if (!twin) return reply.send({ twin: null });
+
+      const twinGeid = await entitySvc.getEntityGeid(twin.id);
+      return reply.send({ twin: { coaAlias: twin.coaAlias, geid: twinGeid?.geid ?? "" } });
+    } catch (e) {
+      log.warn(`zero-me/twin lookup error: ${String(e)}`);
+      return reply.send({ twin: null });
+    }
+  });
+
+  // -----------------------------------------------------------------------
   // POST /api/onboarding/zero-me/save — save 0ME results
   // -----------------------------------------------------------------------
 
