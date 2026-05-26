@@ -150,6 +150,63 @@ interface ActiveHandoff {
 let activeHandoff: ActiveHandoff | null = null;
 
 // ---------------------------------------------------------------------------
+// activateTwin — create or return the $ME digital clone entity.
+// Idempotent: returns existing twin if already bound to the genesis entity.
+// ---------------------------------------------------------------------------
+
+async function activateTwin(
+  dataDir: string,
+  db: import("@agi/db-schema/client").Db,
+  encKey: Buffer,
+  log: ReturnType<typeof createComponentLogger>,
+): Promise<{ coaAlias: string; geid: string }> {
+  const entitySvc = createEntityService(db, encKey);
+
+  // Find the genesis entity (registered scope, lowest-index alias starting with #E)
+  const genesis = await entitySvc.getByAlias("#E0");
+  if (!genesis) throw new Error("Genesis entity (#E0) not found — complete Owner Profile first");
+
+  // Idempotency: return existing twin if one already exists
+  const existing = await entitySvc.getTwinEntity(genesis.id);
+  if (existing) {
+    const existingGeid = await entitySvc.getEntityGeid(existing.id);
+    log.info(`0ME twin already exists: ${existing.coaAlias}`);
+    return { coaAlias: existing.coaAlias, geid: existingGeid?.geid ?? "" };
+  }
+
+  // Read captured profiles
+  const zeroMeDir = join(dataDir, "0ME");
+  const readProfile = (domain: string): string => {
+    const p = join(zeroMeDir, `${domain}.md`);
+    return existsSync(p) ? readFileSync(p, "utf8").trim() : "";
+  };
+  const mind = readProfile("MIND");
+  const soul = readProfile("SOUL");
+  const skill = readProfile("SKILL");
+
+  if (!mind && !soul && !skill) {
+    throw new Error("No 0ME profiles captured yet — complete the 0ME steps first");
+  }
+
+  // Create the $ME entity
+  const twin = await entitySvc.createTwinEntity(genesis.id, `${genesis.displayName} (0ME)`);
+
+  // Assemble and persist the twin's defining prompt
+  const twinPromptParts: string[] = [
+    `You are $ME0 — the digital twin of ${genesis.displayName}. You think, reason, and respond as they would, based on their own words. You are not Aion ($A0); you are a living representation of the person.`,
+  ];
+  if (mind) twinPromptParts.push(`## MIND — Intellectual Interests\n${mind}`);
+  if (soul) twinPromptParts.push(`## SOUL — Purpose & Values\n${soul}`);
+  if (skill) twinPromptParts.push(`## SKILL — Expertise & Tools\n${skill}`);
+
+  mkdirSync(zeroMeDir, { recursive: true });
+  writeFileSync(join(zeroMeDir, "twin-prompt.md"), twinPromptParts.join("\n\n"), "utf8");
+
+  log.info(`0ME twin activated: ${twin.entity.coaAlias} (${twin.geid.geid})`);
+  return { coaAlias: twin.entity.coaAlias, geid: twin.geid.geid };
+}
+
+// ---------------------------------------------------------------------------
 export function registerOnboardingRoutes(
   fastify: FastifyInstance,
   deps: OnboardingRouteDeps,
@@ -904,7 +961,45 @@ export function registerOnboardingRoutes(
     writeOnboardingState(state, dataDir);
 
     log.info(`0ME/${body.domain}.md saved`);
-    return reply.send({ ok: true });
+
+    // When all three domains are captured, auto-activate the $ME twin entity.
+    const updatedState = readOnboardingState(dataDir);
+    const allCaptured =
+      updatedState.steps.zeroMeMind === "completed" &&
+      updatedState.steps.zeroMeSoul === "completed" &&
+      updatedState.steps.zeroMeSkill === "completed";
+
+    let twin: { coaAlias: string; geid: string } | null = null;
+    if (allCaptured && deps.db && deps.encKey) {
+      try {
+        twin = await activateTwin(dataDir, deps.db, deps.encKey, log);
+      } catch (e) {
+        log.warn(`0ME twin activation failed (non-fatal): ${String(e)}`);
+      }
+    }
+
+    return reply.send({ ok: true, twin });
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/onboarding/zero-me/activate — create or return $ME twin entity
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/onboarding/zero-me/activate", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err) return reply.code(403).send({ error: err });
+
+    if (!deps.db || !deps.encKey) {
+      return reply.code(503).send({ error: "Database not available" });
+    }
+
+    try {
+      const twin = await activateTwin(dataDir, deps.db, deps.encKey, log);
+      return reply.send({ ok: true, twin });
+    } catch (e) {
+      log.error(`0ME activate error: ${String(e)}`);
+      return reply.code(500).send({ error: String(e) });
+    }
   });
 
   // -----------------------------------------------------------------------

@@ -386,6 +386,39 @@ export function createEntityService(db: Db, encKey: Buffer) {
     return owner !== undefined;
   }
 
+  // -----------------------------------------------------------------------
+  // createTwinEntity — spawn a $ME digital clone bound to a genesis entity
+  // -----------------------------------------------------------------------
+
+  async function createTwinEntity(
+    genesisEntityId: string,
+    displayName: string,
+  ): Promise<CreateEntityResult> {
+    const twin = await createEntity("ME", displayName, "registered");
+
+    // Bind twin to genesis entity with bindingType "twin"
+    await db.insert(agentBindings).values({
+      id: randomBytes(16).toString("hex"),
+      ownerId: genesisEntityId,
+      agentId: twin.entity.id,
+      bindingType: "twin",
+      createdAt: new Date(),
+    });
+
+    return twin;
+  }
+
+  async function getTwinEntity(genesisEntityId: string): Promise<EntityRecord | null> {
+    const bindings = await db
+      .select()
+      .from(agentBindings)
+      .where(and(eq(agentBindings.ownerId, genesisEntityId), eq(agentBindings.bindingType, "twin")))
+      .limit(1);
+    if (bindings.length === 0) return null;
+    const entity = await getEntity(bindings[0]!.agentId);
+    return entity ?? null;
+  }
+
   return {
     createEntity,
     createOwnerEntity,
@@ -400,6 +433,8 @@ export function createEntityService(db: Db, encKey: Buffer) {
     hasGenesisOwner,
     nextAlias,
     deleteGuestEntity,
+    createTwinEntity,
+    getTwinEntity,
   };
 }
 
