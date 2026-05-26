@@ -53,12 +53,36 @@ export function ZeroMeStep({ domain, onNext, onSkip }: Props) {
   const [summary, setSummary] = useState("");
   const [saving, setSaving] = useState(false);
   const [chatFailed, setChatFailed] = useState(false);
+  const [existingProfile, setExistingProfile] = useState<string | null>(null);
+  const [checkingStatus, setCheckingStatus] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    void sendMessage("");
+    setCheckingStatus(true);
+    setExistingProfile(null);
+    setMessages([]);
+    setCompleted(false);
+    setSummary("");
+    fetch("/api/onboarding/zero-me/status")
+      .then((r) => r.json() as Promise<{ profiles: Record<string, string> }>)
+      .then((data) => {
+        const profile = data.profiles[domain];
+        if (profile) {
+          setExistingProfile(profile);
+        } else {
+          void sendMessage("");
+        }
+      })
+      .catch(() => { void sendMessage(""); })
+      .finally(() => setCheckingStatus(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [domain]);
+
+  const startFresh = () => {
+    setExistingProfile(null);
+    setMessages([]);
+    void sendMessage("");
+  };
 
   useEffect(() => {
     if (scrollRef.current !== null) {
@@ -141,6 +165,39 @@ export function ZeroMeStep({ domain, onNext, onSkip }: Props) {
       onNext();
     }
   };
+
+  if (checkingStatus) {
+    return (
+      <div className="flex flex-col gap-4 h-full">
+        <div className="onboard-animate-in">
+          <h2 className="text-xl sm:text-2xl font-semibold mb-1">{DOMAIN_COPY[domain].headline}</h2>
+        </div>
+        <p className="text-sm text-muted-foreground animate-pulse">Loading…</p>
+      </div>
+    );
+  }
+
+  // Show existing profile if one was captured previously, with option to redo.
+  if (existingProfile !== null) {
+    return (
+      <div className="flex flex-col gap-4 h-full">
+        <div className="onboard-animate-in">
+          <h2 className="text-xl sm:text-2xl font-semibold mb-1">{DOMAIN_COPY[domain].headline}</h2>
+          <p className="text-[13px] sm:text-sm text-muted-foreground leading-relaxed">
+            You've already captured this. Review it below, then continue — or redo the interview to update it.
+          </p>
+        </div>
+        <div className="flex-1 overflow-y-auto bg-secondary/40 rounded-lg p-4 text-[13px] text-foreground leading-relaxed whitespace-pre-wrap border border-border max-h-[50vh]">
+          {existingProfile}
+        </div>
+        <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
+          <Button onClick={onNext} className="w-full sm:w-auto">Continue</Button>
+          <Button variant="outline" onClick={startFresh} className="w-full sm:w-auto">Redo interview</Button>
+          <Button variant="ghost" onClick={onSkip} className="w-full sm:w-auto">Skip</Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4 h-full">

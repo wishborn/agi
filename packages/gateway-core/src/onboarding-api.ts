@@ -12,7 +12,7 @@
 
 import type { FastifyInstance } from "fastify";
 import type { IncomingMessage } from "node:http";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { homedir } from "node:os";
 import { readOnboardingState, writeOnboardingState } from "./onboarding-state.js";
@@ -23,6 +23,8 @@ import type { SecretsManager } from "./secrets.js";
 import type { Db } from "@agi/db-schema/client";
 import { createHandoff, pollHandoff } from "./handoff-api.js";
 import { createEntityService } from "./entity-service.js";
+import type { LLMProvider } from "./llm/index.js";
+import type { LLMMessage } from "./llm/types.js";
 
 // ---------------------------------------------------------------------------
 // ID Service URL resolution
@@ -97,6 +99,9 @@ export interface OnboardingRouteDeps {
   encKey?: Buffer;
   /** Gateway's own base URL for building handoff authUrl (e.g. "https://ai.on"). */
   gatewayBaseUrl?: string;
+  /** Gateway's active LLM provider — used for 0ME interview chat. Falls back to
+   *  direct Anthropic API call when not supplied. */
+  llmProvider?: LLMProvider;
 }
 
 /**
@@ -790,10 +795,31 @@ export function registerOnboardingRoutes(
       return reply.code(400).send({ error: `Unknown domain: ${body.domain}` });
     }
 
-    const apiKey = secrets?.readSecret("ANTHROPIC_API_KEY") ?? process.env["ANTHROPIC_API_KEY"] ?? "";
+    // Route through the gateway's active LLM provider when available.
+    // This ensures local providers (Lemonade, Ollama) work during onboarding.
+    if (deps.llmProvider) {
+      try {
+        const llmMessages: LLMMessage[] = body.messages.map((m) => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        }));
+        const result = await deps.llmProvider.invoke({
+          system: systemPrompt,
+          messages: llmMessages,
+          entityId: "onboarding",
+          maxTokens: 1024,
+        });
+        return reply.send({ reply: result.text });
+      } catch (e) {
+        log.error(`zero-me/chat via llmProvider failed: ${String(e)}`);
+        return reply.code(500).send({ error: "LLM provider error during 0ME chat" });
+      }
+    }
 
+    // Fallback: direct Anthropic call when provider not yet wired.
+    const apiKey = secrets?.readSecret("ANTHROPIC_API_KEY") ?? process.env["ANTHROPIC_API_KEY"] ?? "";
     if (!apiKey) {
-      return reply.code(400).send({ error: "ANTHROPIC_API_KEY not configured" });
+      return reply.code(400).send({ error: "No LLM provider configured — set up an API key or local model first" });
     }
 
     try {
@@ -823,11 +849,30 @@ export function registerOnboardingRoutes(
       };
 
       const text = data.content.find((c) => c.type === "text")?.text ?? "";
-      return reply.send({ response: text });
+      return reply.send({ reply: text });
     } catch (e) {
       log.error(`zero-me/chat fetch failed: ${String(e)}`);
       return reply.code(500).send({ error: "Internal error during chat" });
     }
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/onboarding/zero-me/status — read existing 0ME profiles
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/onboarding/zero-me/status", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err) return reply.code(403).send({ error: err });
+
+    const zeroMeDir = join(dataDir, "0ME");
+    const profiles: Record<string, string> = {};
+    for (const domain of ["MIND", "SOUL", "SKILL"]) {
+      const filePath = join(zeroMeDir, `${domain}.md`);
+      if (existsSync(filePath)) {
+        profiles[domain] = readFileSync(filePath, "utf8");
+      }
+    }
+    return reply.send({ profiles });
   });
 
   // -----------------------------------------------------------------------

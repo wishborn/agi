@@ -3305,6 +3305,7 @@ export async function startGatewayServer(
       pluginPrefs,
       primeLoader,
       primeDir,
+      llmProvider: getLLMProvider(),
       aionMicro: aionMicroManager,
       marketplaceManager,
       graphAdapter: memoryAdapter,

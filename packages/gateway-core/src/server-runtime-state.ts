@@ -65,6 +65,7 @@ import type { SecretsManager } from "./secrets.js";
 import { DashboardUserStore, hasRole } from "./dashboard-user-store.js";
 import type { IdentityProvider } from "./identity-provider.js";
 import type { OAuthHandler } from "./oauth-handler.js";
+import type { LLMProvider } from "./llm/index.js";
 import { registerIdentityRoutes } from "./identity-api.js";
 import { registerSubUserRoutes } from "./sub-user-api.js";
 import type { VisitorAuthManager } from "./visitor-auth.js";
@@ -265,6 +266,8 @@ export interface RuntimeStateDeps {
   serviceManager?: ServiceManager;
   /** SecretsManager — TPM2-sealed credential store. */
   secrets?: SecretsManager;
+  /** Active LLM provider — passed to onboarding routes for 0ME interview chat. */
+  llmProvider?: LLMProvider;
   /** UsageStore — LLM token usage and cost tracking. */
   usageStore?: { getSummary(days?: number): unknown; getByProject(days?: number): unknown; getByProjectAndSource(days?: number): unknown; getHistory(days?: number, bucket?: string): unknown };
 
@@ -6603,6 +6606,7 @@ export async function createGatewayRuntimeState(
     db: deps.db,
     encKey: encryptionKey,
     gatewayBaseUrl,
+    llmProvider: deps.llmProvider,
   });
 
   // Handoff, device-flow, connections, entity management, and federation routes
