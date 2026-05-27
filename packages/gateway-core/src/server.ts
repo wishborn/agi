@@ -1856,9 +1856,27 @@ export async function startGatewayServer(
 
     // All discovered plugins are installed plugins (from search paths or
     // the install cache). Only skip if explicitly disabled in config.
-    const enabledPlugins = discovered.plugins.filter(p =>
-      pluginPrefs?.[p.manifest.id]?.enabled !== false,
+    // Exception: built-in channel plugins (id starts with "channel-") are
+    // controlled by channels[].enabled, not plugins[].enabled. If the channel
+    // config says enabled=true, load the plugin even if plugins[id].enabled was
+    // inadvertently set to false (e.g. via a Plugins-settings toggle). This
+    // prevents the two-flag split from silently blocking channels at boot.
+    const channelConfigMap = new Map(
+      (config.channels as Array<{ id: string; enabled?: boolean }> | undefined ?? []).map(c => [c.id, c.enabled]),
     );
+    const enabledPlugins = discovered.plugins.filter(p => {
+      if (pluginPrefs?.[p.manifest.id]?.enabled === false) {
+        // For built-in channel plugins, defer to channels[].enabled when set.
+        const channelId = p.manifest.id.startsWith("channel-")
+          ? p.manifest.id.slice("channel-".length)
+          : null;
+        if (channelId !== null && channelConfigMap.get(channelId) === true) {
+          return true;
+        }
+        return false;
+      }
+      return true;
+    });
 
     // Build priority map from config
     const pluginPriorities: Record<string, number> = {};
