@@ -480,7 +480,7 @@ export class InboundRouter {
       });
     }
 
-    // Step 2d (CHN-E s166 slice 6) — gate-and-drop unverified senders
+    // Step 2d (CHN-E s166 slice 6 / s194) — gate-and-drop unverified senders
     // in project-bound rooms. Messages from unverified entities are
     // captured (step 2c above) but DROPPED here so they don't reach
     // the agent until owner approves via /identity/pending.
@@ -493,6 +493,9 @@ export class InboundRouter {
     //  - No projectPath (room isn't bound) — proceed normally (this
     //    gate only applies to bound rooms)
     //  - No pendingApprovalStore wired — proceed normally (gate disabled)
+    //  - s194: User has a pending approval record (submitted registration) —
+    //    let through but strip project scope so agent can respond without
+    //    reading project data until owner approves
     if (
       projectPath !== undefined &&
       resolvedRoomId !== undefined &&
@@ -511,10 +514,19 @@ export class InboundRouter {
         return null;
       }
       if (entity.verificationTier !== "verified" && entity.verificationTier !== "sealed") {
+        const hasPendingRecord =
+          this.pendingApprovalStore.getByChannelUser(channelId, routedMessage.channelUserId) !== null;
+        if (!hasPendingRecord) {
+          this.log.info(
+            `drop message from UNREGISTERED sender (no pending record): ${channelId}::${resolvedRoomId}::${routedMessage.channelUserId}`,
+          );
+          return null;
+        }
+        // Has pending approval — allow through without project scope
+        projectPath = undefined;
         this.log.info(
-          `hold message from UNVERIFIED sender (pending approval): ${channelId}::${resolvedRoomId}::${routedMessage.channelUserId}`,
+          `pending-approval sender allowed without project scope: ${channelId}::${resolvedRoomId}::${routedMessage.channelUserId}`,
         );
-        return null;
       }
     }
 

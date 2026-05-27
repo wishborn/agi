@@ -4072,6 +4072,13 @@ export interface PendingApproval {
   projectPath: string;
   firstMessagePreview: string;
   createdAt: string;
+  registrationData?: {
+    name?: string;
+    email?: string;
+    birthdate?: string;
+    discordHandle?: string;
+  };
+  assignedProjectPaths?: string[];
 }
 
 export async function fetchPendingApprovals(opts: { project?: string } = {}): Promise<PendingApproval[]> {
@@ -4087,9 +4094,13 @@ export async function fetchPendingApprovals(opts: { project?: string } = {}): Pr
   return data.pending;
 }
 
-export async function approvePendingApproval(id: string): Promise<PendingApproval> {
+export async function approvePendingApproval(id: string, opts?: { projectPaths?: string[] }): Promise<PendingApproval> {
   const url = `/api/identity/pending/${encodeURIComponent(id)}/approve`;
-  const res = await fetch(url, { method: "POST" });
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectPaths: opts?.projectPaths ?? [] }),
+  });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);

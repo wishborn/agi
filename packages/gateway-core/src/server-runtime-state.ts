@@ -2000,13 +2000,14 @@ export async function createGatewayRuntimeState(
     return reply.send({ pending, count: pending.length });
   });
 
-  fastify.post<{ Params: { id: string } }>("/api/identity/pending/:id/approve", async (request, reply) => {
+  fastify.post<{ Params: { id: string }; Body: { projectPaths?: string[] } }>("/api/identity/pending/:id/approve", async (request, reply) => {
     const clientIp = getClientIp(request.raw);
     if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
     if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
     const { id } = request.params;
+    const { projectPaths } = (request.body as { projectPaths?: string[] } | undefined) ?? {};
     try {
-      const { approval, decision } = deps.pendingApprovalStore.approve(id);
+      const { approval, decision } = deps.pendingApprovalStore.approve(id, { projectPaths });
       // CHN-E slice 5: composite entity-tier promotion. When an entity
       // already exists for this (channelId, channelUserId), bump its
       // verificationTier to "verified". Approval = verified is the

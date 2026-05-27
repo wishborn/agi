@@ -854,6 +854,32 @@ export interface AmbientEntry {
   roomId: string;
 }
 
+/** s194: Registration step in the Discord DM onboarding flow. */
+export type RegistrationStep = "name" | "email" | "birthdate" | "confirm" | "submitted" | "cancelled";
+
+/** s194: In-progress Discord DM registration session. Key: "discord::{userId}". */
+export interface RegistrationSession {
+  sessionId: string;
+  channelUserId: string;
+  discordHandle: string;
+  guildId?: string;
+  step: RegistrationStep;
+  data: { name?: string; email?: string; birthdate?: string };
+  startedAt: string;
+  updatedAt: string;
+}
+
+/** s194: Input shape for capturing a pending approval from the registration flow. */
+export interface PendingApprovalCaptureInput {
+  channelId: string;
+  roomId: string;
+  channelUserId: string;
+  displayName: string;
+  projectPath?: string;
+  firstMessagePreview: string;
+  registrationData?: { name?: string; email?: string; birthdate?: string; discordHandle?: string };
+}
+
 // Plugin API — what plugins receive on activation
 // ---------------------------------------------------------------------------
 
@@ -944,6 +970,16 @@ export interface AionimaPluginAPI {
    * Optional — only wired alongside logAmbientMessage (s189).
    */
   getAmbientContext?: (channelId: string, limit: number) => AmbientEntry[];
+  /** s194: Check whether a channel user is verified in the entity store. */
+  isEntityVerified?: (channelId: string, userId: string) => Promise<boolean>;
+  /** s194: Retrieve an active registration session by sessionId. */
+  getRegistrationSession?: (sessionId: string) => RegistrationSession | null;
+  /** s194: Persist or update a registration session. */
+  setRegistrationSession?: (session: RegistrationSession) => void;
+  /** s194: Remove a registration session (cancelled or completed). */
+  deleteRegistrationSession?: (sessionId: string) => void;
+  /** s194: Capture a pending approval record (e.g., from a completed registration flow). */
+  capturePendingApproval?: (input: PendingApprovalCaptureInput) => void;
 }
 
 // ---------------------------------------------------------------------------

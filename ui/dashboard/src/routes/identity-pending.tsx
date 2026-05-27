@@ -6,6 +6,9 @@
  * project-bound channel rooms. Approve promotes the entity (slice 5
  * adds the verificationTier update); reject drops + flags the source.
  *
+ * s195 — shows collected registration data (name/email/birthdate/Discord)
+ * and lets the owner assign projects before approving.
+ *
  * Consumes /api/identity/pending (GET/POST shipped in slice 3).
  */
 
@@ -17,8 +20,10 @@ import {
   fetchPendingApprovals,
   approvePendingApproval,
   rejectPendingApproval,
+  fetchProjects,
   type PendingApproval,
 } from "../api";
+import type { ProjectInfo } from "../types";
 
 function channelEmoji(channelId: string): string {
   switch (channelId) {
@@ -42,17 +47,62 @@ function relativeTime(iso: string): string {
   return `${Math.floor(ago / 86_400_000)}d ago`;
 }
 
+interface ProjectSelectorProps {
+  projects: ProjectInfo[];
+  selected: string[];
+  onChange: (paths: string[]) => void;
+}
+
+function ProjectSelector({ projects, selected, onChange }: ProjectSelectorProps): JSX.Element {
+  if (projects.length === 0) {
+    return <div className="text-[10px] text-muted-foreground mt-2">No projects available to assign.</div>;
+  }
+  return (
+    <div className="mt-2">
+      <div className="text-[10px] font-medium text-muted-foreground mb-1">Assign projects (optional)</div>
+      <div className="flex flex-wrap gap-1.5">
+        {projects.map((p) => {
+          const isChecked = selected.includes(p.path);
+          return (
+            <button
+              key={p.path}
+              type="button"
+              onClick={() => {
+                onChange(isChecked ? selected.filter((x) => x !== p.path) : [...selected, p.path]);
+              }}
+              className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
+                isChecked
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "border-border text-muted-foreground hover:border-foreground/40"
+              }`}
+            >
+              {p.name}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function IdentityPendingPage(): JSX.Element {
   const [pending, setPending] = useState<PendingApproval[]>([]);
+  const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [selectedProjects, setSelectedProjects] = useState<Record<string, string[]>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setPending(await fetchPendingApprovals());
+      const [pendingData, projectData] = await Promise.all([
+        fetchPendingApprovals(),
+        fetchProjects().catch(() => [] as ProjectInfo[]),
+      ]);
+      setPending(pendingData);
+      setProjects(projectData);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -62,7 +112,6 @@ export default function IdentityPendingPage(): JSX.Element {
 
   useEffect(() => {
     void load();
-    // Light polling so newly captured pending records show up without manual refresh.
     const interval = setInterval(() => { void load(); }, 30_000);
     return () => clearInterval(interval);
   }, [load]);
@@ -71,20 +120,22 @@ export default function IdentityPendingPage(): JSX.Element {
     setBusyId(id);
     setError(null);
     try {
-      await approvePendingApproval(id);
+      await approvePendingApproval(id, { projectPaths: selectedProjects[id] ?? [] });
+      setSelectedProjects((prev) => { const n = { ...prev }; delete n[id]; return n; });
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusyId(null);
     }
-  }, [load]);
+  }, [load, selectedProjects]);
 
   const handleReject = useCallback(async (id: string) => {
     setBusyId(id);
     setError(null);
     try {
       await rejectPendingApproval(id);
+      setSelectedProjects((prev) => { const n = { ...prev }; delete n[id]; return n; });
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -93,7 +144,6 @@ export default function IdentityPendingPage(): JSX.Element {
     }
   }, [load]);
 
-  // Group by project for clearer review surface
   const byProject = useMemo(() => {
     const out: Record<string, PendingApproval[]> = {};
     for (const p of pending) {
@@ -145,52 +195,81 @@ export default function IdentityPendingPage(): JSX.Element {
                 {!projectPath && " · bind a room to a project to enable gating"}
               </span>
             </div>
-            <div className="space-y-2">
+            <div className="space-y-3">
               {entries.map((entry) => (
                 <div
                   key={entry.id}
-                  className="flex items-start gap-3 p-3 rounded border border-border/60 hover:border-border transition-colors"
+                  className="p-3 rounded border border-border/60 hover:border-border transition-colors"
                   data-testid={`identity-pending-entry-${entry.id.replace(/[^a-zA-Z0-9]/g, "_")}`}
                 >
-                  <span className="text-[18px] shrink-0 mt-0.5" aria-hidden>
-                    {channelEmoji(entry.channelId)}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[13px] font-medium text-foreground truncate">
-                        {entry.displayName}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground">
-                        · {entry.channelId} · {relativeTime(entry.createdAt)}
-                      </span>
-                    </div>
-                    <div className="text-[10px] text-muted-foreground font-mono mt-0.5 truncate">
-                      room: {entry.roomId} · user: {entry.channelUserId}
-                    </div>
-                    {entry.firstMessagePreview.length > 0 && (
-                      <div className="text-[11px] text-foreground/80 mt-1.5 italic line-clamp-2">
-                        “{entry.firstMessagePreview}”
+                  <div className="flex items-start gap-3">
+                    <span className="text-[18px] shrink-0 mt-0.5" aria-hidden>
+                      {channelEmoji(entry.channelId)}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[13px] font-medium text-foreground truncate">
+                          {entry.displayName}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">
+                          · {entry.channelId} · {relativeTime(entry.createdAt)}
+                        </span>
                       </div>
-                    )}
-                  </div>
-                  <div className="flex flex-col gap-1.5 shrink-0">
-                    <Button
-                      size="xs"
-                      onClick={() => void handleApprove(entry.id)}
-                      disabled={busyId === entry.id}
-                      data-testid={`identity-pending-approve-${entry.id.replace(/[^a-zA-Z0-9]/g, "_")}`}
-                    >
-                      {busyId === entry.id ? "…" : "Approve"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      onClick={() => void handleReject(entry.id)}
-                      disabled={busyId === entry.id}
-                      data-testid={`identity-pending-reject-${entry.id.replace(/[^a-zA-Z0-9]/g, "_")}`}
-                    >
-                      Reject
-                    </Button>
+                      <div className="text-[10px] text-muted-foreground font-mono mt-0.5 truncate">
+                        room: {entry.roomId} · user: {entry.channelUserId}
+                      </div>
+                      {entry.firstMessagePreview.length > 0 && (
+                        <div className="text-[11px] text-foreground/80 mt-1.5 italic line-clamp-2">
+                          "{entry.firstMessagePreview}"
+                        </div>
+                      )}
+
+                      {/* s195 — registration data collected during DM flow */}
+                      {entry.registrationData !== undefined && (
+                        <div className="mt-2 p-2 rounded bg-muted/40 border border-border/40 space-y-0.5">
+                          <div className="text-[10px] font-medium text-muted-foreground mb-1">Registration data</div>
+                          {entry.registrationData.name !== undefined && (
+                            <div className="text-[11px] text-foreground font-mono">Name: {entry.registrationData.name}</div>
+                          )}
+                          {entry.registrationData.email !== undefined && (
+                            <div className="text-[11px] text-foreground font-mono">Email: {entry.registrationData.email}</div>
+                          )}
+                          {entry.registrationData.birthdate !== undefined && (
+                            <div className="text-[11px] text-foreground font-mono">Birthdate: {entry.registrationData.birthdate}</div>
+                          )}
+                          {entry.registrationData.discordHandle !== undefined && (
+                            <div className="text-[11px] text-foreground font-mono">Discord: @{entry.registrationData.discordHandle}</div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* s195 — project assignment before approving */}
+                      <ProjectSelector
+                        projects={projects}
+                        selected={selectedProjects[entry.id] ?? []}
+                        onChange={(paths) => setSelectedProjects((prev) => ({ ...prev, [entry.id]: paths }))}
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 shrink-0">
+                      <Button
+                        size="xs"
+                        onClick={() => void handleApprove(entry.id)}
+                        disabled={busyId === entry.id}
+                        data-testid={`identity-pending-approve-${entry.id.replace(/[^a-zA-Z0-9]/g, "_")}`}
+                      >
+                        {busyId === entry.id ? "…" : "Approve"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        onClick={() => void handleReject(entry.id)}
+                        disabled={busyId === entry.id}
+                        data-testid={`identity-pending-reject-${entry.id.replace(/[^a-zA-Z0-9]/g, "_")}`}
+                      >
+                        Reject
+                      </Button>
+                    </div>
                   </div>
                 </div>
               ))}

@@ -150,6 +150,7 @@ import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
 import { ChannelEventDispatcher } from "./channel-event-dispatcher.js";
 import { PendingApprovalStore } from "./pending-approval-store.js";
+import { RegistrationSessionStore } from "./registration-session-store.js";
 import { ChannelWorkflowBindingStore } from "./channel-workflow-binding-store.js";
 import { runWorkflow } from "./mapp-executor.js";
 import { migrateAllProjectConfigShapes } from "./project-config-shape-migration.js";
@@ -711,6 +712,11 @@ export async function startGatewayServer(
   const inboundPendingApprovalStore = new PendingApprovalStore({
     logger,
     persistPath: `${homedir()}/.agi/pending-approvals.json`,
+  });
+
+  // s194: Registration session store — tracks in-progress Discord DM flows.
+  const registrationSessionStore = new RegistrationSessionStore({
+    persistPath: `${homedir()}/.agi/registration-sessions.json`,
   });
 
   // s167 CHN-F slice 1 (2026-05-14) — workflow binding store. Owner-declared
@@ -1878,6 +1884,14 @@ export async function startGatewayServer(
         createChannelUser,
         logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
         getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+        isEntityVerified: async (channelId, userId) => {
+          const entity = await entityStore.getEntityByChannel(channelId, userId);
+          return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
+        },
+        getRegistrationSession: (id) => registrationSessionStore.get(id),
+        setRegistrationSession: (s) => registrationSessionStore.set(s),
+        deleteRegistrationSession: (id) => registrationSessionStore.delete(id),
+        capturePendingApproval: (input) => inboundPendingApprovalStore.capture(input),
       });
       log.info(`plugins: ${String(result.loaded.length)} loaded, ${String(result.failed.length)} failed`);
       if (discovered.plugins.length > enabledPlugins.length) {
@@ -1940,6 +1954,14 @@ export async function startGatewayServer(
                       createChannelUser,
                       logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
                       getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+                      isEntityVerified: async (channelId, userId) => {
+                        const entity = await entityStore.getEntityByChannel(channelId, userId);
+                        return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
+                      },
+                      getRegistrationSession: (id) => registrationSessionStore.get(id),
+                      setRegistrationSession: (s) => registrationSessionStore.set(s),
+                      deleteRegistrationSession: (id) => registrationSessionStore.delete(id),
+                      capturePendingApproval: (input) => inboundPendingApprovalStore.capture(input),
                     });
                     bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
                     // Retry provider creation now that the plugin is loaded
@@ -3350,6 +3372,14 @@ export async function startGatewayServer(
             createChannelUser,
             logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
             getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+            isEntityVerified: async (channelId, userId) => {
+              const entity = await entityStore.getEntityByChannel(channelId, userId);
+              return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
+            },
+            getRegistrationSession: (id) => registrationSessionStore.get(id),
+            setRegistrationSession: (s) => registrationSessionStore.set(s),
+            deleteRegistrationSession: (id) => registrationSessionStore.delete(id),
+            capturePendingApproval: (input) => inboundPendingApprovalStore.capture(input),
           });
           if (result.loaded.length > 0) {
             // Bridge newly registered capabilities and sync stacks to the registry
@@ -3397,6 +3427,14 @@ export async function startGatewayServer(
             createChannelUser,
             logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
             getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+            isEntityVerified: async (channelId, userId) => {
+              const entity = await entityStore.getEntityByChannel(channelId, userId);
+              return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
+            },
+            getRegistrationSession: (id) => registrationSessionStore.get(id),
+            setRegistrationSession: (s) => registrationSessionStore.set(s),
+            deleteRegistrationSession: (id) => registrationSessionStore.delete(id),
+            capturePendingApproval: (input) => inboundPendingApprovalStore.capture(input),
           }, { bustCache: true });
           if (result.loaded.length > 0) {
             bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
@@ -3481,6 +3519,14 @@ export async function startGatewayServer(
             createChannelUser,
             logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
             getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+            isEntityVerified: async (channelId, userId) => {
+              const entity = await entityStore.getEntityByChannel(channelId, userId);
+              return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
+            },
+            getRegistrationSession: (id) => registrationSessionStore.get(id),
+            setRegistrationSession: (s) => registrationSessionStore.set(s),
+            deleteRegistrationSession: (id) => registrationSessionStore.delete(id),
+            capturePendingApproval: (input) => inboundPendingApprovalStore.capture(input),
           });
           if (result.loaded.length > 0) {
             bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
