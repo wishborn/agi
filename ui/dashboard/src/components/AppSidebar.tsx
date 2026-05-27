@@ -19,7 +19,8 @@ import {
   Compass, FileText, GitBranch, Store, ScrollText, Rocket,
   SlidersHorizontal, Activity, Blocks, ShieldHalf, ShieldCheck,
   AlertTriangle, Building2, HardDrive, Fingerprint, Sparkles, Cpu,
-  Shield, ArrowLeft, FileSearch, NotebookPen,
+  Shield, ArrowLeft, FileSearch, NotebookPen, MessageCircle, Mail,
+  Send, MessageSquare,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -59,7 +60,12 @@ const builtinSections: NavSectionWithMode[] = [
     { to: "/magic-apps", label: "All Apps", icon: Sparkles },
   ]},
   { mode: "main", title: "Communication", items: [
-    { to: "/comms", label: "All Messages", exact: true, icon: Inbox },
+    { to: "/comms",            label: "All Messages",    exact: true, icon: Inbox },
+    { to: "/comms/discord",    label: "Discord",         icon: MessageCircle },
+    { to: "/comms/gmail",      label: "Gmail",           icon: Mail },
+    { to: "/comms/telegram",   label: "Telegram",        icon: Send },
+    { to: "/comms/signal",     label: "Signal",          icon: ShieldCheck },
+    { to: "/comms/whatsapp",   label: "WhatsApp",        icon: MessageSquare },
     { to: "/identity/pending", label: "Pending Identity", icon: Fingerprint },
   ]},
   { mode: "main", title: "Knowledge", items: [

@@ -158,6 +158,28 @@ export interface AmbientLogEntry {
   roomId: string;
 }
 
+export interface DiscordChannelDescriptor {
+  id: string;
+  name: string;
+  kind: "text" | "voice" | "forum" | "other";
+  parent?: string;
+}
+
+export interface DiscordGuildDescriptor {
+  id: string;
+  name: string;
+  iconUrl?: string;
+  memberCount?: number;
+  channels: DiscordChannelDescriptor[];
+}
+
+export interface DiscordChannelState {
+  connected: boolean;
+  snapshotAt: string;
+  user?: { id: string; tag: string; avatarUrl?: string };
+  guilds: DiscordGuildDescriptor[];
+}
+
 export interface CommsStats {
   byChannel: Record<string, { today: number; total: number }>;
   todayTotal: number;

@@ -1896,6 +1896,15 @@ export interface ChannelOpsLogEntry {
   msg: string;
 }
 
+export async function fetchChannelState(id: string): Promise<import("./types.js").DiscordChannelState> {
+  const res = await fetch(`/api/channels/${encodeURIComponent(id)}/state`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<import("./types.js").DiscordChannelState>;
+}
+
 export async function fetchChannelOpsLog(
   id: string,
   limit = 200,
