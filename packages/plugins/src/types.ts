@@ -855,7 +855,7 @@ export interface AmbientEntry {
 }
 
 /** s194: Registration step in the Discord DM onboarding flow. */
-export type RegistrationStep = "name" | "email" | "birthdate" | "confirm" | "submitted" | "cancelled";
+export type RegistrationStep = "name" | "email" | "birthdate" | "pronouns" | "confirm" | "submitted" | "cancelled";
 
 /** s194: In-progress Discord DM registration session. Key: "discord::{userId}". */
 export interface RegistrationSession {
@@ -864,7 +864,7 @@ export interface RegistrationSession {
   discordHandle: string;
   guildId?: string;
   step: RegistrationStep;
-  data: { name?: string; email?: string; birthdate?: string };
+  data: { name?: string; email?: string; birthdate?: string; pronouns?: string };
   startedAt: string;
   updatedAt: string;
 }
@@ -877,7 +877,7 @@ export interface PendingApprovalCaptureInput {
   displayName: string;
   projectPath?: string;
   firstMessagePreview: string;
-  registrationData?: { name?: string; email?: string; birthdate?: string; discordHandle?: string };
+  registrationData?: { name?: string; email?: string; birthdate?: string; pronouns?: string; discordHandle?: string };
 }
 
 // Plugin API — what plugins receive on activation

@@ -54,6 +54,7 @@ export interface PendingApproval {
     name?: string;
     email?: string;
     birthdate?: string;
+    pronouns?: string;
     discordHandle?: string;
   };
   /** Project paths owner assigned at approval time (s195). */

@@ -237,6 +237,9 @@ export default function IdentityPendingPage(): JSX.Element {
                           {entry.registrationData.birthdate !== undefined && (
                             <div className="text-[11px] text-foreground font-mono">Birthdate: {entry.registrationData.birthdate}</div>
                           )}
+                          {entry.registrationData.pronouns !== undefined && (
+                            <div className="text-[11px] text-foreground font-mono">Pronouns: {entry.registrationData.pronouns}</div>
+                          )}
                           {entry.registrationData.discordHandle !== undefined && (
                             <div className="text-[11px] text-foreground font-mono">Discord: @{entry.registrationData.discordHandle}</div>
                           )}

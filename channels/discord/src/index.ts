@@ -364,12 +364,19 @@ async function handleRegistrationDm(
         await sendDm(msg.author, "Please use MM/DD/YYYY format (e.g. 01/15/1990):");
         return;
       }
-      const withDate = { ...session, step: "confirm" as const, data: { ...session.data, birthdate: input } };
-      reg.setRegistrationSession?.(withDate);
+      reg.setRegistrationSession?.({ ...session, step: "pronouns" as const, data: { ...session.data, birthdate: input } });
+      await sendDm(msg.author, "Almost there! What are your preferred pronouns? (e.g. she/her, he/him, they/them — or type **skip** to leave blank)");
+      break;
+    }
+    case "pronouns": {
+      const pronounsValue = input.toLowerCase() === "skip" ? undefined : input;
+      const withPronouns = { ...session, step: "confirm" as const, data: { ...session.data, pronouns: pronounsValue } };
+      reg.setRegistrationSession?.(withPronouns);
       const summary = [
-        `Name: ${withDate.data.name ?? ""}`,
-        `Email: ${withDate.data.email ?? ""}`,
-        `Birthdate: ${input}`,
+        `Name: ${withPronouns.data.name ?? ""}`,
+        `Email: ${withPronouns.data.email ?? ""}`,
+        `Birthdate: ${withPronouns.data.birthdate ?? ""}`,
+        ...(withPronouns.data.pronouns !== undefined ? [`Pronouns: ${withPronouns.data.pronouns}`] : []),
         `Discord: @${session.discordHandle}`,
       ].join("\n");
       await sendDm(msg.author, `Almost done! Here's what I have:\n\n${summary}\n\nReply **yes** to submit, or **cancel** to abort.`);
@@ -387,6 +394,7 @@ async function handleRegistrationDm(
             name: session.data.name,
             email: session.data.email,
             birthdate: session.data.birthdate,
+            pronouns: session.data.pronouns,
             discordHandle: session.discordHandle,
           },
         });

@@ -19,6 +19,7 @@ export type RegistrationStep =
   | "name"
   | "email"
   | "birthdate"
+  | "pronouns"
   | "confirm"
   | "submitted"
   | "cancelled";
@@ -38,6 +39,8 @@ export interface RegistrationSession {
     email?: string;
     /** MM/DD/YYYY format. */
     birthdate?: string;
+    /** Preferred pronouns (e.g. "she/her", "they/them"). */
+    pronouns?: string;
   };
   startedAt: string;
   updatedAt: string;

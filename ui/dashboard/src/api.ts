@@ -4076,6 +4076,7 @@ export interface PendingApproval {
     name?: string;
     email?: string;
     birthdate?: string;
+    pronouns?: string;
     discordHandle?: string;
   };
   assignedProjectPaths?: string[];
