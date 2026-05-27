@@ -28,6 +28,7 @@ import {
   DISCORD_CHANNEL_ID,
   normalizeMessage,
   buildDisplayName,
+  resolveDiscordMentions,
 } from "./normalizer.js";
 import { sendOutbound } from "./outbound.js";
 import {
@@ -45,6 +46,7 @@ export { isDiscordConfig } from "./config.js";
 export {
   normalizeMessage,
   buildDisplayName,
+  resolveDiscordMentions,
   DISCORD_CHANNEL_ID,
 } from "./normalizer.js";
 export { splitText } from "./outbound.js";
@@ -429,6 +431,11 @@ export function createDiscordPlugin(
       msg.content = msg.content
         .replace(new RegExp(`<@!?${client.user.id}>`, "g"), "")
         .trim();
+    }
+
+    // Resolve user/role/channel mention tags to human-readable names (s193)
+    if (msg.guild !== null) {
+      msg.content = resolveDiscordMentions(msg.content, msg.guild);
     }
 
     // Track the author→channel mapping for outbound replies
