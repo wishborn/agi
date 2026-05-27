@@ -59,6 +59,10 @@ export interface PluginLoaderDeps {
     userId: string,
     meta: { displayName?: string; username?: string },
   ) => Promise<{ userId: string; isNew: boolean }>;
+  /** Log a raw channel message to the ambient daily session file (s189). */
+  logAmbientMessage?: (channelId: string, entry: import("./types.js").AmbientEntry) => void;
+  /** Return recent messages from today's ambient log (s189). */
+  getAmbientContext?: (channelId: string, limit: number) => import("./types.js").AmbientEntry[];
 }
 
 export interface LoadResult {
@@ -379,5 +383,7 @@ function createPluginAPI(
     },
 
     getOrCreateChannelUser: deps.createChannelUser,
+    logAmbientMessage: deps.logAmbientMessage,
+    getAmbientContext: deps.getAmbientContext,
   };
 }

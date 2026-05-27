@@ -8,6 +8,7 @@ export type {
   PluginCategory,
   ProvidesLabel,
   AdfElement,
+  AmbientEntry,
   AionimaPluginManifest,
   AionimaPluginAPI,
   AionimaPlugin,

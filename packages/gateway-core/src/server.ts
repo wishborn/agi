@@ -122,6 +122,7 @@ import {
 } from "@agi/voice";
 import type { CanvasDocument } from "./canvas-types.js";
 import { ChannelRegistry } from "./channel-registry.js";
+import { ChannelAmbientLog } from "./channel-ambient-log.js";
 import { DashboardApi } from "./dashboard-api.js";
 import { DashboardQueries } from "./dashboard-queries.js";
 import { DashboardEventBroadcaster } from "./dashboard-events.js";
@@ -1804,6 +1805,10 @@ export async function startGatewayServer(
     return { userId: existing?.id ?? id, isNew: false };
   };
 
+  // Ambient log for channel message capture (s189). Shares the same ~/.agi
+  // root as all other runtime data so daily logs land alongside chat history.
+  const channelAmbientLog = new ChannelAmbientLog(join(homedir(), ".agi"));
+
   {
     for (const err of discovered.errors) {
       log.warn(`plugin discovery: ${err.path} — ${err.error}`);
@@ -1871,6 +1876,8 @@ export async function startGatewayServer(
         channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
         circuitBreaker: circuitBreakerTracker,
         createChannelUser,
+        logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
+        getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
       });
       log.info(`plugins: ${String(result.loaded.length)} loaded, ${String(result.failed.length)} failed`);
       if (discovered.plugins.length > enabledPlugins.length) {
@@ -1931,6 +1938,8 @@ export async function startGatewayServer(
                       channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
                       circuitBreaker: circuitBreakerTracker,
                       createChannelUser,
+                      logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
+                      getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
                     });
                     bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
                     // Retry provider creation now that the plugin is loaded
@@ -3338,6 +3347,8 @@ export async function startGatewayServer(
             channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
             circuitBreaker: circuitBreakerTracker,
             createChannelUser,
+            logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
+            getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
           });
           if (result.loaded.length > 0) {
             // Bridge newly registered capabilities and sync stacks to the registry
@@ -3383,6 +3394,8 @@ export async function startGatewayServer(
             channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
             circuitBreaker: circuitBreakerTracker,
             createChannelUser,
+            logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
+            getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
           }, { bustCache: true });
           if (result.loaded.length > 0) {
             bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
@@ -3465,6 +3478,8 @@ export async function startGatewayServer(
             channelConfigs: freshChannelConfigs,
             circuitBreaker: circuitBreakerTracker,
             createChannelUser,
+            logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
+            getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
           });
           if (result.loaded.length > 0) {
             bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });

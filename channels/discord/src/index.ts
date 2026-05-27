@@ -8,7 +8,7 @@ import {
   SlashCommandBuilder,
   PermissionFlagsBits,
 } from "discord.js";
-import type { AionimaPlugin, AionimaPluginAPI } from "@agi/plugins";
+import type { AionimaPlugin, AionimaPluginAPI, AmbientEntry } from "@agi/plugins";
 import type {
   ChatInputCommandInteraction,
   Guild,
@@ -285,9 +285,25 @@ type CreateUserFn = (
   meta: { displayName?: string; username?: string },
 ) => Promise<{ userId: string; isNew: boolean }>;
 
+/** Format a list of ambient log entries as a timestamped conversation preamble. */
+function formatAmbientPreamble(entries: AmbientEntry[]): string {
+  return entries
+    .map((e) => {
+      const time = new Date(e.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      return `${time} ${e.displayName}: ${e.text}`;
+    })
+    .join("\n");
+}
+
 export function createDiscordPlugin(
   config: DiscordConfig,
-  opts?: { createUser?: CreateUserFn },
+  opts?: {
+    createUser?: CreateUserFn;
+    /** Log every raw channel message to the ambient daily session (s189). */
+    logMessage?: (channelId: string, entry: AmbientEntry) => void;
+    /** Return recent messages from today's ambient log for context injection (s189). */
+    getContext?: (channelId: string, limit: number) => AmbientEntry[];
+  },
 ): AionimaChannelPlugin & {
   __client: Client;
   __config: DiscordConfig;
@@ -346,6 +362,18 @@ export function createDiscordPlugin(
       hasExplicitChannels && !isRespondChannel && configuredPresence.includes(msg.channelId);
     // Off channel — drop completely
     if (hasExplicitChannels && !isRespondChannel && !isMonitorChannel) return;
+
+    // Ambient log — record every message from configured channels regardless of
+    // mode or mention so Aion can wake up with today's conversation context (s189).
+    if (opts?.logMessage) {
+      opts.logMessage(DISCORD_CHANNEL_ID, {
+        ts: new Date().toISOString(),
+        authorId: msg.author.id,
+        displayName: buildDisplayName(msg),
+        text: msg.content,
+        roomId: msg.guildId !== null ? `${msg.guildId}:${msg.channelId}` : `dm:${msg.author.id}`,
+      });
+    }
 
     // Monitor channels: track context + user registration, but skip AI routing entirely
     if (isMonitorChannel) {
@@ -420,9 +448,23 @@ export function createDiscordPlugin(
     // When allowedRoleIds are configured, the role check above already verified
     // this sender. Signal the inbound-router to skip the pairing gate so
     // role-approved guild members don't see "pairing code / owner approval".
-    const normalizedWithMeta = allowedRoleIds.length > 0
+    let normalizedWithMeta = allowedRoleIds.length > 0
       ? { ...normalized, metadata: { ...normalized.metadata, bypassPairingGate: true } }
       : normalized;
+
+    // Inject today's ambient context as a preamble so Aion wakes up knowing
+    // what the channel has been discussing (s189). Prepended to the message
+    // text so it flows through the existing agent pipeline without changes.
+    if (opts?.getContext && normalizedWithMeta.content.type === "text") {
+      const recent = opts.getContext(DISCORD_CHANNEL_ID, 30);
+      if (recent.length > 0) {
+        const preamble = `[Today's channel conversation]\n${formatAmbientPreamble(recent)}\n\n---\n`;
+        normalizedWithMeta = {
+          ...normalizedWithMeta,
+          content: { type: "text", text: preamble + normalizedWithMeta.content.text },
+        };
+      }
+    }
 
     await messageHandler(normalizedWithMeta);
   });
@@ -658,9 +700,15 @@ export default {
     const channelConfig = api.getChannelConfig("discord");
     if (!channelConfig?.enabled) return;
     const createUser = api.getOrCreateChannelUser?.bind(api);
+    const logMessage = api.logAmbientMessage?.bind(api);
+    const getContext = api.getAmbientContext?.bind(api);
     const plugin = createDiscordPlugin(
       channelConfig.config as unknown as DiscordConfig,
-      createUser ? { createUser } : undefined,
+      {
+        ...(createUser ? { createUser } : {}),
+        ...(logMessage ? { logMessage } : {}),
+        ...(getContext ? { getContext } : {}),
+      },
     );
     api.registerChannel(plugin);
 

@@ -837,6 +837,23 @@ export interface WorkerDefinition {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Ambient log — shared data shape for channel message logging (s189)
+// ---------------------------------------------------------------------------
+
+/**
+ * A single raw message captured by the channel ambient log. Defined here
+ * (not in gateway-core) so channel plugins can reference the type without
+ * creating a circular dependency on gateway-core.
+ */
+export interface AmbientEntry {
+  ts: string;
+  authorId: string;
+  displayName: string;
+  text: string;
+  roomId: string;
+}
+
 // Plugin API — what plugins receive on activation
 // ---------------------------------------------------------------------------
 
@@ -914,6 +931,19 @@ export interface AionimaPluginAPI {
   getProjectConfig(projectPath: string): Record<string, unknown> | null;
   /** Get installed stacks for a project. */
   getProjectStacks(projectPath: string): Array<{ stackId: string; addedAt: string }>;
+  /**
+   * Log a raw channel message to today's ambient session file for the given
+   * channel. Used by channel plugins (e.g., Discord) to record ALL messages,
+   * not just those routed to Aion. Optional — only wired when the gateway
+   * supplies a ChannelAmbientLog in PluginLoaderDeps (s189).
+   */
+  logAmbientMessage?: (channelId: string, entry: AmbientEntry) => void;
+  /**
+   * Return recent messages from today's ambient log for the given channel.
+   * Used by channel plugins to inject wake-up context when Aion is mentioned.
+   * Optional — only wired alongside logAmbientMessage (s189).
+   */
+  getAmbientContext?: (channelId: string, limit: number) => AmbientEntry[];
 }
 
 // ---------------------------------------------------------------------------
