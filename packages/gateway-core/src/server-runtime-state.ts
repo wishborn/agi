@@ -50,6 +50,7 @@ import type { RouteHandler, RuntimeDefinition } from "@agi/plugins";
 import { categoryToProvides } from "@agi/plugins";
 import type { ServiceManager } from "./service-manager.js";
 import { registerCommsRoutes } from "./comms-api.js";
+import type { ChannelAmbientLog } from "./channel-ambient-log.js";
 import { registerModelsRoutes } from "./models-api.js";
 import type { ChatPersistence } from "./chat-persistence.js";
 import { registerChatHistoryRoutes } from "./chat-history-api.js";
@@ -230,6 +231,8 @@ export interface RuntimeStateDeps {
   mappMarketplaceDir?: string;
   /** CommsLog — persistent message log for comms page. */
   commsLog?: CommsLog;
+  /** ChannelAmbientLog — per-channel daily JSONL log for the conversation view. */
+  channelAmbientLog?: ChannelAmbientLog;
   /** NotificationStore — persistent notification storage. */
   notificationStore?: NotificationStore;
   /** ChatPersistence — file-based chat history storage. */
@@ -6557,6 +6560,7 @@ export async function createGatewayRuntimeState(
     registerCommsRoutes(fastify, {
       commsLog: deps.commsLog,
       notificationStore: deps.notificationStore,
+      channelAmbientLog: deps.channelAmbientLog,
     });
   }
 

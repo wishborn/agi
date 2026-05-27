@@ -150,6 +150,24 @@ export interface CommsLogEntry {
   createdAt: string;
 }
 
+export interface AmbientLogEntry {
+  ts: string;
+  authorId: string;
+  displayName: string;
+  text: string;
+  roomId: string;
+}
+
+export interface CommsStats {
+  byChannel: Record<string, { today: number; total: number }>;
+  todayTotal: number;
+}
+
+export type ConversationEntry =
+  | { kind: "comms-in";  id: string; ts: string; senderName: string | null; text: string; channel: string }
+  | { kind: "comms-out"; id: string; ts: string; text: string; channel: string }
+  | { kind: "ambient";   ts: string; authorId: string; displayName: string; text: string };
+
 export interface WorkerJobUpdate {
   jobId: string;
   status: "pending" | "running" | "checkpoint" | "complete" | "failed";

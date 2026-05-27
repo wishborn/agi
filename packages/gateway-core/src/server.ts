@@ -3289,6 +3289,7 @@ export async function startGatewayServer(
       pmProvider,
       mcpClient,
       commsLog,
+      channelAmbientLog,
       notificationStore,
       chatPersistence,
       imageBlobStore,

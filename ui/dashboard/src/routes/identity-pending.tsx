@@ -111,8 +111,8 @@ export default function IdentityPendingPage(): JSX.Element {
           <div>
             <h1 className="text-2xl font-bold text-foreground">Pending Identity Approvals</h1>
             <p className="text-[12px] text-muted-foreground mt-1">
-              Unknown users who messaged a channel room bound to one of your projects.
-              Approve to grant verified access; reject to drop + flag the source.
+              Unknown users who messaged a configured channel. Approve to grant verified access; reject to drop future messages.
+              Bind a room to a project (via Projects → Channels tab) to enable message gating.
             </p>
           </div>
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading} data-testid="identity-pending-refresh">
@@ -129,19 +129,20 @@ export default function IdentityPendingPage(): JSX.Element {
         {!loading && pending.length === 0 && error === null && (
           <Card className="p-8 text-center" data-testid="identity-pending-empty">
             <span className="text-[14px] text-muted-foreground">
-              No pending approvals. When unknown users message a bound channel room, they'll appear here.
+              No pending approvals. When unknown users message a configured channel, they'll appear here.
             </span>
           </Card>
         )}
 
         {Object.entries(byProject).map(([projectPath, entries]) => (
-          <Card key={projectPath} className="p-4 mb-4" data-testid={`identity-pending-project-${projectPath.replace(/[^a-zA-Z0-9]/g, "_")}`}>
+          <Card key={projectPath || "__unbound__"} className="p-4 mb-4" data-testid={`identity-pending-project-${(projectPath || "unbound").replace(/[^a-zA-Z0-9]/g, "_")}`}>
             <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border">
               <span className="text-[13px] font-semibold text-card-foreground truncate">
-                {projectPath}
+                {projectPath || "Unbound Channels"}
               </span>
               <span className="text-[10px] text-muted-foreground">
                 · {entries.length} pending
+                {!projectPath && " · bind a room to a project to enable gating"}
               </span>
             </div>
             <div className="space-y-2">

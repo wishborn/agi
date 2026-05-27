@@ -168,7 +168,8 @@ export class PendingApprovalStore {
     roomId: string;
     channelUserId: string;
     displayName: string;
-    projectPath: string;
+    /** Project that binds this room. Empty string when the room is not yet bound to any project. */
+    projectPath?: string;
     firstMessagePreview: string;
   }): PendingApproval {
     const id = pendingApprovalId(input.channelId, input.roomId, input.channelUserId);
@@ -190,12 +191,12 @@ export class PendingApprovalStore {
       roomId: input.roomId,
       channelUserId: input.channelUserId,
       displayName: input.displayName,
-      projectPath: input.projectPath,
+      projectPath: input.projectPath ?? "",
       firstMessagePreview: input.firstMessagePreview.slice(0, 200),
       createdAt: new Date().toISOString(),
     };
     this.approvals.set(id, fresh);
-    this.log.info(`pending approval captured: ${id} (${input.displayName}, ${input.projectPath})`);
+    this.log.info(`pending approval captured: ${id} (${input.displayName}, ${input.projectPath ?? "(unbound)"})`);
     this.save();
     return fresh;
   }

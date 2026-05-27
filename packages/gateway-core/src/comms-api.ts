@@ -8,6 +8,7 @@ import type { FastifyInstance } from "fastify";
 import type { IncomingMessage } from "node:http";
 import type { CommsLog } from "@agi/entity-model";
 import type { NotificationStore } from "@agi/entity-model";
+import type { ChannelAmbientLog } from "./channel-ambient-log.js";
 
 // ---------------------------------------------------------------------------
 // Helpers (same as hosting-api.ts / server-runtime-state.ts)
@@ -46,13 +47,14 @@ function getClientIp(req: IncomingMessage): string {
 export interface CommsRouteDeps {
   commsLog: CommsLog;
   notificationStore: NotificationStore;
+  channelAmbientLog?: ChannelAmbientLog;
 }
 
 export function registerCommsRoutes(
   fastify: FastifyInstance,
   deps: CommsRouteDeps,
 ): void {
-  const { commsLog, notificationStore } = deps;
+  const { commsLog, notificationStore, channelAmbientLog } = deps;
 
   function guardPrivate(request: { raw: IncomingMessage }): string | null {
     const clientIp = getClientIp(request.raw);
@@ -65,12 +67,12 @@ export function registerCommsRoutes(
   // -------------------------------------------------------------------------
 
   fastify.get<{
-    Querystring: { channel?: string; direction?: string; limit?: string; offset?: string };
+    Querystring: { channel?: string; direction?: string; limit?: string; offset?: string; date?: string };
   }>("/api/comms", async (request, reply) => {
     const err = guardPrivate(request);
     if (err !== null) return reply.code(403).send({ error: err });
 
-    const { channel, direction } = request.query;
+    const { channel, direction, date } = request.query;
     const limit = Math.min(Number(request.query.limit) || 50, 200);
     const offset = Number(request.query.offset) || 0;
 
@@ -79,11 +81,69 @@ export function registerCommsRoutes(
     // as `{}` and the client crashes when it tries to iterate `entries`.
     // Same bug class as v0.4.65's dashboard-api recentActivity fix.
     const [entries, total] = await Promise.all([
-      commsLog.query({ channel, direction, limit, offset }),
-      commsLog.count({ channel, direction }),
+      commsLog.query({ channel, direction, date, limit, offset }),
+      commsLog.count({ channel, direction, date }),
     ]);
 
     return reply.send({ entries, total });
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /api/comms/ambient — ambient channel log for a given day
+  // -------------------------------------------------------------------------
+
+  fastify.get<{
+    Querystring: { channelId?: string; date?: string; limit?: string };
+  }>("/api/comms/ambient", (request, reply) => {
+    const err = guardPrivate(request);
+    if (err !== null) return reply.code(403).send({ error: err });
+
+    if (channelAmbientLog === undefined) {
+      return reply.code(503).send({ error: "Ambient log not available" });
+    }
+
+    const { channelId, date } = request.query;
+    if (!channelId) return reply.code(400).send({ error: "channelId is required" });
+
+    const targetDate = date ?? new Date().toISOString().slice(0, 10);
+    const limit = Math.min(Number(request.query.limit) || 200, 500);
+    const entries = channelAmbientLog.getDateContext(channelId, targetDate, limit);
+
+    return reply.send({ entries, date: targetDate });
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /api/comms/stats — per-channel message counts (today + all-time)
+  // -------------------------------------------------------------------------
+
+  fastify.get("/api/comms/stats", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err !== null) return reply.code(403).send({ error: err });
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Pull all channel counts in parallel — one query per tracked channel.
+    const channels = ["discord", "gmail", "telegram", "signal", "whatsapp", "email", "slack"];
+    const results = await Promise.all(
+      channels.map(async (ch) => {
+        const [total, todayTotal] = await Promise.all([
+          commsLog.count({ channel: ch }),
+          commsLog.count({ channel: ch, date: today }),
+        ]);
+        return { channel: ch, total, todayTotal };
+      }),
+    );
+
+    const byChannel: Record<string, { today: number; total: number }> = {};
+    let todayTotal = 0;
+    for (const r of results) {
+      if (r.total > 0 || r.todayTotal > 0) {
+        byChannel[r.channel] = { today: r.todayTotal, total: r.total };
+        todayTotal += r.todayTotal;
+      }
+    }
+
+    return reply.send({ byChannel, todayTotal });
   });
 
   // -------------------------------------------------------------------------

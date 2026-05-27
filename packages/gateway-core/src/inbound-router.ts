@@ -433,37 +433,35 @@ export class InboundRouter {
     const coaFingerprint = `${this.resourceId}.${entity.coaAlias}.${this.nodeId}.pending`;
 
     // Step 2b (CHN-B s163 slice 3) — channel-room → project dispatch.
-    // When the message carries metadata.roomId AND a dispatcher is wired,
-    // ask which project binds (channelId, roomId). The bound project's
-    // path flows into the enqueued payload so the agent invocation runs
-    // inside that project's scope.
+    // Extract roomId from metadata first (always) so pending-approval capture
+    // (step 2c) works even when the room isn't bound to any project yet.
     let projectPath: string | undefined;
     let resolvedRoomId: string | undefined;
-    if (this.channelEventDispatcher !== undefined && typeof routedMessage.metadata === "object" && routedMessage.metadata !== null) {
+    if (typeof routedMessage.metadata === "object" && routedMessage.metadata !== null) {
       const roomId = (routedMessage.metadata as Record<string, unknown>)["roomId"];
       if (typeof roomId === "string" && roomId.length > 0) {
-        const dispatch = this.channelEventDispatcher.dispatch(channelId, roomId);
-        if (dispatch !== null) {
-          projectPath = dispatch.projectPath;
-          resolvedRoomId = roomId;
-          this.log.info(`channel-event routed to project: ${channelId}::${roomId} → ${projectPath}`);
+        resolvedRoomId = roomId;
+        if (this.channelEventDispatcher !== undefined) {
+          const dispatch = this.channelEventDispatcher.dispatch(channelId, roomId);
+          if (dispatch !== null) {
+            projectPath = dispatch.projectPath;
+            this.log.info(`channel-event routed to project: ${channelId}::${roomId} → ${projectPath}`);
+          }
         }
       }
     }
 
-    // Step 2c (CHN-E s166 slice 2) — pending-approval capture for
-    // unknown contacts in project-bound rooms. Idempotent: same triple
-    // refreshes display/preview, keeps original createdAt. Owner sees
-    // the captured records via /identity/pending (UI in slice 3+).
+    // Step 2c (CHN-E s166 slice 2) — pending-approval capture for unknown
+    // contacts in any channel room. Idempotent: same triple refreshes
+    // display/preview, keeps original createdAt. Owner sees the captured
+    // records via /identity/pending.
     //
-    // Slice 2 is DATA-COLLECTION ONLY: routing proceeds normally even
-    // when a pending record is captured. Slice 3+ adds the gate-and-
-    // drop behavior + the promote-to-verified-entity flow.
-    if (
-      projectPath !== undefined &&
-      resolvedRoomId !== undefined &&
-      this.pendingApprovalStore !== undefined
-    ) {
+    // Capture fires for ALL rooms that carry a roomId (not just project-bound
+    // ones). projectPath is passed when the room is bound; otherwise the
+    // record is grouped under "Unbound" in the UI so the owner can see who's
+    // messaging before any project binding exists. DATA-COLLECTION ONLY here —
+    // step 2d adds the gate-and-drop for project-bound rooms.
+    if (resolvedRoomId !== undefined && this.pendingApprovalStore !== undefined) {
       const captureDisplayName = typeof routedMessage.metadata === "object" && routedMessage.metadata !== null
         ? (routedMessage.metadata as Record<string, unknown>)["displayName"] as string | undefined
           ?? (routedMessage.metadata as Record<string, unknown>)["username"] as string | undefined

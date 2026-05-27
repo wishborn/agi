@@ -8,6 +8,8 @@ import type {
   BreakdownSlice,
   COAExplorerEntry,
   CommsLogEntry,
+  AmbientLogEntry,
+  CommsStats,
   DashboardOverview,
   EntityImpactProfile,
   GitAction,
@@ -1781,12 +1783,15 @@ export async function deleteChatSession(id: string): Promise<{ ok: boolean }> {
 export async function fetchCommsLog(opts?: {
   channel?: string;
   direction?: string;
+  /** YYYY-MM-DD filter — only entries from that calendar day. */
+  date?: string;
   limit?: number;
   offset?: number;
 }): Promise<{ entries: CommsLogEntry[]; total: number }> {
   const url = new URL("/api/comms", window.location.origin);
   if (opts?.channel) url.searchParams.set("channel", opts.channel);
   if (opts?.direction) url.searchParams.set("direction", opts.direction);
+  if (opts?.date) url.searchParams.set("date", opts.date);
   if (opts?.limit !== undefined) url.searchParams.set("limit", String(opts.limit));
   if (opts?.offset !== undefined) url.searchParams.set("offset", String(opts.offset));
   const res = await fetch(url.toString());
@@ -1795,6 +1800,32 @@ export async function fetchCommsLog(opts?: {
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<{ entries: CommsLogEntry[]; total: number }>;
+}
+
+export async function fetchAmbientLog(opts: {
+  channelId: string;
+  date: string;
+  limit?: number;
+}): Promise<{ entries: AmbientLogEntry[] }> {
+  const url = new URL("/api/comms/ambient", window.location.origin);
+  url.searchParams.set("channelId", opts.channelId);
+  url.searchParams.set("date", opts.date);
+  if (opts.limit !== undefined) url.searchParams.set("limit", String(opts.limit));
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ entries: AmbientLogEntry[] }>;
+}
+
+export async function fetchCommsStats(): Promise<CommsStats> {
+  const res = await fetch("/api/comms/stats");
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<CommsStats>;
 }
 
 // ---------------------------------------------------------------------------
