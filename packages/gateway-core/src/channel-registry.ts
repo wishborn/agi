@@ -244,6 +244,17 @@ export class ChannelRegistry extends EventEmitter {
     }
   }
 
+  /**
+   * Reset the circuit-breaker for a single channel.
+   *
+   * Called by server-startup after a v2 protocol start succeeds — the bot is
+   * already connected, so any prior breaker state is stale and should not block
+   * the legacy registration wiring step.
+   */
+  resetChannelBreaker(channelId: string): void {
+    this.circuitBreaker?.reset(`channel:${channelId}`);
+  }
+
   // ---------------------------------------------------------------------------
   // Lifecycle — bulk operations
   // ---------------------------------------------------------------------------

@@ -481,6 +481,11 @@ export async function startGatewaySidecars(
         // For channels with no legacy counterpart, wire v2 inbound directly.
         const hasLegacy = channelRegistry.getChannel(def.id) !== undefined;
         if (hasLegacy) {
+          // v2 protocol start succeeded → bot is live. Any prior circuit-breaker
+          // state for this channel is stale (it tracked failures from a session
+          // where the transport itself didn't connect). Reset it so the legacy
+          // wiring step isn't skipped by a breaker that no longer applies.
+          channelRegistry.resetChannelBreaker(def.id);
           await channelRegistry.startChannel(def.id).catch((err: unknown) => {
             channelLog.warn(
               `[v2] legacy start for "${def.id}" failed (v2 transport still up): ${err instanceof Error ? err.message : String(err)}`,
