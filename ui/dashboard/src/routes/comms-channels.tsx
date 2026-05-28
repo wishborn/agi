@@ -499,7 +499,7 @@ function RoleOverridesCard({ roles, onChange }: { roles: RoleOverride[]; onChang
             className="flex-1"
           />
           <Select
-            options={ROLE_ALLOW_OPTIONS}
+            list={ROLE_ALLOW_OPTIONS}
             value={r.allow}
             onValueChange={(v) => onChange(roles.map((x, j) => j === i ? { ...x, allow: v } : x))}
             size="sm"
@@ -720,7 +720,7 @@ export default function CommsChannelsPage() {
               <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-muted-foreground/50" aria-hidden="true"><polyline points="9 18 15 12 9 6" /></svg>
               {channelOptions.length > 0 && (
                 <Select
-                  options={channelOptions}
+                  list={channelOptions}
                   value={selectedId ?? ""}
                   onValueChange={(v) => setSelectedId(v)}
                   size="sm"
