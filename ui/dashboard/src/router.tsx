@@ -14,6 +14,7 @@ import ResourcesPage from "./routes/resources.js";
 import WorkflowsPage from "./routes/workflows.js";
 import CommsPage from "./routes/comms.js";
 import CommsActivityPage from "./routes/comms-activity.js";
+import CommsModerationPage from "./routes/comms-moderation.js";
 import CommsTelegramPage from "./routes/comms-telegram.js";
 import CommsDiscordPage from "./routes/comms-discord.js";
 import CommsGmailPage from "./routes/comms-gmail.js";
@@ -155,6 +156,7 @@ export const router = createBrowserRouter([
       { path: "comms/gmail", element: <CommsGmailPage /> },
       { path: "comms/signal", element: <CommsSignalPage /> },
       { path: "comms/whatsapp", element: <CommsWhatsAppPage /> },
+      { path: "comms/moderation", element: <CommsModerationPage /> },
       { path: "*", element: <PluginPageResolver /> },
     ],
   },

@@ -9,6 +9,7 @@ import type { IncomingMessage } from "node:http";
 import type { CommsLog } from "@agi/entity-model";
 import type { NotificationStore } from "@agi/entity-model";
 import type { ChannelAmbientLog } from "./channel-ambient-log.js";
+import type { ModerationFlagStore, FlagAction, FlagStatus, FlagSeverity } from "./moderation-flag-store.js";
 
 // ---------------------------------------------------------------------------
 // Helpers (same as hosting-api.ts / server-runtime-state.ts)
@@ -48,13 +49,14 @@ export interface CommsRouteDeps {
   commsLog: CommsLog;
   notificationStore: NotificationStore;
   channelAmbientLog?: ChannelAmbientLog;
+  moderationFlagStore?: ModerationFlagStore;
 }
 
 export function registerCommsRoutes(
   fastify: FastifyInstance,
   deps: CommsRouteDeps,
 ): void {
-  const { commsLog, notificationStore, channelAmbientLog } = deps;
+  const { commsLog, notificationStore, channelAmbientLog, moderationFlagStore } = deps;
 
   function guardPrivate(request: { raw: IncomingMessage }): string | null {
     const clientIp = getClientIp(request.raw);
@@ -178,6 +180,71 @@ export function registerCommsRoutes(
     }));
 
     return reply.send({ events, total });
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /api/moderation/flags — list moderation flags (newest first)
+  // -------------------------------------------------------------------------
+
+  fastify.get<{
+    Querystring: { status?: string; severity?: string; channel?: string; limit?: string };
+  }>("/api/moderation/flags", (request, reply) => {
+    const err = guardPrivate(request);
+    if (err !== null) return reply.code(403).send({ error: err });
+
+    if (moderationFlagStore === undefined) {
+      return reply.code(503).send({ error: "Moderation store not available" });
+    }
+
+    const { status, severity, channel } = request.query;
+    const limit = Math.min(Number(request.query.limit) || 50, 200);
+
+    const flags = moderationFlagStore.list({
+      status: status as FlagStatus | undefined,
+      severity: severity as FlagSeverity | undefined,
+      channel,
+      limit,
+    });
+    const total = moderationFlagStore.count({
+      status: status as FlagStatus | undefined,
+      severity: severity as FlagSeverity | undefined,
+      channel,
+    });
+
+    return reply.send({ flags, total });
+  });
+
+  // -------------------------------------------------------------------------
+  // POST /api/moderation/:id/action — apply an action to a flag
+  // -------------------------------------------------------------------------
+
+  fastify.post<{
+    Params: { id: string };
+    Body: { kind: FlagAction["kind"]; moderatorId?: string; note?: string };
+  }>("/api/moderation/:id/action", (request, reply) => {
+    const err = guardPrivate(request);
+    if (err !== null) return reply.code(403).send({ error: err });
+
+    if (moderationFlagStore === undefined) {
+      return reply.code(503).send({ error: "Moderation store not available" });
+    }
+
+    const { id } = request.params;
+    const body = request.body as { kind: FlagAction["kind"]; moderatorId?: string; note?: string };
+
+    if (!body.kind) return reply.code(400).send({ error: "kind is required" });
+
+    const action: FlagAction = {
+      kind: body.kind,
+      moderatorId: body.moderatorId ?? "owner",
+      at: new Date().toISOString(),
+      note: body.note,
+    };
+
+    const updated = moderationFlagStore.action(id, action);
+    if (updated === null) return reply.code(404).send({ error: "Flag not found" });
+
+    return reply.send(updated);
   });
 
   // -------------------------------------------------------------------------

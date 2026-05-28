@@ -190,6 +190,56 @@ export type ConversationEntry =
   | { kind: "comms-out"; id: string; ts: string; text: string; channel: string; confidence?: number; latencyMs?: number; model?: string }
   | { kind: "ambient";   ts: string; authorId: string; displayName: string; text: string };
 
+// ---------------------------------------------------------------------------
+// Moderation
+// ---------------------------------------------------------------------------
+
+export type FlagSeverity = "critical" | "high" | "medium" | "low";
+export type FlagStatus = "open" | "actioned" | "dismissed";
+export type FlagActionKind =
+  | "dismiss"
+  | "warn"
+  | "timeout"
+  | "ban"
+  | "escalate"
+  | "redact"
+  | "monitor"
+  | "mark_constructive";
+
+export interface FlagScores {
+  toxicity?: number;
+  sarcasm?: number;
+  escalation?: number;
+}
+
+export interface FlagAction {
+  kind: FlagActionKind;
+  moderatorId: string;
+  at: string;
+  note?: string;
+}
+
+export interface ModerationFlag {
+  id: string;
+  channel: string;
+  userId: string;
+  displayName: string | null;
+  messagePreview: string;
+  severity: FlagSeverity;
+  status: FlagStatus;
+  reason: string;
+  recommendedAction?: string;
+  scores?: FlagScores;
+  priorFlagCount: number;
+  flaggedAt: string;
+  action?: FlagAction;
+  entityId?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Agent Events
+// ---------------------------------------------------------------------------
+
 export type AgentEventKind = "respond" | "tool" | "memory" | "route" | "escalate" | "approval" | "mod" | "skip";
 
 export interface AgentEventEntry {

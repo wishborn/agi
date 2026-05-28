@@ -235,6 +235,8 @@ export interface RuntimeStateDeps {
   channelAmbientLog?: ChannelAmbientLog;
   /** NotificationStore — persistent notification storage. */
   notificationStore?: NotificationStore;
+  /** ModerationFlagStore — in-memory ring buffer of AI-raised moderation flags. */
+  moderationFlagStore?: import("./moderation-flag-store.js").ModerationFlagStore;
   /** ChatPersistence — file-based chat history storage. */
   chatPersistence?: ChatPersistence;
   /** ImageBlobStore — file-backed image storage for chat sessions. */
@@ -6562,6 +6564,7 @@ export async function createGatewayRuntimeState(
       commsLog: deps.commsLog,
       notificationStore: deps.notificationStore,
       channelAmbientLog: deps.channelAmbientLog,
+      moderationFlagStore: deps.moderationFlagStore,
     });
   }
 

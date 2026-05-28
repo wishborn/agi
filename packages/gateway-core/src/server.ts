@@ -150,6 +150,7 @@ import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
 import { ChannelEventDispatcher } from "./channel-event-dispatcher.js";
 import { PendingApprovalStore } from "./pending-approval-store.js";
+import { ModerationFlagStore } from "./moderation-flag-store.js";
 import { RegistrationSessionStore } from "./registration-session-store.js";
 import { ChannelWorkflowBindingStore } from "./channel-workflow-binding-store.js";
 import { runWorkflow } from "./mapp-executor.js";
@@ -1816,6 +1817,10 @@ export async function startGatewayServer(
   // root as all other runtime data so daily logs land alongside chat history.
   const channelAmbientLog = new ChannelAmbientLog(join(homedir(), ".agi"));
 
+  // Moderation flag store (s191) — in-memory ring buffer for AI-raised flags.
+  // Ephemeral by design; a Postgres-backed store can replace this when needed.
+  const moderationFlagStore = new ModerationFlagStore();
+
   {
     for (const err of discovered.errors) {
       log.warn(`plugin discovery: ${err.path} — ${err.error}`);
@@ -3332,6 +3337,7 @@ export async function startGatewayServer(
       commsLog,
       channelAmbientLog,
       notificationStore,
+      moderationFlagStore,
       chatPersistence,
       imageBlobStore,
       pluginRegistry,

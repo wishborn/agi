@@ -10,6 +10,10 @@ import type {
   CommsLogEntry,
   AmbientLogEntry,
   AgentEventEntry,
+  ModerationFlag,
+  FlagSeverity,
+  FlagStatus,
+  FlagActionKind,
   CommsStats,
   DashboardOverview,
   EntityImpactProfile,
@@ -1846,6 +1850,45 @@ export async function fetchAgentEvents(opts?: {
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<{ events: AgentEventEntry[]; total: number }>;
+}
+
+// ---------------------------------------------------------------------------
+// Moderation API — /api/moderation
+// ---------------------------------------------------------------------------
+
+export async function fetchModerationFlags(opts?: {
+  status?: FlagStatus;
+  severity?: FlagSeverity;
+  channel?: string;
+  limit?: number;
+}): Promise<{ flags: ModerationFlag[]; total: number }> {
+  const url = new URL("/api/moderation/flags", window.location.origin);
+  if (opts?.status) url.searchParams.set("status", opts.status);
+  if (opts?.severity) url.searchParams.set("severity", opts.severity);
+  if (opts?.channel) url.searchParams.set("channel", opts.channel);
+  if (opts?.limit !== undefined) url.searchParams.set("limit", String(opts.limit));
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ flags: ModerationFlag[]; total: number }>;
+}
+
+export async function applyModerationAction(
+  id: string,
+  action: { kind: FlagActionKind; note?: string },
+): Promise<ModerationFlag> {
+  const res = await fetch(`/api/moderation/${id}/action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: action.kind, moderatorId: "owner", note: action.note }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<ModerationFlag>;
 }
 
 // ---------------------------------------------------------------------------
