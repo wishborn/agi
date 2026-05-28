@@ -13,11 +13,9 @@ import { test, expect } from "@playwright/test";
  * test patterns (LLM-dependent response assertions are out of scope for e2e).
  */
 
-const BASE = process.env.BASE_URL ?? "https://ai.on";
-
 test.describe("Doc awareness — search_docs + lookup_doc (s197)", () => {
   test("GET /api/memory/search-docs returns 200 for a keyword query", async ({ request }) => {
-    const res = await request.get(`${BASE}/api/memory/search-docs?q=plugin`);
+    const res = await request.get("/api/memory/search-docs?q=plugin");
     // 200 with chunks array (may be empty if DocIndexer not yet seeded — still 200)
     expect(res.status()).toBe(200);
     const body = await res.json() as { chunks?: unknown[] };
@@ -25,7 +23,7 @@ test.describe("Doc awareness — search_docs + lookup_doc (s197)", () => {
   });
 
   test("search_docs surfaces taskmaster.md chunk for 'scheduled job' query", async ({ request }) => {
-    const res = await request.get(`${BASE}/api/memory/search-docs?q=scheduled+job&limit=10`);
+    const res = await request.get("/api/memory/search-docs?q=scheduled+job&limit=10");
     expect(res.status()).toBe(200);
     const body = await res.json() as { chunks?: Array<{ sourcePath?: string; heading?: string; content?: string }> };
 
@@ -42,7 +40,7 @@ test.describe("Doc awareness — search_docs + lookup_doc (s197)", () => {
   });
 
   test("search_docs surfaces taskmaster.md chunk for 'iterative work' query", async ({ request }) => {
-    const res = await request.get(`${BASE}/api/memory/search-docs?q=iterative+work&limit=10`);
+    const res = await request.get("/api/memory/search-docs?q=iterative+work&limit=10");
     expect(res.status()).toBe(200);
     const body = await res.json() as { chunks?: Array<{ sourcePath?: string }> };
 
