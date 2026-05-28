@@ -12,6 +12,7 @@ import LogsPage from "./routes/logs.js";
 import EntityPage from "./routes/entity.js";
 import ResourcesPage from "./routes/resources.js";
 import WorkflowsPage from "./routes/workflows.js";
+import CommsLayout from "./routes/comms-layout.js";
 import CommsPage from "./routes/comms.js";
 import CommsActivityPage from "./routes/comms-activity.js";
 import CommsModerationPage from "./routes/comms-moderation.js";
@@ -148,15 +149,21 @@ export const router = createBrowserRouter([
       { path: "system/comms", element: <Navigate to="/comms" replace /> },
       // CHN-E (s166) slice 4 — pending-from-channel approval queue
       { path: "identity/pending", element: <IdentityPendingPage /> },
-      // Communication
-      { path: "comms", element: <CommsPage /> },
-      { path: "comms/activity", element: <CommsActivityPage /> },
-      { path: "comms/telegram", element: <CommsTelegramPage /> },
-      { path: "comms/discord", element: <CommsDiscordPage /> },
-      { path: "comms/gmail", element: <CommsGmailPage /> },
-      { path: "comms/signal", element: <CommsSignalPage /> },
-      { path: "comms/whatsapp", element: <CommsWhatsAppPage /> },
-      { path: "comms/moderation", element: <CommsModerationPage /> },
+      // Communication — 3-panel workspace shell (s192+)
+      {
+        path: "comms",
+        element: <CommsLayout />,
+        children: [
+          { index: true, element: <CommsPage /> },
+          { path: "activity", element: <CommsActivityPage /> },
+          { path: "discord", element: <CommsDiscordPage /> },
+          { path: "gmail", element: <CommsGmailPage /> },
+          { path: "telegram", element: <CommsTelegramPage /> },
+          { path: "signal", element: <CommsSignalPage /> },
+          { path: "whatsapp", element: <CommsWhatsAppPage /> },
+          { path: "moderation", element: <CommsModerationPage /> },
+        ],
+      },
       { path: "*", element: <PluginPageResolver /> },
     ],
   },

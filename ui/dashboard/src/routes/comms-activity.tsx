@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { PageScroll } from "@/components/PageScroll.js";
 import { DayNavigator } from "@/components/DayNavigator.js";
 import { SourceChip } from "@/components/InboxView.js";
+import { useInspector } from "@/lib/inspector-context.js";
 import { fetchAgentEvents } from "@/api.js";
 import type { AgentEventEntry, AgentEventKind } from "@/types.js";
 
@@ -68,9 +69,12 @@ function formatTs(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-function EventRow({ event }: { event: AgentEventEntry }) {
+function EventRow({ event, onSelect }: { event: AgentEventEntry; onSelect?: (e: AgentEventEntry) => void }) {
   return (
-    <div className="grid grid-cols-[80px_auto_1fr_auto] gap-2.5 px-4 py-2.5 border-b border-border/60 hover:bg-secondary/20 transition-colors cursor-pointer group">
+    <div
+      className="grid grid-cols-[80px_auto_1fr_auto] gap-2.5 px-4 py-2.5 border-b border-border/60 hover:bg-secondary/20 transition-colors cursor-pointer group"
+      onClick={() => onSelect?.(event)}
+    >
       {/* Timestamp */}
       <div className="text-[10.5px] font-mono text-muted-foreground/60 pt-0.5 tabular-nums">
         {formatTs(event.ts)}
@@ -133,9 +137,10 @@ interface ActivityFeedViewProps {
   loading: boolean;
   kindFilter: AgentEventKind | "all";
   total: number;
+  onSelect?: (event: AgentEventEntry) => void;
 }
 
-function ActivityFeedView({ events, loading, kindFilter, total }: ActivityFeedViewProps) {
+function ActivityFeedView({ events, loading, kindFilter, total, onSelect }: ActivityFeedViewProps) {
   const filtered = kindFilter === "all" ? events : events.filter((e) => e.kind === kindFilter);
 
   if (loading && events.length === 0) {
@@ -192,7 +197,7 @@ function ActivityFeedView({ events, loading, kindFilter, total }: ActivityFeedVi
       {/* Event rows */}
       <div className="flex flex-col">
         {filtered.map((event) => (
-          <EventRow key={event.id} event={event} />
+          <EventRow key={event.id} event={event} onSelect={onSelect} />
         ))}
       </div>
     </>
@@ -213,6 +218,11 @@ export default function CommsActivityPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [kindFilter, setKindFilter] = useState<AgentEventKind | "all">("all");
+  const { inspect } = useInspector();
+
+  const handleSelect = useCallback((event: AgentEventEntry) => {
+    inspect({ kind: "agent-event", event });
+  }, [inspect]);
 
   const loadDay = useCallback(async (d: string) => {
     setLoading(true);
@@ -273,6 +283,7 @@ export default function CommsActivityPage() {
           loading={loading}
           kindFilter={kindFilter}
           total={total}
+          onSelect={handleSelect}
         />
       </div>
     </PageScroll>

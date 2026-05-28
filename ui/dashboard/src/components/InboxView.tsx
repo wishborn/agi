@@ -99,7 +99,7 @@ export function SourceChip({ channel, className }: { channel: string; className?
 // Thread grouping — deduplicate by senderId+channel, keep latest
 // ---------------------------------------------------------------------------
 
-interface ThreadEntry {
+export interface ThreadEntry {
   id: string;
   channel: string;
   senderId: string;
@@ -148,13 +148,16 @@ function groupAsThreads(entries: CommsLogEntry[]): ThreadEntry[] {
 // ThreadCard
 // ---------------------------------------------------------------------------
 
-function ThreadCard({ thread }: { thread: ThreadEntry }) {
+function ThreadCard({ thread, onSelect }: { thread: ThreadEntry; onSelect?: (t: ThreadEntry) => void }) {
   const displayName = thread.senderName ?? thread.senderId;
   const title = thread.subject ?? thread.preview.slice(0, 80);
   const isInbound = thread.direction === "inbound";
 
   return (
-    <div className="px-4 py-3 border-b border-border/60 cursor-pointer transition-colors hover:bg-secondary/30 group">
+    <div
+      className="px-4 py-3 border-b border-border/60 cursor-pointer transition-colors hover:bg-secondary/30 group"
+      onClick={() => onSelect?.(thread)}
+    >
       {/* Row 1: source chip · channel · message count · time */}
       <div className="flex items-center gap-1.5 mb-1.5 min-w-0">
         <SourceChip channel={thread.channel} />
@@ -206,9 +209,10 @@ export interface InboxViewProps {
   entries: CommsLogEntry[];
   loading: boolean;
   emptyText?: string;
+  onSelect?: (thread: ThreadEntry) => void;
 }
 
-export function InboxView({ entries, loading, emptyText }: InboxViewProps) {
+export function InboxView({ entries, loading, emptyText, onSelect }: InboxViewProps) {
   const threads = useMemo(() => groupAsThreads(entries), [entries]);
 
   if (loading && entries.length === 0) {
@@ -241,7 +245,7 @@ export function InboxView({ entries, loading, emptyText }: InboxViewProps) {
         </span>
       </div>
       {threads.map((t) => (
-        <ThreadCard key={t.id} thread={t} />
+        <ThreadCard key={t.id} thread={t} onSelect={onSelect} />
       ))}
     </div>
   );

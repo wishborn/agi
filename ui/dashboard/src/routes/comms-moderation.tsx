@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { PageScroll } from "@/components/PageScroll.js";
+import { useInspector } from "@/lib/inspector-context.js";
 import { fetchModerationFlags, applyModerationAction } from "@/api.js";
 import type { ModerationFlag, FlagSeverity, FlagActionKind } from "@/types.js";
 
@@ -74,9 +75,11 @@ function ScoreBar({ label, value }: { label: string; value: number }) {
 function FlagRow({
   flag,
   onAction,
+  onSelect,
 }: {
   flag: ModerationFlag;
   onAction: (id: string, kind: FlagActionKind) => void;
+  onSelect?: (flag: ModerationFlag) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const sev = SEV_STYLE[flag.severity];
@@ -89,7 +92,7 @@ function FlagRow({
         "group px-4 py-2.5 border-b border-border/50 hover:bg-muted/30 transition-colors cursor-pointer",
         isResolved && "opacity-50",
       )}
-      onClick={() => setExpanded((v) => !v)}
+      onClick={() => { setExpanded((v) => !v); onSelect?.(flag); }}
     >
       {/* Main row */}
       <div className="grid grid-cols-[20px_1fr_auto] gap-3 items-start min-w-0">
@@ -224,6 +227,7 @@ function ModerationView() {
   const [flags, setFlags] = useState<ModerationFlag[]>([]);
   const [loading, setLoading] = useState(true);
   const [sevFilter, setSevFilter] = useState<FlagSeverity | "all">("all");
+  const { inspect } = useInspector();
 
   const load = useCallback(() => {
     setLoading(true);
@@ -240,6 +244,10 @@ function ModerationView() {
       setFlags((prev) => prev.map((f) => (f.id === updated.id ? updated : f)));
     });
   }, []);
+
+  const handleSelect = useCallback((flag: ModerationFlag) => {
+    inspect({ kind: "moderation-flag", flag });
+  }, [inspect]);
 
   const visible = sevFilter === "all"
     ? flags
@@ -289,7 +297,7 @@ function ModerationView() {
           </div>
         ) : (
           visible.map((flag) => (
-            <FlagRow key={flag.id} flag={flag} onAction={handleAction} />
+            <FlagRow key={flag.id} flag={flag} onAction={handleAction} onSelect={handleSelect} />
           ))
         )}
       </div>

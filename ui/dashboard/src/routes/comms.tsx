@@ -11,7 +11,9 @@ import { cn } from "@/lib/utils";
 import { PageScroll } from "@/components/PageScroll.js";
 import { DayNavigator } from "@/components/DayNavigator.js";
 import { InboxView, SourceChip } from "@/components/InboxView.js";
+import type { ThreadEntry } from "@/components/InboxView.js";
 import { CommsOverview } from "@/components/CommsOverview.js";
+import { useInspector } from "@/lib/inspector-context.js";
 import { fetchCommsLog } from "@/api.js";
 import type { CommsLogEntry } from "@/types.js";
 
@@ -54,6 +56,11 @@ export default function CommsPage() {
   const [day, setDay] = useState(todayIso());
   const [entries, setEntries] = useState<CommsLogEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const { inspect } = useInspector();
+
+  const handleSelect = useCallback((thread: ThreadEntry) => {
+    inspect({ kind: "thread", thread });
+  }, [inspect]);
 
   const loadMessages = useCallback(async (d: string) => {
     setLoading(true);
@@ -161,7 +168,7 @@ export default function CommsPage() {
 
             {/* Thread list */}
             <div className="rounded-xl border border-border overflow-hidden min-h-[300px]">
-              <InboxView entries={displayed} loading={loading} />
+              <InboxView entries={displayed} loading={loading} onSelect={handleSelect} />
             </div>
           </div>
         )}
