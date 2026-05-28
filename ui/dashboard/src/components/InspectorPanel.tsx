@@ -315,7 +315,7 @@ export function InspectorPanel({ payload, onDismiss, onFlagAction }: InspectorPa
     "Event Detail";
 
   return (
-    <aside className="w-[360px] shrink-0 border-l border-border bg-card flex flex-col min-h-0">
+    <aside data-testid="inspector-panel" className="w-[360px] shrink-0 border-l border-border bg-card flex flex-col min-h-0">
       {/* Panel header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
         <span className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">

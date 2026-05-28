@@ -88,6 +88,7 @@ function FlagRow({
 
   return (
     <div
+      data-testid="flag-row"
       className={cn(
         "group px-4 py-2.5 border-b border-border/50 hover:bg-muted/30 transition-colors cursor-pointer",
         isResolved && "opacity-50",

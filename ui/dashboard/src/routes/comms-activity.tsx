@@ -72,6 +72,7 @@ function formatTs(iso: string): string {
 function EventRow({ event, onSelect }: { event: AgentEventEntry; onSelect?: (e: AgentEventEntry) => void }) {
   return (
     <div
+      data-testid="event-row"
       className="grid grid-cols-[80px_auto_1fr_auto] gap-2.5 px-4 py-2.5 border-b border-border/60 hover:bg-secondary/20 transition-colors cursor-pointer group"
       onClick={() => onSelect?.(event)}
     >

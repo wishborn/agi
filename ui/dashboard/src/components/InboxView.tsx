@@ -155,6 +155,7 @@ function ThreadCard({ thread, onSelect }: { thread: ThreadEntry; onSelect?: (t: 
 
   return (
     <div
+      data-testid="thread-card"
       className="px-4 py-3 border-b border-border/60 cursor-pointer transition-colors hover:bg-secondary/30 group"
       onClick={() => onSelect?.(thread)}
     >
