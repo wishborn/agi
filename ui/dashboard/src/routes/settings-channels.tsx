@@ -73,7 +73,8 @@ interface DiscordStateDescriptor {
   snapshotAt: string;
 }
 
-type DiscordChannelMode = "off" | "monitor" | "respond";
+import { ChannelModeBadge, CHANNEL_MODES, CHANNEL_MODE_META } from "@/components/ChannelModeBadge.js";
+import type { DiscordChannelMode } from "@/components/ChannelModeBadge.js";
 
 /** Fields managed visually by DiscordServerPanel — hidden in the generic config form. */
 const DISCORD_VISUAL_FIELDS = new Set([
@@ -496,16 +497,27 @@ function DiscordServerPanel({ channelId, cfgResponse, enabled, channelStatus, on
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const guildInitialized = useRef(false);
 
-  // Initialise modes + roles from current config whenever cfgResponse arrives
+  // Initialise modes + roles from current config whenever cfgResponse arrives.
+  // Prefer the unified `channelModes` JSON map (supports all 6 modes);
+  // fall back to legacy allowedChannelIds / presenceChannelIds for older configs.
   useEffect(() => {
     if (!cfgResponse) return;
     const c = cfgResponse.config;
-    const respondIds = parseIds(c["allowedChannelIds"]);
-    const monitorIds = parseIds(c["presenceChannelIds"]);
-    const modes: Record<string, DiscordChannelMode> = {};
-    for (const id of respondIds) modes[id] = "respond";
-    for (const id of monitorIds) modes[id] = "monitor";
-    setChannelModes(modes);
+    const modeJson = c["channelModes"];
+    if (modeJson && typeof modeJson === "string") {
+      try {
+        setChannelModes(JSON.parse(modeJson) as Record<string, DiscordChannelMode>);
+      } catch {
+        // fall through to legacy
+      }
+    } else {
+      const respondIds = parseIds(c["allowedChannelIds"]);
+      const monitorIds = parseIds(c["presenceChannelIds"]);
+      const modes: Record<string, DiscordChannelMode> = {};
+      for (const id of respondIds) modes[id] = "respond";
+      for (const id of monitorIds) modes[id] = "monitor";
+      setChannelModes(modes);
+    }
     setAllowedRoleSet(new Set(parseIds(c["allowedRoleIds"])));
   }, [cfgResponse]);
 
@@ -535,12 +547,13 @@ function DiscordServerPanel({ channelId, cfgResponse, enabled, channelStatus, on
 
   function setMode(chId: string, mode: DiscordChannelMode) {
     setChannelModes((prev) => {
+      const next = { ...prev };
       if (mode === "off") {
-        const next = { ...prev };
         delete next[chId];
-        return next;
+      } else {
+        next[chId] = mode;
       }
-      return { ...prev, [chId]: mode };
+      return next;
     });
   }
 
@@ -558,14 +571,12 @@ function DiscordServerPanel({ channelId, cfgResponse, enabled, channelStatus, on
     setSaving(true);
     setSaveMsg(null);
     try {
-      const respondIds = Object.entries(channelModes)
-        .filter(([, m]) => m === "respond")
-        .map(([id]) => id);
-      const monitorIds = Object.entries(channelModes)
-        .filter(([, m]) => m === "monitor")
-        .map(([id]) => id);
+      // Write unified mode map (all 6 modes) + keep legacy keys for bot compat.
+      const respondIds = Object.entries(channelModes).filter(([, m]) => m === "respond").map(([id]) => id);
+      const monitorIds = Object.entries(channelModes).filter(([, m]) => m === "monitor").map(([id]) => id);
       const config: Record<string, unknown> = {
         ...cfgResponse.config,
+        channelModes: JSON.stringify(channelModes),
         allowedChannelIds: respondIds.join(","),
         presenceChannelIds: monitorIds.join(","),
         allowedRoleIds: [...allowedRoleSet].join(","),
@@ -668,11 +679,14 @@ function DiscordServerPanel({ channelId, cfgResponse, enabled, channelStatus, on
           <Card className="p-4 space-y-3">
             <div>
               <span className="text-[13px] font-semibold text-foreground">Channels</span>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
-                <span className="font-medium text-foreground">Off</span> = ignored ·{" "}
-                <span className="font-medium text-blue-400">Monitor</span> = reads all messages, no responses ·{" "}
-                <span className="font-medium text-emerald-400">Respond</span> = reads + AI routing
-              </p>
+              <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
+                {CHANNEL_MODES.map((m) => (
+                  <span key={m} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <ChannelModeBadge mode={m} size="xs" />
+                    <span className="hidden sm:inline">{CHANNEL_MODE_META[m].description}</span>
+                  </span>
+                ))}
+              </div>
             </div>
             <div className="space-y-4 max-h-[480px] overflow-y-auto pr-1">
               {groupChannels(selectedGuild.channels).map(({ parent, channels: chs }) => (
@@ -696,26 +710,28 @@ function DiscordServerPanel({ channelId, cfgResponse, enabled, channelStatus, on
                             </span>
                             {ch.name}
                           </span>
-                          <div className="flex items-center gap-0.5 shrink-0">
-                            {(["off", "monitor", "respond"] as DiscordChannelMode[]).map((m) => (
-                              <button
-                                key={m}
-                                type="button"
-                                onClick={() => setMode(ch.id, m)}
-                                className={cn(
-                                  "px-2 py-0.5 rounded text-[11px] font-medium transition-colors",
-                                  mode === m
-                                    ? m === "respond"
-                                      ? "bg-emerald-500/20 text-emerald-400"
-                                      : m === "monitor"
-                                        ? "bg-blue-500/20 text-blue-400"
-                                        : "bg-secondary text-foreground"
-                                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/60",
-                                )}
-                              >
-                                {m.charAt(0).toUpperCase() + m.slice(1)}
-                              </button>
-                            ))}
+                          <div className="grid grid-cols-3 gap-0.5 shrink-0">
+                            {CHANNEL_MODES.map((m) => {
+                              const meta = CHANNEL_MODE_META[m];
+                              const active = mode === m;
+                              return (
+                                <button
+                                  key={m}
+                                  type="button"
+                                  onClick={() => setMode(ch.id, m)}
+                                  title={meta.description}
+                                  className={cn(
+                                    "inline-flex items-center justify-center gap-1 rounded-full border font-semibold text-[9px] h-[16px] px-1.5 transition-all",
+                                    active
+                                      ? cn("border", meta.badge)
+                                      : "bg-transparent border-transparent text-muted-foreground/40 hover:border-border/50 hover:text-muted-foreground",
+                                  )}
+                                >
+                                  {active && <span className={cn("w-1 h-1 rounded-full shrink-0", meta.dot)} />}
+                                  {meta.label}
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                       );

@@ -11,7 +11,9 @@ import { cn } from "@/lib/utils";
 import { PageScroll } from "@/components/PageScroll.js";
 import { DayNavigator } from "@/components/DayNavigator.js";
 import { ConversationView } from "@/components/ConversationView.js";
-import { fetchChannelState, fetchCommsLog, fetchAmbientLog } from "@/api.js";
+import { fetchChannelState, fetchCommsLog, fetchAmbientLog, fetchChannelConfig } from "@/api.js";
+import { ChannelModeBadge } from "@/components/ChannelModeBadge.js";
+import type { DiscordChannelMode } from "@/components/ChannelModeBadge.js";
 import type { DiscordGuildDescriptor, ConversationEntry, CommsLogEntry, AmbientLogEntry } from "@/types.js";
 
 function todayIso(): string {
@@ -44,13 +46,32 @@ export default function CommsDiscordPage() {
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
   const [entries, setEntries] = useState<ConversationEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [channelModes, setChannelModes] = useState<Record<string, DiscordChannelMode>>({});
 
-  // Load guild state once on mount
+  // Load guild state + channel mode config once on mount
   useEffect(() => {
     fetchChannelState("discord")
       .then((state) => {
         setConnected(state.connected);
         setGuilds(state.guilds);
+      })
+      .catch(() => {});
+    fetchChannelConfig("discord")
+      .then((cfg) => {
+        const modeJson = cfg.config["channelModes"];
+        if (modeJson && typeof modeJson === "string") {
+          try {
+            setChannelModes(JSON.parse(modeJson) as Record<string, DiscordChannelMode>);
+          } catch { /* ignore */ }
+        } else {
+          // Legacy fallback
+          const modes: Record<string, DiscordChannelMode> = {};
+          const allowed = String(cfg.config["allowedChannelIds"] ?? "").split(",").filter(Boolean);
+          const presence = String(cfg.config["presenceChannelIds"] ?? "").split(",").filter(Boolean);
+          for (const id of allowed) modes[id] = "respond";
+          for (const id of presence) if (!modes[id]) modes[id] = "monitor";
+          setChannelModes(modes);
+        }
       })
       .catch(() => {});
   }, []);
@@ -92,19 +113,23 @@ export default function CommsDiscordPage() {
         {/* Guild header */}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               <h2 className="text-[15px] font-semibold text-foreground">
                 {primaryGuild?.name ?? "Discord"}
               </h2>
               {guilds.length > 1 && (
                 <span className="text-[11px] text-muted-foreground">+{guilds.length - 1} more</span>
               )}
+              {/* Show active channel mode badge when a channel is selected */}
+              {selectedChannelId !== null && channelModes[selectedChannelId] && (
+                <ChannelModeBadge mode={channelModes[selectedChannelId]!} size="sm" />
+              )}
             </div>
             <div className="flex items-center gap-2 mt-0.5">
               <span
                 className={cn(
                   "inline-block w-1.5 h-1.5 rounded-full shrink-0",
-                  connected ? "bg-green-500" : "bg-muted-foreground",
+                  connected ? "bg-emerald-500" : "bg-muted-foreground",
                 )}
               />
               <span className="text-[11px] text-muted-foreground">
@@ -116,34 +141,44 @@ export default function CommsDiscordPage() {
           <DayNavigator date={day} onChange={setDay} />
         </div>
 
-        {/* Text channel selector — only shown when guild state is available */}
+        {/* Text channel selector with mode badges */}
         {textChannels.length > 0 && (
-          <div className="flex gap-1 flex-wrap">
+          <div className="flex gap-1.5 flex-wrap">
             <button
               onClick={() => setSelectedChannelId(null)}
               className={cn(
-                "px-3 py-1.5 md:py-1 rounded-lg text-[12px] border-none cursor-pointer transition-colors",
+                "px-3 py-1 rounded-lg text-[12px] border cursor-pointer transition-colors",
                 selectedChannelId === null
-                  ? "bg-primary text-primary-foreground font-semibold"
-                  : "bg-secondary text-foreground hover:bg-secondary/80",
+                  ? "bg-violet-500/10 text-violet-600 dark:text-violet-300 border-violet-500/25 font-semibold"
+                  : "bg-transparent border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60",
               )}
             >
-              All
+              All channels
             </button>
-            {textChannels.map((ch) => (
-              <button
-                key={ch.id}
-                onClick={() => setSelectedChannelId(ch.id === selectedChannelId ? null : ch.id)}
-                className={cn(
-                  "px-3 py-1.5 md:py-1 rounded-lg text-[12px] border-none cursor-pointer transition-colors",
-                  selectedChannelId === ch.id
-                    ? "bg-primary text-primary-foreground font-semibold"
-                    : "bg-secondary text-foreground hover:bg-secondary/80",
-                )}
-              >
-                #{ch.name}
-              </button>
-            ))}
+            {textChannels.map((ch) => {
+              const mode = channelModes[ch.id] ?? "off";
+              const active = selectedChannelId === ch.id;
+              return (
+                <button
+                  key={ch.id}
+                  onClick={() => setSelectedChannelId(ch.id === selectedChannelId ? null : ch.id)}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[12px] border cursor-pointer transition-colors",
+                    active
+                      ? "bg-primary/10 text-primary border-primary/25 font-semibold"
+                      : mode === "off"
+                        ? "bg-transparent border-dashed border-border/50 text-muted-foreground/60 hover:text-muted-foreground hover:border-border"
+                        : "bg-transparent border-border text-foreground hover:bg-secondary/60",
+                  )}
+                >
+                  <span className="text-muted-foreground/60 select-none">
+                    {ch.kind === "forum" ? "§" : "#"}
+                  </span>
+                  <span>{ch.name}</span>
+                  {mode !== "off" && <ChannelModeBadge mode={mode} size="xs" showDot={false} />}
+                </button>
+              );
+            })}
           </div>
         )}
 
