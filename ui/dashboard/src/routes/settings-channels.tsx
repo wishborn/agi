@@ -77,11 +77,23 @@ import { ChannelModeBadge, CHANNEL_MODES, CHANNEL_MODE_META } from "@/components
 import type { DiscordChannelMode } from "@/components/ChannelModeBadge.js";
 
 /** Fields managed visually by DiscordServerPanel — hidden in the generic config form. */
+interface ChannelExtConfig {
+  memoryScope?: {
+    channel?: boolean;
+    server?: boolean;
+    user?: boolean;
+    thread?: boolean;
+  };
+  promptOverride?: string;
+}
+
 const DISCORD_VISUAL_FIELDS = new Set([
   "allowedGuildIds",
   "allowedChannelIds",
   "presenceChannelIds",
   "allowedRoleIds",
+  "channelModes",
+  "channelConfig",
 ]);
 
 function parseIds(v: unknown): string[] {
@@ -475,6 +487,124 @@ function ChannelChatsTab({ channelId }: { channelId: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// ChannelDetailPanel — per-channel config (mode + memory scope + prompt override)
+// ---------------------------------------------------------------------------
+
+interface ChannelDetailPanelProps {
+  channel: DiscordChannelDescriptor;
+  mode: DiscordChannelMode;
+  extConfig: ChannelExtConfig;
+  onModeChange: (mode: DiscordChannelMode) => void;
+  onExtConfigChange: (cfg: ChannelExtConfig) => void;
+  onClose: () => void;
+}
+
+function ChannelDetailPanel({ channel, mode, extConfig, onModeChange, onExtConfigChange, onClose }: ChannelDetailPanelProps) {
+  const memScope = extConfig.memoryScope ?? {};
+  const memoryDefaults: Record<string, boolean> = { channel: true, server: true, user: true, thread: false };
+
+  function toggleMemory(key: keyof NonNullable<ChannelExtConfig["memoryScope"]>) {
+    const current = memScope[key] ?? memoryDefaults[key] ?? true;
+    onExtConfigChange({ ...extConfig, memoryScope: { ...memScope, [key]: !current } });
+  }
+
+  const memoryTiles = [
+    { key: "channel" as const, label: "Channel memory", sub: "Last 1,000 msgs" },
+    { key: "server"  as const, label: "Server memory",  sub: "Cross-channel, shared" },
+    { key: "user"    as const, label: "User memory",    sub: "Per-user profile + history" },
+    { key: "thread"  as const, label: "Thread memory",  sub: "Isolated per-thread" },
+  ];
+
+  return (
+    <Card className="p-4 flex flex-col gap-4 overflow-y-auto max-h-[520px]">
+      {/* Header */}
+      <div className="flex items-center gap-2">
+        <span className="text-[13px] font-semibold text-foreground flex-1 min-w-0 truncate">
+          <span className="text-muted-foreground mr-1 select-none">{channel.kind === "forum" ? "§" : "#"}</span>
+          {channel.name}
+        </span>
+        <ChannelModeBadge mode={mode} size="sm" />
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-muted-foreground hover:text-foreground transition-colors shrink-0 w-5 h-5 flex items-center justify-center rounded text-[13px]"
+          title="Close"
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* Mode picker — full descriptive cards */}
+      <div>
+        <div className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Mode</div>
+        <div className="grid grid-cols-2 gap-1.5">
+          {CHANNEL_MODES.map((m) => {
+            const meta = CHANNEL_MODE_META[m];
+            const active = mode === m;
+            return (
+              <button
+                key={m}
+                type="button"
+                onClick={() => onModeChange(m)}
+                className={cn(
+                  "text-left p-2.5 rounded-lg border transition-all",
+                  active ? meta.badge : "border-border hover:bg-secondary/40 hover:border-border/80",
+                )}
+              >
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", meta.dot)} />
+                  <span className="text-[11px] font-semibold">{meta.label}</span>
+                </div>
+                <p className="text-[10.5px] leading-snug text-muted-foreground">{meta.description}</p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Memory scope */}
+      <div>
+        <div className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Memory scope</div>
+        <div className="grid grid-cols-2 gap-1.5">
+          {memoryTiles.map(({ key, label, sub }) => {
+            const on = memScope[key] ?? memoryDefaults[key] ?? true;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => toggleMemory(key)}
+                className={cn(
+                  "text-left p-2.5 rounded-lg border transition-colors",
+                  on ? "bg-violet-500/10 border-violet-500/25" : "border-border hover:bg-secondary/40",
+                )}
+              >
+                <div className="flex items-center gap-1.5">
+                  <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", on ? "bg-violet-400" : "bg-zinc-500 opacity-50")} />
+                  <span className="text-[11px] font-semibold text-foreground">{label}</span>
+                </div>
+                <p className="text-[10.5px] text-muted-foreground mt-0.5">{sub}</p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Prompt override */}
+      <div>
+        <div className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Prompt override</div>
+        <textarea
+          value={extConfig.promptOverride ?? ""}
+          onChange={(e) => onExtConfigChange({ ...extConfig, promptOverride: e.target.value })}
+          placeholder={"Channel-scoped system prompt (optional)…\nAppended to the base system prompt for messages in this channel."}
+          rows={4}
+          className="w-full rounded-lg border border-border bg-input text-[12px] text-foreground placeholder:text-muted-foreground/50 px-3 py-2 font-mono resize-y focus:outline-none focus:ring-1 focus:ring-ring"
+        />
+      </div>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // DiscordServerPanel — visual guild/channel/role manager
 // ---------------------------------------------------------------------------
 
@@ -495,6 +625,8 @@ function DiscordServerPanel({ channelId, cfgResponse, enabled, channelStatus, on
   const [allowedRoleSet, setAllowedRoleSet] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
+  const [channelConfigs, setChannelConfigs] = useState<Record<string, ChannelExtConfig>>({});
   const guildInitialized = useRef(false);
 
   // Initialise modes + roles from current config whenever cfgResponse arrives.
@@ -519,6 +651,10 @@ function DiscordServerPanel({ channelId, cfgResponse, enabled, channelStatus, on
       setChannelModes(modes);
     }
     setAllowedRoleSet(new Set(parseIds(c["allowedRoleIds"])));
+    const cfgJson = c["channelConfig"];
+    if (cfgJson && typeof cfgJson === "string") {
+      try { setChannelConfigs(JSON.parse(cfgJson) as Record<string, ChannelExtConfig>); } catch { /* ignore */ }
+    }
   }, [cfgResponse]);
 
   const loadState = useCallback(async () => {
@@ -577,6 +713,7 @@ function DiscordServerPanel({ channelId, cfgResponse, enabled, channelStatus, on
       const config: Record<string, unknown> = {
         ...cfgResponse.config,
         channelModes: JSON.stringify(channelModes),
+        channelConfig: JSON.stringify(channelConfigs),
         allowedChannelIds: respondIds.join(","),
         presenceChannelIds: monitorIds.join(","),
         allowedRoleIds: [...allowedRoleSet].join(","),
@@ -699,40 +836,28 @@ function DiscordServerPanel({ channelId, cfgResponse, enabled, channelStatus, on
                   <div className="space-y-0.5">
                     {chs.map((ch) => {
                       const mode: DiscordChannelMode = channelModes[ch.id] ?? "off";
+                      const isSelected = selectedChannelId === ch.id;
                       return (
                         <div
                           key={ch.id}
-                          className="flex items-center justify-between gap-2 py-1 px-2 rounded hover:bg-secondary/40"
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setSelectedChannelId(isSelected ? null : ch.id)}
+                          onKeyDown={(e) => e.key === "Enter" && setSelectedChannelId(isSelected ? null : ch.id)}
+                          className={cn(
+                            "flex items-center justify-between gap-2 py-1.5 px-2 rounded cursor-pointer transition-colors",
+                            isSelected
+                              ? "bg-primary/10 ring-1 ring-primary/20"
+                              : "hover:bg-secondary/40",
+                          )}
                         >
-                          <span className="text-[13px] text-foreground truncate flex-1 min-w-0">
+                          <span className={cn("text-[13px] truncate flex-1 min-w-0", isSelected ? "text-primary font-medium" : "text-foreground")}>
                             <span className="text-muted-foreground mr-1 select-none">
                               {ch.kind === "forum" ? "§" : "#"}
                             </span>
                             {ch.name}
                           </span>
-                          <div className="grid grid-cols-3 gap-0.5 shrink-0">
-                            {CHANNEL_MODES.map((m) => {
-                              const meta = CHANNEL_MODE_META[m];
-                              const active = mode === m;
-                              return (
-                                <button
-                                  key={m}
-                                  type="button"
-                                  onClick={() => setMode(ch.id, m)}
-                                  title={meta.description}
-                                  className={cn(
-                                    "inline-flex items-center justify-center gap-1 rounded-full border font-semibold text-[9px] h-[16px] px-1.5 transition-all",
-                                    active
-                                      ? cn("border", meta.badge)
-                                      : "bg-transparent border-transparent text-muted-foreground/40 hover:border-border/50 hover:text-muted-foreground",
-                                  )}
-                                >
-                                  {active && <span className={cn("w-1 h-1 rounded-full shrink-0", meta.dot)} />}
-                                  {meta.label}
-                                </button>
-                              );
-                            })}
-                          </div>
+                          <ChannelModeBadge mode={mode} size="xs" showDot={mode !== "off"} />
                         </div>
                       );
                     })}
@@ -742,47 +867,61 @@ function DiscordServerPanel({ channelId, cfgResponse, enabled, channelStatus, on
             </div>
           </Card>
 
-          {/* Roles panel */}
-          <Card className="p-4 space-y-3">
-            <div>
-              <span className="text-[13px] font-semibold text-foreground">Roles</span>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
-                Checked roles can interact with Aion. Empty = all roles allowed.
-              </p>
-            </div>
-            <div className="space-y-0.5 max-h-[480px] overflow-y-auto">
-              {selectedGuild.roles
-                .filter((r) => !r.managed)
-                .map((role) => {
-                  const color = roleColor(role.color);
-                  const checked = allowedRoleSet.has(role.id);
-                  return (
-                    <label
-                      key={role.id}
-                      className="flex items-center gap-2 py-1 px-2 rounded hover:bg-secondary/40 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleRole(role.id)}
-                        className="accent-emerald-500 shrink-0"
-                      />
-                      <span
-                        className="text-[13px] truncate"
-                        style={color !== undefined ? { color } : undefined}
-                      >
-                        {role.name}
-                      </span>
-                    </label>
-                  );
-                })}
-              {selectedGuild.roles.filter((r) => !r.managed).length === 0 && (
-                <p className="text-[12px] text-muted-foreground py-2 px-2">
-                  No assignable roles found in this server.
+          {/* Right panel — channel detail when selected, roles otherwise */}
+          {selectedChannelId !== null && selectedGuild.channels.some((c) => c.id === selectedChannelId) ? (
+            <ChannelDetailPanel
+              channel={selectedGuild.channels.find((c) => c.id === selectedChannelId)!}
+              mode={channelModes[selectedChannelId] ?? "off"}
+              extConfig={channelConfigs[selectedChannelId] ?? {}}
+              onModeChange={(m) => setMode(selectedChannelId, m)}
+              onExtConfigChange={(cfg) => setChannelConfigs((prev) => ({ ...prev, [selectedChannelId]: cfg }))}
+              onClose={() => setSelectedChannelId(null)}
+            />
+          ) : (
+            <Card className="p-4 space-y-3">
+              <div>
+                <span className="text-[13px] font-semibold text-foreground">Roles</span>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Checked roles can interact with Aion. Empty = all roles allowed.
                 </p>
-              )}
-            </div>
-          </Card>
+              </div>
+              <div className="space-y-0.5 max-h-[480px] overflow-y-auto">
+                {selectedGuild.roles
+                  .filter((r) => !r.managed)
+                  .map((role) => {
+                    const color = roleColor(role.color);
+                    const checked = allowedRoleSet.has(role.id);
+                    return (
+                      <label
+                        key={role.id}
+                        className="flex items-center gap-2 py-1 px-2 rounded hover:bg-secondary/40 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleRole(role.id)}
+                          className="accent-emerald-500 shrink-0"
+                        />
+                        <span
+                          className="text-[13px] truncate"
+                          style={color !== undefined ? { color } : undefined}
+                        >
+                          {role.name}
+                        </span>
+                      </label>
+                    );
+                  })}
+                {selectedGuild.roles.filter((r) => !r.managed).length === 0 && (
+                  <p className="text-[12px] text-muted-foreground py-2 px-2">
+                    No assignable roles found in this server.
+                  </p>
+                )}
+              </div>
+              <p className="text-[10.5px] text-muted-foreground border-t border-border pt-2">
+                Click a channel to configure its mode, memory scope, and prompt.
+              </p>
+            </Card>
+          )}
         </div>
       )}
 
