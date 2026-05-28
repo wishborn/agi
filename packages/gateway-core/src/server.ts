@@ -685,6 +685,7 @@ export async function startGatewayServer(
     nodeId,
     voicePipeline,
     getGatewayState: () => stateMachine.getState(),
+    commsLog,
     logger,
   });
 

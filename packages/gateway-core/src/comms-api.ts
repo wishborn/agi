@@ -147,6 +147,40 @@ export function registerCommsRoutes(
   });
 
   // -------------------------------------------------------------------------
+  // GET /api/agent/events — outbound comms entries projected as AgentEventEntry
+  // -------------------------------------------------------------------------
+
+  fastify.get<{
+    Querystring: { channel?: string; kind?: string; limit?: string; date?: string };
+  }>("/api/agent/events", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err !== null) return reply.code(403).send({ error: err });
+
+    const { channel, date } = request.query;
+    const limit = Math.min(Number(request.query.limit) || 50, 200);
+
+    // Currently only "respond" events come from the comms log (outbound entries).
+    // Other kinds (tool, memory, route) will be added when agent pipeline hooks exist.
+    const [entries, total] = await Promise.all([
+      commsLog.query({ direction: "outbound", channel, date, limit }),
+      commsLog.count({ direction: "outbound", channel, date }),
+    ]);
+
+    const events = entries.map((e) => ({
+      id: e.id,
+      ts: e.createdAt,
+      kind: "respond" as const,
+      agentLabel: "Aion",
+      channel: e.channel,
+      target: e.senderName ?? e.senderId,
+      summary: e.preview,
+      entityId: e.entityId,
+    }));
+
+    return reply.send({ events, total });
+  });
+
+  // -------------------------------------------------------------------------
   // GET /api/notifications — recent notifications
   // -------------------------------------------------------------------------
 

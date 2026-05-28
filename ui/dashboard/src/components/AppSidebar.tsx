@@ -61,6 +61,7 @@ const builtinSections: NavSectionWithMode[] = [
   ]},
   { mode: "main", title: "Communication", items: [
     { to: "/comms",            label: "All Messages",    exact: true, icon: Inbox },
+    { to: "/comms/activity",   label: "Activity",        icon: Activity },
     { to: "/comms/discord",    label: "Discord",         icon: MessageCircle },
     { to: "/comms/gmail",      label: "Gmail",           icon: Mail },
     { to: "/comms/telegram",   label: "Telegram",        icon: Send },

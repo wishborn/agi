@@ -13,6 +13,7 @@ import EntityPage from "./routes/entity.js";
 import ResourcesPage from "./routes/resources.js";
 import WorkflowsPage from "./routes/workflows.js";
 import CommsPage from "./routes/comms.js";
+import CommsActivityPage from "./routes/comms-activity.js";
 import CommsTelegramPage from "./routes/comms-telegram.js";
 import CommsDiscordPage from "./routes/comms-discord.js";
 import CommsGmailPage from "./routes/comms-gmail.js";
@@ -148,6 +149,7 @@ export const router = createBrowserRouter([
       { path: "identity/pending", element: <IdentityPendingPage /> },
       // Communication
       { path: "comms", element: <CommsPage /> },
+      { path: "comms/activity", element: <CommsActivityPage /> },
       { path: "comms/telegram", element: <CommsTelegramPage /> },
       { path: "comms/discord", element: <CommsDiscordPage /> },
       { path: "comms/gmail", element: <CommsGmailPage /> },

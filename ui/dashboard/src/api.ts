@@ -9,6 +9,7 @@ import type {
   COAExplorerEntry,
   CommsLogEntry,
   AmbientLogEntry,
+  AgentEventEntry,
   CommsStats,
   DashboardOverview,
   EntityImpactProfile,
@@ -1826,6 +1827,25 @@ export async function fetchCommsStats(): Promise<CommsStats> {
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<CommsStats>;
+}
+
+export async function fetchAgentEvents(opts?: {
+  channel?: string;
+  kind?: string;
+  date?: string;
+  limit?: number;
+}): Promise<{ events: AgentEventEntry[]; total: number }> {
+  const url = new URL("/api/agent/events", window.location.origin);
+  if (opts?.channel) url.searchParams.set("channel", opts.channel);
+  if (opts?.kind) url.searchParams.set("kind", opts.kind);
+  if (opts?.date) url.searchParams.set("date", opts.date);
+  if (opts?.limit !== undefined) url.searchParams.set("limit", String(opts.limit));
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ events: AgentEventEntry[]; total: number }>;
 }
 
 // ---------------------------------------------------------------------------

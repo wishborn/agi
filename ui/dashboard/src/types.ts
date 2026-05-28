@@ -190,6 +190,23 @@ export type ConversationEntry =
   | { kind: "comms-out"; id: string; ts: string; text: string; channel: string; confidence?: number; latencyMs?: number; model?: string }
   | { kind: "ambient";   ts: string; authorId: string; displayName: string; text: string };
 
+export type AgentEventKind = "respond" | "tool" | "memory" | "route" | "escalate" | "approval" | "mod" | "skip";
+
+export interface AgentEventEntry {
+  id: string;
+  ts: string;
+  kind: AgentEventKind;
+  agentLabel: string;
+  channel: string;
+  target: string;
+  summary: string;
+  confidence?: number;
+  latencyMs?: number;
+  model?: string;
+  tokens?: { in: number; out: number };
+  entityId?: string | null;
+}
+
 export interface WorkerJobUpdate {
   jobId: string;
   status: "pending" | "running" | "checkpoint" | "complete" | "failed";
