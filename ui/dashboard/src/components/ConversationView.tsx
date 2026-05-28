@@ -1,9 +1,9 @@
 /**
- * ConversationView — chat-bubble renderer for channel conversation history.
+ * ConversationView — Discord-style conversation renderer.
  *
- * Renders a list of ConversationEntry items as a chat UI:
- *   - inbound / ambient: left-aligned, secondary background
- *   - outbound (Aion): right-aligned, primary background
+ * All messages are left-aligned (operator reading mode, not perspective-split).
+ * Aion messages use the amber/gold avatar and name to distinguish from humans.
+ * Layout: [avatar] [name · time] [message text]
  */
 
 import { cn } from "@/lib/utils";
@@ -20,12 +20,51 @@ function senderLabel(entry: ConversationEntry): string {
 }
 
 function messageText(entry: ConversationEntry): string {
-  if (entry.kind === "comms-out" || entry.kind === "comms-in") return entry.text;
   return entry.text;
 }
 
 function entryTs(entry: ConversationEntry): string {
   return entry.ts;
+}
+
+// Deterministic avatar color from a seed string — matches design's av.{v,s,e,r,a,z} system.
+function avatarColor(seed: string): string {
+  const palette = ["violet", "sky", "emerald", "rose", "amber", "zinc"];
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) & 0xffff;
+  return palette[h % palette.length]!;
+}
+
+const COLOR_CLASSES: Record<string, string> = {
+  violet:  "bg-gradient-to-br from-violet-500 to-indigo-600",
+  sky:     "bg-gradient-to-br from-sky-500 to-blue-600",
+  emerald: "bg-gradient-to-br from-emerald-500 to-emerald-700",
+  rose:    "bg-gradient-to-br from-rose-500 to-rose-600",
+  amber:   "bg-gradient-to-br from-amber-500 to-orange-600",
+  zinc:    "bg-gradient-to-br from-zinc-500 to-zinc-700",
+};
+
+const AI_AVATAR_CLASS = "bg-gradient-to-br from-amber-400 to-amber-600";
+
+interface AvatarProps {
+  initial: string;
+  isAi: boolean;
+  seed: string;
+}
+
+function Avatar({ initial, isAi, seed }: AvatarProps) {
+  const cls = isAi ? AI_AVATAR_CLASS : (COLOR_CLASSES[avatarColor(seed)] ?? COLOR_CLASSES.zinc!);
+  return (
+    <div
+      className={cn(
+        "w-8 h-8 rounded-full shrink-0 flex items-center justify-center text-[12px] font-semibold mt-0.5",
+        isAi ? "text-zinc-950" : "text-white",
+        cls,
+      )}
+    >
+      {initial.toUpperCase()}
+    </div>
+  );
 }
 
 export interface ConversationViewProps {
@@ -51,36 +90,64 @@ export function ConversationView({ entries, loading, emptyText }: ConversationVi
     );
   }
 
+  // Group consecutive messages from the same sender to avoid repeated avatars.
+  type Group = { key: string; isAi: boolean; seed: string; label: string; messages: { ts: string; text: string; isAmbient: boolean }[] };
+  const groups: Group[] = [];
+  for (const entry of entries) {
+    const label = senderLabel(entry);
+    const isAi = entry.kind === "comms-out";
+    const isAmbient = entry.kind === "ambient";
+    const key = isAi ? "__aion__" : label;
+    const last = groups[groups.length - 1];
+    if (last && last.key === key) {
+      last.messages.push({ ts: entryTs(entry), text: messageText(entry), isAmbient });
+    } else {
+      groups.push({ key, isAi, seed: label, label, messages: [{ ts: entryTs(entry), text: messageText(entry), isAmbient }] });
+    }
+  }
+
   return (
-    <div className="flex flex-col gap-2 py-2">
-      {entries.map((entry, i) => {
-        const isOutbound = entry.kind === "comms-out";
-        return (
-          <div
-            key={entry.kind === "ambient" ? `amb-${entry.ts}-${i}` : entry.id}
-            className={cn("flex flex-col gap-0.5 max-w-[80%]", isOutbound ? "self-end items-end" : "self-start items-start")}
-          >
-            <div className="flex items-center gap-1.5 px-1">
-              <span className="text-[10px] text-muted-foreground font-medium">
-                {senderLabel(entry)}
+    <div className="flex flex-col gap-3 py-2">
+      {groups.map((group, gi) => (
+        <div key={gi} className="flex gap-2.5 px-1 py-0.5 hover:bg-secondary/20 rounded-lg transition-colors">
+          <Avatar initial={group.label.slice(0, 1)} isAi={group.isAi} seed={group.seed} />
+          <div className="flex-1 min-w-0">
+            {/* Sender header */}
+            <div className="flex items-baseline gap-2 mb-0.5">
+              <span
+                className={cn(
+                  "text-[13.5px] font-semibold",
+                  group.isAi ? "text-amber-500 dark:text-amber-400" : "text-foreground",
+                )}
+              >
+                {group.label}
               </span>
-              <span className="text-[10px] text-muted-foreground">
-                {formatTime(entryTs(entry))}
+              {group.isAi && (
+                <span className="inline-flex items-center gap-1 text-[9.5px] font-semibold rounded-full border px-1.5 py-0 bg-violet-500/10 text-violet-600 dark:text-violet-300 border-violet-500/25">
+                  bot
+                </span>
+              )}
+              <span className="text-[10.5px] text-muted-foreground font-mono">
+                {formatTime(group.messages[0]!.ts)}
               </span>
             </div>
-            <div
-              className={cn(
-                "px-3 py-2 rounded-2xl text-[13px] leading-relaxed whitespace-pre-wrap break-words",
-                isOutbound
-                  ? "bg-primary text-primary-foreground rounded-tr-sm"
-                  : "bg-secondary text-foreground rounded-tl-sm",
-              )}
-            >
-              {messageText(entry)}
+            {/* Message lines */}
+            <div className="flex flex-col gap-0.5">
+              {group.messages.map((msg, mi) => (
+                <p
+                  key={mi}
+                  className={cn(
+                    "text-[13px] leading-relaxed whitespace-pre-wrap break-words m-0",
+                    msg.isAmbient ? "text-muted-foreground/80" : "text-foreground",
+                  )}
+                >
+                  {msg.text}
+                </p>
+              ))}
             </div>
           </div>
-        );
-      })}
+        </div>
+      ))}
     </div>
   );
 }
