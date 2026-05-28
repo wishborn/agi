@@ -1202,7 +1202,7 @@ export async function createGatewayRuntimeState(
       } else {
         const entry = channels[idx]!;
         if (body?.enabled !== undefined) entry.enabled = body.enabled;
-        if (body?.config !== undefined) entry.config = body.config;
+        if (body?.config !== undefined) entry.config = { ...entry.config, ...body.config };
       }
       cfg.channels = channels;
       writeFileSync(deps.configPath, JSON.stringify(cfg, null, 2) + "\n", "utf-8");

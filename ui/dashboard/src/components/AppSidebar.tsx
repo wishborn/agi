@@ -20,7 +20,7 @@ import {
   SlidersHorizontal, Activity, Blocks, ShieldHalf, ShieldCheck,
   AlertTriangle, Building2, HardDrive, Fingerprint, Sparkles, Cpu,
   Shield, ArrowLeft, FileSearch, NotebookPen, MessageCircle, Mail,
-  Send, MessageSquare, Settings2,
+  Send, MessageSquare, Settings2, KeyRound,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -90,6 +90,7 @@ const builtinSections: NavSectionWithMode[] = [
     { to: "/gateway/workflows", label: "Workflows", icon: GitBranch },
     { to: "/gateway/logs", label: "Logs", icon: ScrollText },
     { to: "/gateway/onboarding", label: "Onboarding", icon: Rocket },
+    { to: "/settings/vault", label: "Vault", icon: KeyRound },
   ]},
   { mode: "admin", title: "System", items: [
     { to: "/system", label: "Resources", exact: true, icon: Activity },

@@ -498,6 +498,34 @@ export async function startGatewayServer(
   // wires audit identity context for boot-time resolves.
   const vaultResolver = new VaultResolver(vaultStorage);
 
+  // Resolve vault:// and $VAR references in all channel config leaf values.
+  // Called before every loadPlugins() so channel adapters receive resolved credentials.
+  const resolveChannelConfigs = async (
+    channels: Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>
+  ): Promise<Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>> =>
+    Promise.all(
+      channels.map(async (ch) => {
+        if (!ch.config) return ch;
+        const resolved: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(ch.config)) {
+          if (typeof v === "string" && v.startsWith("vault://")) {
+            try {
+              const r = await vaultResolver.resolve(v);
+              resolved[k] = typeof r === "string" ? r : v;
+            } catch {
+              log.warn(`channel "${ch.id}": vault reference for "${k}" failed to resolve`);
+              resolved[k] = v;
+            }
+          } else if (typeof v === "string" && v.startsWith("$")) {
+            resolved[k] = process.env[v.slice(1)] ?? v;
+          } else {
+            resolved[k] = v;
+          }
+        }
+        return { ...ch, config: resolved };
+      })
+    );
+
   // -------------------------------------------------------------------------
   // Step 2: Auth bootstrap
   // -------------------------------------------------------------------------
@@ -1983,7 +2011,7 @@ export async function startGatewayServer(
                         Object.entries(pluginPrefs ?? {}).filter(([, v]) => v.priority !== undefined).map(([k, v]) => [k, v.priority!]),
                       ),
                       channelRegistry,
-                      channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+                      channelConfigs: await resolveChannelConfigs(config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>),
                       circuitBreaker: circuitBreakerTracker,
                       createChannelUser,
                       logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
@@ -3402,7 +3430,7 @@ export async function startGatewayServer(
               Object.entries(pluginPrefs ?? {}).filter(([, v]) => v.priority !== undefined).map(([k, v]) => [k, v.priority!]),
             ),
             channelRegistry,
-            channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+            channelConfigs: await resolveChannelConfigs(config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>),
             circuitBreaker: circuitBreakerTracker,
             createChannelUser,
             logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
@@ -3457,7 +3485,7 @@ export async function startGatewayServer(
               Object.entries(pluginPrefs ?? {}).filter(([, v]) => v.priority !== undefined).map(([k, v]) => [k, v.priority!]),
             ),
             channelRegistry,
-            channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+            channelConfigs: await resolveChannelConfigs(config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>),
             circuitBreaker: circuitBreakerTracker,
             createChannelUser,
             logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
@@ -3549,7 +3577,7 @@ export async function startGatewayServer(
               Object.entries(pluginPrefs ?? {}).filter(([, v]) => v.priority !== undefined).map(([k, v]) => [k, v.priority!]),
             ),
             channelRegistry,
-            channelConfigs: freshChannelConfigs,
+            channelConfigs: await resolveChannelConfigs(freshChannelConfigs),
             circuitBreaker: circuitBreakerTracker,
             createChannelUser,
             logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
