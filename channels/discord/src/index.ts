@@ -910,6 +910,23 @@ export default {
   async activate(api: AionimaPluginAPI): Promise<void> {
     const channelConfig = api.getChannelConfig("discord");
     if (!channelConfig?.enabled) return;
+
+    // Register a config-only stub when botToken is absent so that
+    // Settings → Channels can render the credential field for initial setup.
+    if (!isDiscordConfig(channelConfig.config)) {
+      api.getLogger().warn("discord: botToken not configured — registering stub until credentials are saved");
+      api.registerChannel({
+        id: DISCORD_CHANNEL_ID,
+        meta: { name: "Discord", version: "0.0.0" },
+        capabilities: { text: false, media: false, voice: false, reactions: false, threads: false, ephemeral: false },
+        config: createConfigAdapter(),
+        gateway: { start: async () => {}, stop: async () => {}, isRunning: () => false },
+        outbound: { send: async () => {} },
+        messaging: { onMessage: () => {} },
+      });
+      return;
+    }
+
     const createUser = api.getOrCreateChannelUser?.bind(api);
     const logMessage = api.logAmbientMessage?.bind(api);
     const getContext = api.getAmbientContext?.bind(api);
