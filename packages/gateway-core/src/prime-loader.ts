@@ -5,7 +5,8 @@
  *   - index(): scan and return entry count
  *   - loadCoreTruth(): load persona/purpose/authority from core/truth/
  *   - loadPrimeDirective(): load the PRIME directive file (prime.md at root)
- *   - search(query, limit): full-text search over indexed entries
+ *   - search(query, limit, queryEmbedding?): full-text + optional cosine search
+ *   - computeEmbeddings(engine): pre-compute entry embeddings for semantic search
  *   - getByPath(relativePath): read a specific file by relative path
  */
 
@@ -14,6 +15,7 @@ import { join, relative, extname, basename } from "node:path";
 
 import { getPrimeReader } from "./prime-reader.js";
 import type { PrimeReader } from "./prime-reader.js";
+import type { EmbeddingEngine } from "@agi/memory";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -24,6 +26,22 @@ export interface PrimeEntry {
   title: string;
   content: string;
   category: "truth" | "core" | "knowledge" | "lexicon" | "memory" | "other";
+  embedding?: Float32Array;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function primeCosine(a: Float32Array, b: Float32Array): number {
+  let dot = 0, na = 0, nb = 0;
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    const ai = a[i] ?? 0;
+    const bi = b[i] ?? 0;
+    dot += ai * bi; na += ai * ai; nb += bi * bi;
+  }
+  return na === 0 || nb === 0 ? 0 : dot / Math.sqrt(na * nb);
 }
 
 // ---------------------------------------------------------------------------
@@ -147,10 +165,30 @@ export class PrimeLoader {
   }
 
   /**
-   * Search indexed entries by keyword query.
-   * Returns up to `limit` matching entries (default 10).
+   * Pre-compute and cache embeddings for all indexed entries.
+   * Call once after index() when an EmbeddingEngine becomes available.
+   * Non-blocking for callers — errors are silently swallowed per entry.
    */
-  search(query: string, limit = 10): PrimeEntry[] {
+  async computeEmbeddings(engine: EmbeddingEngine): Promise<void> {
+    if (!this.indexed) this.index();
+    if (!engine.isAvailable()) return;
+    for (const entry of this.entries) {
+      try {
+        const text = `${entry.title}\n${entry.content}`;
+        const emb = await engine.embed(text).catch(() => null);
+        if (emb) entry.embedding = emb;
+      } catch {
+        // non-fatal — entry stays keyword-only
+      }
+    }
+  }
+
+  /**
+   * Search indexed entries. Keyword scoring always runs; if `queryEmbedding`
+   * is provided and entries have pre-computed embeddings, results are
+   * re-ranked by cosine similarity before the keyword pass.
+   */
+  search(query: string, limit = 10, queryEmbedding?: Float32Array): PrimeEntry[] {
     if (!this.indexed) {
       this.index();
     }
@@ -168,9 +206,12 @@ export class PrimeLoader {
       if (pathLower.includes(q)) score += 2;
       if (contentLower.includes(q)) score += 1;
 
-      if (score > 0) {
-        matches.push({ entry, score });
+      // Semantic score when both embeddings are available
+      if (queryEmbedding && entry.embedding) {
+        score += primeCosine(queryEmbedding, entry.embedding) * 2;
       }
+
+      if (score > 0) matches.push({ entry, score });
     }
 
     return matches

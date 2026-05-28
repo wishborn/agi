@@ -682,6 +682,9 @@ export class AgentInvoker extends EventEmitter {
       }
     }
 
+    // s197 — doc topic index so Aion knows what platform docs exist.
+    const docTopicIndex = this.deps.docIndexer?.getDocTopicIndex();
+
     const promptCtx: SystemPromptContext = {
       entity: entityCtx,
       coaFingerprint,
@@ -705,6 +708,7 @@ export class AgentInvoker extends EventEmitter {
       iterativeWorkPrompt,
       ...(projectNotes !== undefined ? { projectNotes } : {}),
       ...(request.channelContext !== undefined ? { channelContext: request.channelContext } : {}),
+      ...(docTopicIndex !== undefined && Object.keys(docTopicIndex).length > 0 ? { docTopicIndex } : {}),
     };
 
     const { prompt: baseSystemPrompt, breakdown: promptBreakdown } = assembleSystemPromptWithBreakdown(promptCtx);

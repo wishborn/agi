@@ -3,14 +3,15 @@
  * into the doc_chunks table (s112 Phase 3).
  *
  * Chunking: split markdown at H1/H2/H3 boundaries, 100–800 char range.
- * Staleness: SHA-256 content hash; unchanged chunks are skipped.
+ * Staleness: mtime-first fast path, then SHA-256 content hash (s197).
+ *   mtime cache persisted to {cacheDir}/mtime-cache.json (~/.agi/doc-index/).
  * Scopes: 'global' (agi/docs/, _aionima/k/), 'project:<path>' (k/ under project root).
  *
  * EmbeddingEngine is optional; chunks without embeddings still get FTS5 indexed.
  */
 
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, statSync, existsSync, watch } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync, watch } from "node:fs";
 import { join, extname, relative } from "node:path";
 import { ulid } from "ulid";
 import type { GraphMemoryAdapter } from "@agi/memory";
@@ -25,6 +26,12 @@ export interface DocIndexerOptions {
   globalKDir?: string;
   /** Project directories to scan for local k/ folders. */
   projectDirs?: string[];
+  /**
+   * Directory for the mtime+hash cache file (s197 — defaults to ~/.agi/doc-index/).
+   * Set to `undefined` to disable the cache. The cache file is
+   * `{cacheDir}/mtime-cache.json` mapping filePath → { mtimeMs, hash }.
+   */
+  cacheDir?: string;
   logger?: { info(msg: string): void; debug(msg: string): void; warn(msg: string): void };
 }
 
@@ -85,6 +92,13 @@ function chunkMarkdown(text: string): RawChunk[] {
 }
 
 // ---------------------------------------------------------------------------
+// Mtime cache helpers (s197 — fast staleness pre-check)
+// ---------------------------------------------------------------------------
+
+interface MtimeCacheEntry { mtimeMs: number; hash: string }
+type MtimeCache = Record<string, MtimeCacheEntry>;
+
+// ---------------------------------------------------------------------------
 // DocIndexer
 // ---------------------------------------------------------------------------
 
@@ -94,6 +108,8 @@ export class DocIndexer {
   private readonly agiRoot: string;
   private readonly globalKDir?: string;
   private readonly projectDirs: string[];
+  private readonly cacheFilePath?: string;
+  private mtimeCache: MtimeCache = {};
   private readonly logger?: DocIndexerOptions["logger"];
 
   constructor(opts: DocIndexerOptions) {
@@ -103,6 +119,31 @@ export class DocIndexer {
     this.globalKDir = opts.globalKDir;
     this.projectDirs = opts.projectDirs ?? [];
     this.logger = opts.logger;
+    if (opts.cacheDir !== undefined) {
+      this.cacheFilePath = join(opts.cacheDir, "mtime-cache.json");
+      this._loadMtimeCache();
+    }
+  }
+
+  private _loadMtimeCache(): void {
+    if (!this.cacheFilePath) return;
+    try {
+      const raw = readFileSync(this.cacheFilePath, "utf-8");
+      this.mtimeCache = JSON.parse(raw) as MtimeCache;
+    } catch {
+      this.mtimeCache = {};
+    }
+  }
+
+  private _saveMtimeCache(): void {
+    if (!this.cacheFilePath) return;
+    try {
+      const dir = this.cacheFilePath.slice(0, this.cacheFilePath.lastIndexOf("/"));
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      writeFileSync(this.cacheFilePath, JSON.stringify(this.mtimeCache));
+    } catch {
+      // non-fatal — cache is a performance optimization only
+    }
   }
 
   /** Index all sources. Skips unchanged files (content hash match). */
@@ -134,6 +175,7 @@ export class DocIndexer {
       await this._indexDir(dir, scope, result);
     }
 
+    this._saveMtimeCache();
     this.logger?.info(
       `[doc-indexer] indexed — added:${String(result.added)} updated:${String(result.updated)} skipped:${String(result.skipped)}`,
     );
@@ -195,6 +237,34 @@ export class DocIndexer {
     }));
   }
 
+  /**
+   * Build a compact doc topic index grouped by agi/docs/ subdirectory.
+   * Returns `{ "human": ["cli.md", "taskmaster.md", ...], "agents": [...] }`.
+   * Used by the system prompt so Aion knows what docs exist without having
+   * to search blindly. Reads the filesystem directly — no DB query needed.
+   */
+  getDocTopicIndex(): Record<string, string[]> {
+    const docsDir = join(this.agiRoot, "docs");
+    if (!existsSync(docsDir)) return {};
+
+    const result: Record<string, string[]> = {};
+    try {
+      const entries = readdirSync(docsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const subDir = join(docsDir, entry.name);
+          const files = readdirSync(subDir).filter((f) => f.endsWith(".md")).sort();
+          if (files.length > 0) result[entry.name] = files;
+        } else if (entry.isFile() && entry.name.endsWith(".md")) {
+          (result[""] ??= []).push(entry.name);
+        }
+      }
+    } catch {
+      // Best-effort — if the filesystem can't be read, return empty
+    }
+    return result;
+  }
+
   // ---------------------------------------------------------------------------
   // Internal
   // ---------------------------------------------------------------------------
@@ -228,15 +298,27 @@ export class DocIndexer {
     const stat = statSync(filePath);
     if (!stat.isFile()) return;
 
+    // mtime fast-path: if mtime matches our cache, file is unchanged — skip without reading content.
+    const cached = this.mtimeCache[filePath];
+    if (cached && cached.mtimeMs === stat.mtimeMs) {
+      const existingHash = await this.graph.getDocChunkHash(filePath);
+      if (existingHash === cached.hash) {
+        result.skipped++;
+        return;
+      }
+    }
+
     const text = readFileSync(filePath, "utf-8");
     const fileHash = createHash("sha256").update(text).digest("hex");
 
     const chunks = chunkMarkdown(text);
     if (chunks.length === 0) return;
 
-    // Check if file already indexed with same hash
+    // Check if file already indexed with same hash (fallback when mtime cache misses).
     const existingHash = await this.graph.getDocChunkHash(filePath);
     if (existingHash === fileHash) {
+      // Update mtime cache so the next run skips the hash DB query.
+      this.mtimeCache[filePath] = { mtimeMs: stat.mtimeMs, hash: fileHash };
       result.skipped++;
       return;
     }
@@ -268,6 +350,9 @@ export class DocIndexer {
         embedding,
       });
     }
+
+    // Update mtime cache with new hash so the next run can short-circuit.
+    this.mtimeCache[filePath] = { mtimeMs: stat.mtimeMs, hash: fileHash };
 
     if (existingHash !== null) {
       result.updated++;

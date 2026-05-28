@@ -921,6 +921,12 @@ export async function startGatewayServer(
     logger,
   });
 
+  // s112 Phase 2 — Embedding engine instantiated early so it can be passed to registerAllTools
+  // for search_prime semantic reranking (s197). Actual availability check happens async below.
+  const embeddingEngine = new EmbeddingEngine({
+    model: config.memory?.embeddingModel ?? "nomic-embed-text",
+  });
+
   // Placeholder — DocIndexer is wired after memoryAdapter+embeddingEngine below.
   // registerAllTools accepts undefined so the tool is simply not registered
   // until the indexer is ready. The late-bound ref pattern keeps boot order intact.
@@ -935,6 +941,7 @@ export async function startGatewayServer(
     },
     userContextStore,
     primeLoader,
+    embeddingEngine,
     // docIndexer registered after boot completes (late-bound below)
     projectDirs: projectPaths,
     projectConfigManager,
@@ -1039,13 +1046,12 @@ export async function startGatewayServer(
   });
   log.info("graph memory adapter initialized (agi_data memory_events/relationships/doc_chunks)");
 
-  // s112 Phase 2 — Embedding engine for semantic retrieval (Ollama, CPU-first).
-  const embeddingEngine = new EmbeddingEngine({
-    model: config.memory?.embeddingModel ?? "nomic-embed-text",
-  });
+  // s112 Phase 2 — Embedding engine availability check (engine instantiated early above).
   void embeddingEngine.checkAvailability().then((avail) => {
     if (avail) {
       log.info(`embedding engine ready (model: ${embeddingEngine.model})`);
+      // Pre-compute PRIME corpus embeddings for semantic search_prime reranking (s197).
+      void primeLoader.computeEmbeddings(embeddingEngine).catch(() => { /* non-fatal */ });
     } else {
       log.info("embedding engine unavailable — using FTS5 BM25 fallback");
     }
@@ -1104,14 +1110,18 @@ export async function startGatewayServer(
     agiRoot,
     globalKDir: config.memory?.globalKDir,
     projectDirs: projectPaths,
+    cacheDir: join(homedir(), ".agi", "doc-index"),
     logger: log,
   });
   void docIndexer.indexAll().catch(() => { /* non-fatal */ });
   docIndexer.watchForChanges();
-  // Late-register search_docs tool now that docIndexer is ready.
+  // Late-register search_docs + lookup_doc tools (s197 — no state/tier gate).
   const { createSearchDocsHandler, SEARCH_DOCS_MANIFEST, SEARCH_DOCS_INPUT_SCHEMA } = await import("./tools/search-docs.js");
   toolRegistry.register(SEARCH_DOCS_MANIFEST as import("./system-prompt.js").ToolManifestEntry, createSearchDocsHandler({ docIndexer }), SEARCH_DOCS_INPUT_SCHEMA);
-  log.info("doc indexer initialized + search_docs tool registered");
+  const { createLookupDocHandler, LOOKUP_DOC_MANIFEST, LOOKUP_DOC_INPUT_SCHEMA } = await import("./tools/lookup-doc.js");
+  const docsDir = join(agiRoot, "docs");
+  toolRegistry.register(LOOKUP_DOC_MANIFEST as import("./system-prompt.js").ToolManifestEntry, createLookupDocHandler({ docsDir }), LOOKUP_DOC_INPUT_SCHEMA);
+  log.info("doc indexer initialized + search_docs + lookup_doc tools registered");
 
   // s152 t651 — UserNotes store. Constructed here (before AgentInvoker)
   // so the invoker can read notes per project + global on each turn and

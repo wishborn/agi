@@ -82,6 +82,7 @@ import {
   LOOKUP_KNOWLEDGE_INPUT_SCHEMA,
 } from "./lookup-knowledge.js";
 import type { PrimeLoader } from "../prime-loader.js";
+import type { EmbeddingEngine } from "@agi/memory";
 
 // Doc search tool (s112 Phase 3)
 import {
@@ -171,6 +172,8 @@ export interface ToolRegistrationConfig {
   userContextStore?: UserContextStore;
   /** Optional PRIME knowledge loader — enables search_prime and lookup_knowledge tools. */
   primeLoader?: PrimeLoader;
+  /** Optional embedding engine — enables semantic reranking in search_prime. */
+  embeddingEngine?: EmbeddingEngine;
   /** Optional doc indexer — enables search_docs tool. */
   docIndexer?: DocIndexer;
   /** Workspace project directories — enables manage_project tool. */
@@ -344,7 +347,7 @@ export function registerAllTools(
   if (config.primeLoader !== undefined) {
     register(
       SEARCH_PRIME_MANIFEST as ToolManifestEntry,
-      createSearchPrimeHandler({ primeLoader: config.primeLoader }),
+      createSearchPrimeHandler({ primeLoader: config.primeLoader, embeddingEngine: config.embeddingEngine }),
       SEARCH_PRIME_INPUT_SCHEMA,
     );
     register(

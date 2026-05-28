@@ -197,6 +197,12 @@ export interface SystemPromptContext {
    * Populated by the inbound router from AionimaMessage.metadata.
    */
   channelContext?: ChannelContextData;
+  /**
+   * Compact doc topic index grouped by agi/docs/ subdirectory — injected
+   * alongside the PRIME topic index so Aion knows what platform docs exist
+   * and can look them up via search_docs / lookup_doc (s197).
+   */
+  docTopicIndex?: Record<string, string[]>;
 }
 
 /**
@@ -597,6 +603,36 @@ function buildPrimeDirectiveSection(prime: PrimeContext): string {
   }
 
   return parts.join("\n\n");
+}
+
+/**
+ * Build doc topic index section from agi/docs/ directory listing.
+ * Gives Aion awareness of what platform documentation exists so it can use
+ * search_docs / lookup_doc without guessing paths (s197).
+ */
+function buildDocTopicIndexSection(docTopicIndex: Record<string, string[]>): string {
+  const subdirs = Object.keys(docTopicIndex).filter((k) => k !== "");
+  const rootFiles = docTopicIndex[""] ?? [];
+  if (subdirs.length === 0 && rootFiles.length === 0) return "";
+
+  const lines: string[] = [
+    "## Platform Documentation Index",
+    "",
+    "The following AGI platform docs are available via `search_docs` (keyword/semantic) and `lookup_doc` (full read by path). Cite the source path when referencing content.",
+    "",
+  ];
+
+  for (const subdir of subdirs.sort()) {
+    const files = docTopicIndex[subdir];
+    if (!files || files.length === 0) continue;
+    lines.push(`**${subdir}/:** ${files.join(", ")}`);
+  }
+
+  if (rootFiles.length > 0) {
+    lines.push(`**root:** ${rootFiles.join(", ")}`);
+  }
+
+  return lines.join("\n");
 }
 
 /**
@@ -1152,6 +1188,14 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
         sections.push(indexSection);
       }
     }
+    // Platform doc topic index — alongside PRIME index so Aion knows what
+    // docs exist without guessing. Always injected when available (s197).
+    if (ctx.docTopicIndex !== undefined) {
+      const docIndexSection = buildDocTopicIndexSection(ctx.docTopicIndex);
+      if (docIndexSection.length > 0) {
+        sections.push(docIndexSection);
+      }
+    }
   }
 
   // Project context — for project work. Plan workflow is instruction-heavy
@@ -1330,6 +1374,12 @@ export function assembleSystemPromptWithBreakdown(
       const indexSection = buildKnowledgeIndexSection(ctx.prime.topicIndex);
       if (indexSection.length > 0) {
         contextSections.push(indexSection);
+      }
+    }
+    if (ctx.docTopicIndex !== undefined) {
+      const docIndexSection = buildDocTopicIndexSection(ctx.docTopicIndex);
+      if (docIndexSection.length > 0) {
+        contextSections.push(docIndexSection);
       }
     }
   }
