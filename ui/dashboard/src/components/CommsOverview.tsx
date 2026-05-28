@@ -5,27 +5,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { fetchCommsStats, fetchCommsLog } from "@/api.js";
+import { SourceChip } from "@/components/InboxView.js";
 import type { CommsStats, CommsLogEntry } from "@/types.js";
-
-function channelColor(channel: string): string {
-  switch (channel.toLowerCase()) {
-    case "gmail":
-    case "email": return "text-blue";
-    case "telegram": return "text-sky-400";
-    case "discord": return "text-[#5865F2]";
-    case "signal": return "text-green";
-    case "whatsapp": return "text-teal-400";
-    case "slack": return "text-[#4A154B]";
-    default: return "text-muted-foreground";
-  }
-}
 
 function formatTimestamp(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
   const isToday = d.toDateString() === now.toDateString();
   if (isToday) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 export function CommsOverview() {
@@ -43,7 +31,7 @@ export function CommsOverview() {
       setStats(s);
       setRecent(r.entries);
     } catch {
-      // Show empty state on error
+      // empty state on error
     } finally {
       setLoading(false);
     }
@@ -59,59 +47,76 @@ export function CommsOverview() {
     );
   }
 
-  const channelEntries = stats ? Object.entries(stats.byChannel).sort((a, b) => b[1].today - a[1].today) : [];
+  const channelEntries = stats
+    ? Object.entries(stats.byChannel).sort((a, b) => b[1].today - a[1].today)
+    : [];
+
+  const inboundToday = recent.filter((e) => e.direction === "inbound").length;
+  const outboundToday = recent.filter((e) => e.direction === "outbound").length;
 
   return (
-    <div className="space-y-6">
-      {/* Stats cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-        {/* Today total card */}
-        <div className="rounded-xl border border-border bg-card p-3">
-          <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold mb-1">Today</div>
-          <div className="text-[22px] font-bold text-foreground">{stats?.todayTotal ?? 0}</div>
-          <div className="text-[10px] text-muted-foreground">messages</div>
+    <div className="space-y-5">
+      {/* KPI strip */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+        <div className="rounded-xl border border-border bg-card p-3.5">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold mb-1.5">Today</div>
+          <div className="text-[24px] font-bold text-foreground leading-none">{stats?.todayTotal ?? 0}</div>
+          <div className="text-[10.5px] text-muted-foreground mt-1 flex items-center gap-2">
+            <span className="text-sky-400">{inboundToday} in</span>
+            <span className="text-muted-foreground/40">·</span>
+            <span className="text-violet-400">{outboundToday} out</span>
+          </div>
         </div>
-        {/* Per-channel cards */}
         {channelEntries.map(([ch, counts]) => (
-          <div key={ch} className="rounded-xl border border-border bg-card p-3">
-            <div className={cn("text-[10px] uppercase tracking-wider font-semibold mb-1 capitalize", channelColor(ch))}>
-              {ch}
+          <div key={ch} className="rounded-xl border border-border bg-card p-3.5">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <SourceChip channel={ch} />
+              <span className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground capitalize">{ch}</span>
             </div>
-            <div className="text-[22px] font-bold text-foreground">{counts.today}</div>
-            <div className="text-[10px] text-muted-foreground">{counts.total} total</div>
+            <div className="text-[24px] font-bold text-foreground leading-none">{counts.today}</div>
+            <div className="text-[10.5px] text-muted-foreground mt-1">{counts.total} total</div>
           </div>
         ))}
       </div>
 
       {/* Recent messages */}
       <div>
-        <div className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider mb-2 px-1">
+        <div className="text-[10.5px] text-muted-foreground font-semibold uppercase tracking-wider mb-2 px-1">
           Recent Messages
         </div>
         {recent.length === 0 ? (
           <div className="text-[13px] text-muted-foreground py-6 text-center">No messages yet</div>
         ) : (
-          <div className="space-y-1">
-            {recent.map((entry) => (
+          <div className="rounded-xl border border-border overflow-hidden">
+            {recent.map((entry, i) => (
               <div
                 key={entry.id}
                 className={cn(
-                  "flex gap-3 items-start px-3 py-2 rounded-lg",
-                  entry.direction === "outbound" ? "bg-primary/5 border border-primary/10" : "bg-secondary/40",
+                  "flex gap-3 items-start px-3.5 py-2.5",
+                  i !== 0 && "border-t border-border/60",
+                  entry.direction === "outbound" ? "bg-primary/5" : "bg-transparent",
                 )}
               >
-                <div className="flex-shrink-0 text-[10px] text-muted-foreground pt-0.5 w-[52px] text-right">
+                {/* Time */}
+                <div className="shrink-0 text-[10.5px] font-mono text-muted-foreground pt-0.5 w-[44px] text-right">
                   {formatTimestamp(entry.createdAt)}
                 </div>
-                <div className={cn("flex-shrink-0 text-[10px] font-semibold capitalize pt-0.5 w-[60px]", channelColor(entry.channel))}>
-                  {entry.channel}
-                </div>
+
+                {/* Source chip */}
+                <SourceChip channel={entry.channel} className="shrink-0 mt-0.5" />
+
+                {/* Content */}
                 <div className="flex-1 min-w-0">
-                  <span className="text-[12px] text-foreground/70 font-medium mr-1.5">
+                  <span className={cn(
+                    "text-[12.5px] font-semibold mr-1.5",
+                    entry.direction === "outbound" ? "text-amber-400" : "text-foreground",
+                  )}>
                     {entry.direction === "outbound" ? "Aion" : (entry.senderName ?? entry.senderId)}
                   </span>
-                  <span className="text-[12px] text-foreground truncate">
-                    {entry.subject ? <span className="font-medium mr-1">{entry.subject}:</span> : null}
+                  {entry.subject !== null && (
+                    <span className="text-[12px] font-medium text-foreground mr-1">{entry.subject}:</span>
+                  )}
+                  <span className="text-[12px] text-foreground/70 break-words">
                     {entry.preview}
                   </span>
                 </div>

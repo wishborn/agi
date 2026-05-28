@@ -1,76 +1,65 @@
 /**
  * Communications page — /system/comms
  *
- * s190: Two-tab layout — Overview (stats + recent) and All Messages
- * (daily rotating conversation view per channel).
+ * Inbox-first layout matching the Aionima Channel design:
+ * - Overview tab: CommsOverview stats
+ * - Inbox tab: thread-card list (InboxView) with day navigator + source filter chips
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { PageScroll } from "@/components/PageScroll.js";
 import { DayNavigator } from "@/components/DayNavigator.js";
-import { ConversationView } from "@/components/ConversationView.js";
+import { InboxView, SourceChip } from "@/components/InboxView.js";
 import { CommsOverview } from "@/components/CommsOverview.js";
-import { fetchCommsLog, fetchAmbientLog } from "@/api.js";
-import type { ConversationEntry, CommsLogEntry, AmbientLogEntry } from "@/types.js";
+import { fetchCommsLog } from "@/api.js";
+import type { CommsLogEntry } from "@/types.js";
 
-const CHANNELS = ["All", "discord", "gmail", "telegram", "signal", "whatsapp", "email"] as const;
-type ChannelFilter = (typeof CHANNELS)[number];
+const SOURCES = [
+  { id: "all",      label: "All" },
+  { id: "discord",  label: "Discord" },
+  { id: "gmail",    label: "Gmail" },
+  { id: "telegram", label: "Telegram" },
+  { id: "signal",   label: "Signal" },
+  { id: "whatsapp", label: "WhatsApp" },
+] as const;
+
+type SourceFilter = (typeof SOURCES)[number]["id"];
+
+const SMART_VIEWS = [
+  { id: "all",      label: "All" },
+  { id: "inbound",  label: "Needs you" },
+  { id: "outbound", label: "Drafted" },
+] as const;
+
+type SmartView = (typeof SMART_VIEWS)[number]["id"];
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function mergeEntries(
-  commsEntries: CommsLogEntry[],
-  ambientEntries: AmbientLogEntry[],
-  channelFilter: ChannelFilter,
-): ConversationEntry[] {
-  const result: ConversationEntry[] = [];
-
-  for (const e of commsEntries) {
-    if (channelFilter !== "All" && e.channel !== channelFilter) continue;
-    if (e.direction === "outbound") {
-      result.push({ kind: "comms-out", id: e.id, ts: e.createdAt, text: e.preview, channel: e.channel });
-    } else {
-      result.push({ kind: "comms-in", id: e.id, ts: e.createdAt, senderName: e.senderName, text: e.preview, channel: e.channel });
-    }
-  }
-
-  // Add ambient entries not already covered by a comms-in entry (dedup within 2s)
-  const commsInTimes = result.filter((e) => e.kind === "comms-in").map((e) => new Date(e.ts).getTime());
-  for (const a of ambientEntries) {
-    const t = new Date(a.ts).getTime();
-    const isDup = commsInTimes.some((ct) => Math.abs(ct - t) < 2000);
-    if (!isDup) {
-      result.push({ kind: "ambient", ts: a.ts, authorId: a.authorId, displayName: a.displayName, text: a.text });
-    }
-  }
-
-  return result.sort((a, b) => a.ts.localeCompare(b.ts));
+function filterEntries(entries: CommsLogEntry[], source: SourceFilter, view: SmartView): CommsLogEntry[] {
+  return entries.filter((e) => {
+    if (source !== "all" && e.channel !== source) return false;
+    if (view === "inbound" && e.direction !== "inbound") return false;
+    if (view === "outbound" && e.direction !== "outbound") return false;
+    return true;
+  });
 }
 
 export default function CommsPage() {
-  const [tab, setTab] = useState<"overview" | "messages">("overview");
-  const [channel, setChannel] = useState<ChannelFilter>("All");
+  const [tab, setTab] = useState<"overview" | "inbox">("overview");
+  const [source, setSource] = useState<SourceFilter>("all");
+  const [view, setView] = useState<SmartView>("all");
   const [day, setDay] = useState(todayIso());
-  const [entries, setEntries] = useState<ConversationEntry[]>([]);
+  const [entries, setEntries] = useState<CommsLogEntry[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const loadMessages = useCallback(async (ch: ChannelFilter, d: string) => {
+  const loadMessages = useCallback(async (d: string) => {
     setLoading(true);
     try {
-      const commsPromise = fetchCommsLog({
-        channel: ch === "All" ? undefined : ch,
-        date: d,
-        limit: 200,
-      });
-      const ambientPromise = (ch !== "All")
-        ? fetchAmbientLog({ channelId: ch, date: d, limit: 200 })
-        : Promise.resolve({ entries: [] as AmbientLogEntry[] });
-
-      const [comms, ambient] = await Promise.all([commsPromise, ambientPromise]);
-      setEntries(mergeEntries(comms.entries, ambient.entries, ch));
+      const res = await fetchCommsLog({ limit: 300, date: d });
+      setEntries(res.entries);
     } catch {
       setEntries([]);
     } finally {
@@ -79,60 +68,100 @@ export default function CommsPage() {
   }, []);
 
   useEffect(() => {
-    if (tab === "messages") {
-      void loadMessages(channel, day);
+    if (tab === "inbox") {
+      void loadMessages(day);
     }
-  }, [tab, channel, day, loadMessages]);
+  }, [tab, day, loadMessages]);
+
+  const displayed = filterEntries(entries, source, view);
 
   return (
     <PageScroll>
       <div className="space-y-4">
         {/* Main tabs */}
         <div className="flex gap-1">
-          {(["overview", "messages"] as const).map((t) => (
+          {([["overview", "Overview"], ["inbox", "Inbox"]] as const).map(([t, label]) => (
             <button
               key={t}
               onClick={() => setTab(t)}
               className={cn(
-                "px-4 py-2 md:py-1.5 rounded-lg text-[12px] border-none cursor-pointer transition-colors font-medium capitalize",
+                "px-4 py-1.5 rounded-lg text-[12px] border-none cursor-pointer transition-colors font-medium",
                 tab === t
                   ? "bg-primary text-primary-foreground"
                   : "bg-secondary text-foreground hover:bg-secondary/80",
               )}
             >
-              {t === "overview" ? "Overview" : "All Messages"}
+              {label}
             </button>
           ))}
         </div>
 
         {tab === "overview" && <CommsOverview />}
 
-        {tab === "messages" && (
+        {tab === "inbox" && (
           <div className="space-y-3">
             {/* Day navigator */}
-            <DayNavigator date={day} onChange={(d) => { setDay(d); }} />
+            <DayNavigator date={day} onChange={setDay} />
 
-            {/* Channel sub-tabs */}
-            <div className="flex gap-1 flex-wrap">
-              {CHANNELS.map((ch) => (
+            {/* Smart view tabs */}
+            <div className="flex gap-1">
+              {SMART_VIEWS.map((sv) => (
                 <button
-                  key={ch}
-                  onClick={() => setChannel(ch)}
+                  key={sv.id}
+                  onClick={() => setView(sv.id)}
                   className={cn(
-                    "px-3 py-1.5 md:py-1 rounded-lg text-[12px] border-none cursor-pointer transition-colors",
-                    channel === ch
-                      ? "bg-primary text-primary-foreground font-semibold"
-                      : "bg-secondary text-foreground hover:bg-secondary/80",
+                    "px-3 py-1 rounded-lg text-[12px] cursor-pointer transition-colors border",
+                    view === sv.id
+                      ? "bg-primary/10 text-primary border-primary/25 font-semibold"
+                      : "bg-transparent border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60",
                   )}
                 >
-                  {ch === "All" ? "All Channels" : ch.charAt(0).toUpperCase() + ch.slice(1)}
+                  {sv.label}
                 </button>
               ))}
             </div>
 
-            {/* Conversation view */}
-            <div className="rounded-xl border border-border min-h-[300px] px-4 py-2">
-              <ConversationView entries={entries} loading={loading} />
+            {/* Source filter chips */}
+            <div className="flex gap-1.5 flex-wrap">
+              {SOURCES.map((s) => {
+                const active = source === s.id;
+                if (s.id === "all") {
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => setSource(s.id)}
+                      className={cn(
+                        "px-3 py-1 rounded-lg text-[12px] cursor-pointer transition-colors border",
+                        active
+                          ? "bg-violet-500/10 text-violet-600 dark:text-violet-300 border-violet-500/25 font-semibold"
+                          : "bg-transparent border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60",
+                      )}
+                    >
+                      All sources
+                    </button>
+                  );
+                }
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => setSource(s.id)}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[12px] cursor-pointer transition-colors border",
+                      active
+                        ? "bg-primary/10 text-primary border-primary/25 font-semibold"
+                        : "bg-transparent border-border text-foreground hover:bg-secondary/60",
+                    )}
+                  >
+                    <SourceChip channel={s.id} />
+                    <span>{s.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Thread list */}
+            <div className="rounded-xl border border-border overflow-hidden min-h-[300px]">
+              <InboxView entries={displayed} loading={loading} />
             </div>
           </div>
         )}
