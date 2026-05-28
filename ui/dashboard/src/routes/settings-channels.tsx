@@ -972,18 +972,23 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
       setDetail(det);
       setCfgResponse(cfg);
       setEnabled(cfg.enabled);
-      // Merge defaults with current values for form initialisation
+      // Only include scalar (non-object) values in the form — object/array fields
+      // (memory, tools, autoMod, etc.) are owned by specialised UIs and must not
+      // be coerced to "[object Object]" strings here.
       const merged: Record<string, string> = {};
       for (const key of Object.keys(cfg.defaults)) {
         const val = cfg.config[key];
-        merged[key] = val !== undefined && val !== null ? String(val) : "";
-      }
-      // Also include any keys in current config not present in defaults
-      for (const key of Object.keys(cfg.config)) {
-        if (!(key in merged)) {
-          const val = cfg.config[key];
-          merged[key] = val !== undefined && val !== null ? String(val) : "";
+        if (val === undefined || val === null) {
+          merged[key] = "";
+        } else if (typeof val !== "object") {
+          merged[key] = String(val);
         }
+      }
+      for (const key of Object.keys(cfg.config)) {
+        if (key in merged) continue;
+        const val = cfg.config[key];
+        if (val !== undefined && val !== null && typeof val === "object") continue;
+        merged[key] = val !== undefined && val !== null ? String(val) : "";
       }
       setForm(merged);
       setError(null);
@@ -1006,7 +1011,9 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
     setSaving(true);
     setSaveMsg(null);
     try {
-      const config: Record<string, unknown> = {};
+      // Start from the full current config so non-scalar fields (owned by other UIs)
+      // are preserved verbatim, then overlay the scalar form values on top.
+      const config: Record<string, unknown> = { ...cfgResponse?.config };
       for (const [k, v] of Object.entries(form)) {
         config[k] = v;
       }

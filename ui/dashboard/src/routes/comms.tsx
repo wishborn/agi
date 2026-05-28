@@ -50,7 +50,7 @@ function filterEntries(entries: CommsLogEntry[], source: SourceFilter, view: Sma
 }
 
 export default function CommsPage() {
-  const [tab, setTab] = useState<"overview" | "inbox">("overview");
+  const [tab, setTab] = useState<"overview" | "inbox">("inbox");
   const [source, setSource] = useState<SourceFilter>("all");
   const [view, setView] = useState<SmartView>("all");
   const [day, setDay] = useState(todayIso());

@@ -728,10 +728,7 @@ export default function CommsChannelsPage() {
                 />
               )}
               {selected && (
-                <span className={cn("inline-flex items-center gap-1 h-[20px] px-2 rounded-full border text-[10.5px] font-semibold", CHANNEL_MODE_META[behavior.mode].badge)}>
-                  <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", CHANNEL_MODE_META[behavior.mode].dot)} />
-                  {CHANNEL_MODE_META[behavior.mode].label}
-                </span>
+                <span className="text-[11px] text-muted-foreground">Behavior config</span>
               )}
             </div>
             {error && <span className="text-[11px] text-red-400 truncate max-w-[200px]">{error}</span>}

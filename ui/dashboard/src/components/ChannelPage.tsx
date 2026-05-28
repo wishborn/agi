@@ -7,10 +7,11 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router";
 import { cn } from "@/lib/utils";
 import { DayNavigator } from "@/components/DayNavigator.js";
 import { ConversationView } from "@/components/ConversationView.js";
-import { fetchCommsLog, fetchAmbientLog } from "@/api.js";
+import { fetchCommsLog, fetchAmbientLog, fetchChannelDetail } from "@/api.js";
 import type { ConversationEntry, CommsLogEntry, AmbientLogEntry } from "@/types.js";
 
 // ---------------------------------------------------------------------------
@@ -61,6 +62,13 @@ export function ChannelPage({ channelId, channelName }: ChannelPageProps) {
   const [day, setDay] = useState(todayIso());
   const [entries, setEntries] = useState<ConversationEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [channelStatus, setChannelStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchChannelDetail(channelId)
+      .then((d) => setChannelStatus(d.status))
+      .catch(() => setChannelStatus("not_found"));
+  }, [channelId]);
 
   const loadDay = useCallback(async (d: string) => {
     setLoading(true);
@@ -79,6 +87,8 @@ export function ChannelPage({ channelId, channelName }: ChannelPageProps) {
 
   useEffect(() => { void loadDay(day); }, [day, loadDay]);
 
+  const notConnected = !loading && entries.length === 0 && channelStatus !== "running";
+
   return (
     <div className="space-y-4">
       {/* Channel header */}
@@ -87,9 +97,26 @@ export function ChannelPage({ channelId, channelName }: ChannelPageProps) {
         <DayNavigator date={day} onChange={setDay} />
       </div>
 
-      {/* Conversation */}
+      {/* Conversation or not-configured state */}
       <div className="rounded-xl border border-border min-h-[400px] px-4 py-2">
-        <ConversationView entries={entries} loading={loading} />
+        {notConnected ? (
+          <div className="flex flex-col items-center justify-center h-[360px] gap-3">
+            <span className="text-3xl text-muted-foreground/20">⊘</span>
+            <p className="text-[13px] font-medium text-foreground">{channelName} is not connected</p>
+            <p className="text-[12px] text-muted-foreground text-center max-w-[280px]">
+              Connect {channelName} to start receiving messages from your team's{" "}
+              {channelName} workspace.
+            </p>
+            <Link
+              to="/settings/channels"
+              className="mt-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+            >
+              Configure in Settings → Channels
+            </Link>
+          </div>
+        ) : (
+          <ConversationView entries={entries} loading={loading} />
+        )}
       </div>
     </div>
   );
