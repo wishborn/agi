@@ -91,18 +91,29 @@ export function ConversationView({ entries, loading, emptyText }: ConversationVi
   }
 
   // Group consecutive messages from the same sender to avoid repeated avatars.
-  type Group = { key: string; isAi: boolean; seed: string; label: string; messages: { ts: string; text: string; isAmbient: boolean }[] };
+  type MsgMeta = { ts: string; text: string; isAmbient: boolean; confidence?: number; latencyMs?: number; model?: string };
+  type Group = { key: string; isAi: boolean; seed: string; label: string; messages: MsgMeta[] };
   const groups: Group[] = [];
   for (const entry of entries) {
     const label = senderLabel(entry);
     const isAi = entry.kind === "comms-out";
     const isAmbient = entry.kind === "ambient";
     const key = isAi ? "__aion__" : label;
+    const meta: MsgMeta = {
+      ts: entryTs(entry),
+      text: messageText(entry),
+      isAmbient,
+      ...(entry.kind === "comms-out" ? {
+        confidence: entry.confidence,
+        latencyMs: entry.latencyMs,
+        model: entry.model,
+      } : {}),
+    };
     const last = groups[groups.length - 1];
     if (last && last.key === key) {
-      last.messages.push({ ts: entryTs(entry), text: messageText(entry), isAmbient });
+      last.messages.push(meta);
     } else {
-      groups.push({ key, isAi, seed: label, label, messages: [{ ts: entryTs(entry), text: messageText(entry), isAmbient }] });
+      groups.push({ key, isAi, seed: label, label, messages: [meta] });
     }
   }
 
@@ -132,17 +143,41 @@ export function ConversationView({ entries, loading, emptyText }: ConversationVi
               </span>
             </div>
             {/* Message lines */}
-            <div className="flex flex-col gap-0.5">
+            <div className="flex flex-col gap-1">
               {group.messages.map((msg, mi) => (
-                <p
-                  key={mi}
-                  className={cn(
-                    "text-[13px] leading-relaxed whitespace-pre-wrap break-words m-0",
-                    msg.isAmbient ? "text-muted-foreground/80" : "text-foreground",
+                <div key={mi}>
+                  <p
+                    className={cn(
+                      "text-[13px] leading-relaxed whitespace-pre-wrap break-words m-0",
+                      msg.isAmbient ? "text-muted-foreground/80" : "text-foreground",
+                    )}
+                  >
+                    {msg.text}
+                  </p>
+                  {/* AI observability — confidence bar + metadata row (renders only when data is present) */}
+                  {group.isAi && msg.confidence !== undefined && (
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <div className="aio-conf flex-1 max-w-[120px]">
+                        <span style={{ width: `${Math.round(msg.confidence * 100)}%` }} />
+                      </div>
+                      <span className="text-[10px] font-mono text-muted-foreground/70">
+                        {Math.round(msg.confidence * 100)}%
+                      </span>
+                      {msg.latencyMs !== undefined && (
+                        <span className="text-[10px] font-mono text-muted-foreground/60">
+                          {msg.latencyMs >= 1000
+                            ? `${(msg.latencyMs / 1000).toFixed(1)}s`
+                            : `${msg.latencyMs}ms`}
+                        </span>
+                      )}
+                      {msg.model !== undefined && (
+                        <span className="text-[10px] font-mono text-muted-foreground/50 truncate">
+                          {msg.model}
+                        </span>
+                      )}
+                    </div>
                   )}
-                >
-                  {msg.text}
-                </p>
+                </div>
               ))}
             </div>
           </div>

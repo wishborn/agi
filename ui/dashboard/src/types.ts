@@ -187,7 +187,7 @@ export interface CommsStats {
 
 export type ConversationEntry =
   | { kind: "comms-in";  id: string; ts: string; senderName: string | null; text: string; channel: string }
-  | { kind: "comms-out"; id: string; ts: string; text: string; channel: string }
+  | { kind: "comms-out"; id: string; ts: string; text: string; channel: string; confidence?: number; latencyMs?: number; model?: string }
   | { kind: "ambient";   ts: string; authorId: string; displayName: string; text: string };
 
 export interface WorkerJobUpdate {

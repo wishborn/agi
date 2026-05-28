@@ -26,7 +26,7 @@ function relTime(iso: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Source chip — color-coded badge for each channel type
+// Source chip — color-coded badge with branded icon per channel
 // ---------------------------------------------------------------------------
 
 const SOURCE_STYLE: Record<string, string> = {
@@ -39,24 +39,58 @@ const SOURCE_STYLE: Record<string, string> = {
   sms:      "bg-zinc-500/15 text-zinc-400 border-zinc-500/30",
 };
 
-const SOURCE_LABEL: Record<string, string> = {
-  discord: "DC", gmail: "GM", email: "ML", telegram: "TG",
-  signal: "SG", whatsapp: "WA", sms: "SMS",
-};
+function SourceIcon({ channel }: { channel: string }) {
+  switch (channel) {
+    case "discord":
+      return (
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M19.3 5.4a18 18 0 0 0-4.5-1.4l-.2.4a16.4 16.4 0 0 0-5.2 0 9 9 0 0 0-.2-.4 18 18 0 0 0-4.5 1.4A19 19 0 0 0 1.5 16a18 18 0 0 0 5.5 2.8l.6-1a13 13 0 0 1-2-.9l.5-.4a13 13 0 0 0 11 0l.5.4a13 13 0 0 1-2 1l.6 1A18 18 0 0 0 22.5 16a19 19 0 0 0-3.2-10.6zM8.5 13.7c-1 0-1.8-.9-1.8-2s.9-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2zm7 0c-1 0-1.8-.9-1.8-2s.9-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2z"/>
+        </svg>
+      );
+    case "gmail":
+    case "email":
+      return (
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>
+        </svg>
+      );
+    case "telegram":
+      return (
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="m21 4-9 10-4-2L21 4l-4 16-5-5"/>
+        </svg>
+      );
+    case "signal":
+      return (
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M12 3 4 6v6c0 5 3.5 8.5 8 9 4.5-.5 8-4 8-9V6z"/>
+        </svg>
+      );
+    case "whatsapp":
+    case "sms":
+      return (
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.4 2.1L7.9 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2z"/>
+        </svg>
+      );
+    default:
+      return <span className="text-[9px] font-mono font-bold">{channel.slice(0, 2).toUpperCase()}</span>;
+  }
+}
 
 export function SourceChip({ channel, className }: { channel: string; className?: string }) {
   const style = SOURCE_STYLE[channel] ?? "bg-violet-500/15 text-violet-400 border-violet-500/30";
-  const label = SOURCE_LABEL[channel] ?? channel.slice(0, 2).toUpperCase();
   return (
     <span
       className={cn(
-        "inline-flex items-center justify-center rounded border font-mono font-bold tracking-wide shrink-0",
-        "h-[18px] min-w-[24px] px-1.5 text-[9px]",
+        "inline-flex items-center justify-center rounded border shrink-0",
+        "w-[22px] h-[18px]",
         style,
         className,
       )}
+      title={channel}
     >
-      {label}
+      <SourceIcon channel={channel} />
     </span>
   );
 }
