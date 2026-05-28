@@ -21,6 +21,7 @@ import CommsDiscordPage from "./routes/comms-discord.js";
 import CommsGmailPage from "./routes/comms-gmail.js";
 import CommsSignalPage from "./routes/comms-signal.js";
 import CommsWhatsAppPage from "./routes/comms-whatsapp.js";
+import CommsChannelsPage from "./routes/comms-channels.js";
 import ServicesPage from "./routes/services.js";
 import AdminPage from "./routes/admin.js";
 import AdminDashboardPage from "./routes/admin-dashboard.js";
@@ -162,6 +163,7 @@ export const router = createBrowserRouter([
           { path: "signal", element: <CommsSignalPage /> },
           { path: "whatsapp", element: <CommsWhatsAppPage /> },
           { path: "moderation", element: <CommsModerationPage /> },
+          { path: "channels",   element: <CommsChannelsPage /> },
         ],
       },
       { path: "*", element: <PluginPageResolver /> },

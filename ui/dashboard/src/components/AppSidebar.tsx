@@ -20,7 +20,7 @@ import {
   SlidersHorizontal, Activity, Blocks, ShieldHalf, ShieldCheck,
   AlertTriangle, Building2, HardDrive, Fingerprint, Sparkles, Cpu,
   Shield, ArrowLeft, FileSearch, NotebookPen, MessageCircle, Mail,
-  Send, MessageSquare,
+  Send, MessageSquare, Settings2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -68,6 +68,7 @@ const builtinSections: NavSectionWithMode[] = [
     { to: "/comms/signal",      label: "Signal",          icon: ShieldCheck },
     { to: "/comms/whatsapp",    label: "WhatsApp",        icon: MessageSquare },
     { to: "/comms/moderation",  label: "Moderation",      icon: Shield },
+    { to: "/comms/channels",    label: "Channels",         icon: Settings2 },
     { to: "/identity/pending",  label: "Pending Identity", icon: Fingerprint },
   ]},
   { mode: "main", title: "Knowledge", items: [
