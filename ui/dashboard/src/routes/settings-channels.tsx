@@ -76,7 +76,6 @@ interface DiscordStateDescriptor {
 import { ChannelModeBadge, CHANNEL_MODES, CHANNEL_MODE_META } from "@/components/ChannelModeBadge.js";
 import type { DiscordChannelMode } from "@/components/ChannelModeBadge.js";
 
-/** Fields managed visually by DiscordServerPanel — hidden in the generic config form. */
 interface ChannelExtConfig {
   memoryScope?: {
     channel?: boolean;
@@ -86,15 +85,6 @@ interface ChannelExtConfig {
   };
   promptAddendum?: string;
 }
-
-const DISCORD_VISUAL_FIELDS = new Set([
-  "allowedGuildIds",
-  "allowedChannelIds",
-  "presenceChannelIds",
-  "allowedRoleIds",
-  "channelModes",
-  "channelConfig",
-]);
 
 function parseIds(v: unknown): string[] {
   if (typeof v === "string") return v.split(",").map((s) => s.trim()).filter(Boolean);
@@ -356,7 +346,7 @@ function ChannelLogTab({ channelId }: { channelId: string }) {
           No log entries yet. Entries appear when the channel starts, receives messages, or errors.
         </div>
       ) : (
-        <div className="font-mono text-[11px] space-y-0.5 max-h-[480px] overflow-y-auto">
+        <div className="font-mono text-[11px] space-y-0.5 min-h-[200px] max-h-[60vh] overflow-y-auto">
           {entries.map((e, i) => (
             <div
               key={`${e.ts}-${String(i)}`}
@@ -944,6 +934,109 @@ function DiscordServerPanel({ channelId, cfgResponse, enabled, channelStatus, on
 }
 
 // ---------------------------------------------------------------------------
+// DiscordSettingsPanel — guided setup form for the Discord channel
+// ---------------------------------------------------------------------------
+
+interface DiscordSettingsPanelProps {
+  form: Record<string, string>;
+  onChange: (form: Record<string, string>) => void;
+}
+
+function DiscordSettingsPanel({ form, onChange }: DiscordSettingsPanelProps) {
+  const hasToken = Boolean(form.botToken?.trim());
+  const mentionOnly = form.mentionOnly === "true";
+
+  return (
+    <div className="space-y-4">
+      {!hasToken && (
+        <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4">
+          <p className="text-[13px] font-semibold text-foreground mb-3">Connect Aion to Discord</p>
+          <ol className="space-y-2 text-[12px] text-muted-foreground list-decimal list-inside">
+            <li>Go to <strong>discord.com/developers/applications</strong> and create a new application</li>
+            <li>Open the <strong>Bot</strong> tab → click <strong>Reset Token</strong> → copy the token</li>
+            <li>Paste the token into <strong>Bot Token</strong> below, then click <strong>Save</strong></li>
+            <li>
+              Under <strong>OAuth2 → URL Generator</strong>, select the <code>bot</code> scope +{" "}
+              <code>Send Messages</code> and <code>Read Message History</code> permissions → copy the
+              URL → open it to invite Aion to your server
+            </li>
+            <li>Come back here and click <strong>Start</strong></li>
+          </ol>
+        </div>
+      )}
+
+      <div className="flex flex-col gap-1">
+        <label className="text-[12px] font-medium text-muted-foreground">Bot Token</label>
+        <input
+          type="password"
+          value={form.botToken ?? ""}
+          onChange={(e) => onChange({ ...form, botToken: e.target.value })}
+          autoComplete="off"
+          placeholder="••••••••"
+          className="h-8 px-3 rounded-lg border border-input bg-background text-[13px] text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+        />
+        <p className="text-[11px] text-muted-foreground">
+          From Discord Developer Portal → Your App → Bot → Reset Token
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <label className="text-[12px] font-medium text-muted-foreground">Application ID</label>
+        <input
+          type="text"
+          value={form.applicationId ?? ""}
+          onChange={(e) => onChange({ ...form, applicationId: e.target.value })}
+          autoComplete="off"
+          className="h-8 px-3 rounded-lg border border-input bg-background text-[13px] text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+        />
+        <p className="text-[11px] text-muted-foreground">
+          Optional. From Developer Portal → Your App → General Information. Required only for slash commands.
+        </p>
+      </div>
+
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[12px] font-medium text-muted-foreground">Respond only when @mentioned</span>
+          <span className="text-[11px] text-muted-foreground">
+            When on, Aion replies only when @mentioned. Turn off to respond to all messages in channels
+            where Aion has Respond mode.
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => onChange({ ...form, mentionOnly: mentionOnly ? "false" : "true" })}
+          className={`relative shrink-0 w-9 h-5 rounded-full transition-colors ${mentionOnly ? "bg-emerald-500" : "bg-secondary"}`}
+          aria-label="Toggle respond only when mentioned"
+        >
+          <span
+            className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${mentionOnly ? "left-[18px] bg-white" : "left-0.5 bg-muted-foreground"}`}
+          />
+        </button>
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <label className="text-[12px] font-medium text-muted-foreground">Rate limit (messages/min)</label>
+        <input
+          type="number"
+          min="1"
+          max="1000"
+          value={form.rateLimitPerMinute ?? ""}
+          onChange={(e) => onChange({ ...form, rateLimitPerMinute: e.target.value })}
+          className="h-8 px-3 rounded-lg border border-input bg-background text-[13px] text-foreground focus:outline-none focus:ring-1 focus:ring-ring w-32"
+        />
+        <p className="text-[11px] text-muted-foreground">
+          Max messages per user per minute before Aion pauses responses. Default: 20.
+        </p>
+      </div>
+
+      <p className="text-[11px] text-muted-foreground">
+        Channel presence, role permissions, and per-channel modes are managed in the <strong>Server</strong> tab.
+      </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // ChannelTab — config + controls for one channel
 // ---------------------------------------------------------------------------
 
@@ -961,6 +1054,7 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [controlling, setControlling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [discordNotConnected, setDiscordNotConnected] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadData = useCallback(async () => {
@@ -1006,6 +1100,18 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, [id, loadData]);
+
+  useEffect(() => {
+    const status = detail?.status ?? "stopped";
+    if (id !== "discord" || status !== "running") {
+      setDiscordNotConnected(false);
+      return;
+    }
+    fetch("/api/channels/discord/state")
+      .then((r) => r.json() as Promise<DiscordStateDescriptor>)
+      .then((data) => { setDiscordNotConnected(!data.connected); })
+      .catch(() => {});
+  }, [id, detail]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -1064,6 +1170,11 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
           )}
           {error && (
             <span className="text-[12px] text-destructive truncate max-w-xs">{error}</span>
+          )}
+          {discordNotConnected && (
+            <span className="text-[11px] text-amber-400 flex items-center gap-1">
+              ⚠ Not connected to Discord — check bot token
+            </span>
           )}
           <div className="ml-auto flex items-center gap-2">
             <button
@@ -1136,31 +1247,25 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
 
               {cfgResponse === null ? (
                 <p className="text-[13px] text-muted-foreground">Loading configuration…</p>
+              ) : id === "discord" ? (
+                <DiscordSettingsPanel form={form} onChange={setForm} />
               ) : fieldKeys.length === 0 ? (
                 <p className="text-[13px] text-muted-foreground">No configuration fields for this channel.</p>
               ) : (
                 <div className="grid grid-cols-1 gap-3">
-                  {fieldKeys
-                    // Discord array fields are managed visually in the Server tab
-                    .filter((key) => !(id === "discord" && DISCORD_VISUAL_FIELDS.has(key)))
-                    .map((key) => (
-                      <div key={key} className="flex flex-col gap-1">
-                        <label className="text-[12px] font-medium text-muted-foreground">{fieldLabel(key)}</label>
-                        <input
-                          type={isSensitive(key) ? "password" : "text"}
-                          value={form[key] ?? ""}
-                          onChange={(e) => setForm((prev) => ({ ...prev, [key]: e.target.value }))}
-                          autoComplete="off"
-                          className="h-8 px-3 rounded-lg border border-input bg-background text-[13px] text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                          placeholder={isSensitive(key) ? "••••••••" : ""}
-                        />
-                      </div>
-                    ))}
-                  {id === "discord" && (
-                    <p className="text-[11px] text-muted-foreground">
-                      Channel presence and role permissions are managed in the <strong>Server</strong> tab.
-                    </p>
-                  )}
+                  {fieldKeys.map((key) => (
+                    <div key={key} className="flex flex-col gap-1">
+                      <label className="text-[12px] font-medium text-muted-foreground">{fieldLabel(key)}</label>
+                      <input
+                        type={isSensitive(key) ? "password" : "text"}
+                        value={form[key] ?? ""}
+                        onChange={(e) => setForm((prev) => ({ ...prev, [key]: e.target.value }))}
+                        autoComplete="off"
+                        className="h-8 px-3 rounded-lg border border-input bg-background text-[13px] text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder={isSensitive(key) ? "••••••••" : ""}
+                      />
+                    </div>
+                  ))}
                 </div>
               )}
 
@@ -1259,6 +1364,13 @@ export default function SettingsChannelsPage() {
           allowedRoleIds) is wired automatically. (2) Saving channel/role settings via the Server
           tab now triggers an immediate channel restart so config changes take effect without a
           manual restart.
+        </DevNote.Item>
+        <DevNote.Item kind="info" heading="Discord setup guide + UX overhaul">
+          Discord Settings tab replaced with a guided DiscordSettingsPanel: numbered setup steps
+          shown when botToken is empty, labeled fields with descriptions for botToken / applicationId
+          / mentionOnly (now a toggle) / rateLimitPerMinute, and a status-bar warning when the
+          process registry shows Running but the bot WebSocket is not actually connected to Discord.
+          Log tab max-height changed from fixed 480px to 60 vh so it doesn&apos;t overflow the viewport.
         </DevNote.Item>
         <DevNote.Item kind="info" heading="Discord reconnect + role access control + member registration">
           Three Discord improvements shipped together: (1) Discord now auto-reconnects after
