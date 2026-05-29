@@ -48,6 +48,8 @@ export interface EpisodeExtractorOptions {
   alignmentScorer?: AlignmentScorer;
   /** Optional dataset accumulator. Runs 4-gate pipeline on each stored record. */
   accumulator?: CandidateDatasetAccumulator;
+  /** Optional consolidation engine — triggered at session boundaries. */
+  consolidationEngine?: { maybeConsolidate(opts: { entityId: string; projectPath?: string | null; trigger: "session_close" | "job_complete" | "idle" }): Promise<unknown> };
   logger?: ComponentLogger;
   /** Timeout for the full extract+score+store cycle, ms. Default 45_000. */
   timeoutMs?: number;
@@ -60,6 +62,8 @@ export interface ExtractionInput {
   model: string;
   coaFingerprint: string;
   sessionKey: string;
+  /** Project path for project-scoped memory tagging (optional). */
+  projectPath?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +94,7 @@ export class EpisodeExtractor {
   private readonly coaAlias: string;
   private readonly alignmentScorer?: AlignmentScorer;
   private readonly accumulator?: CandidateDatasetAccumulator;
+  private readonly consolidationEngine?: EpisodeExtractorOptions["consolidationEngine"];
   private readonly logger?: ComponentLogger;
   private readonly timeoutMs: number;
   private readonly anchor = new NoopAnchor();
@@ -101,6 +106,7 @@ export class EpisodeExtractor {
     this.coaAlias = opts.coaAlias;
     this.alignmentScorer = opts.alignmentScorer;
     this.accumulator = opts.accumulator;
+    this.consolidationEngine = opts.consolidationEngine;
     this.logger = opts.logger;
     this.timeoutMs = opts.timeoutMs ?? 45_000;
   }
@@ -134,6 +140,8 @@ export class EpisodeExtractor {
         sourceLinks: [input.sessionKey, `model:${input.model}`],
         coaFingerprint: input.coaFingerprint,
         modelVersion: input.model,
+        // projectPath is carried through for graph-adapter project-scoped storage
+        projectPath: input.projectPath ?? null,
       };
 
       // Step 3: Compute canonical hash (includes all stable fields)
@@ -174,6 +182,17 @@ export class EpisodeExtractor {
       this.logger?.debug(
         `episode extracted: ${record.id} conf=${record.confidence.toFixed(2)} tags=[${record.tags.join(",")}]`,
       );
+
+      // Step 8: Trigger consolidation at session boundary (non-blocking)
+      if (this.consolidationEngine) {
+        void this.consolidationEngine
+          .maybeConsolidate({
+            entityId: this.entityId,
+            projectPath: input.projectPath ?? null,
+            trigger: "session_close",
+          })
+          .catch(() => { /* consolidation failure is non-fatal */ });
+      }
 
       return record;
     } catch (err) {

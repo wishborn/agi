@@ -12,7 +12,7 @@
 
 import type { FastifyInstance } from "fastify";
 import type { IncomingMessage } from "node:http";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { homedir } from "node:os";
 import { readOnboardingState, writeOnboardingState } from "./onboarding-state.js";
@@ -22,6 +22,9 @@ import type { Logger } from "./logger.js";
 import type { SecretsManager } from "./secrets.js";
 import type { Db } from "@agi/db-schema/client";
 import { createHandoff, pollHandoff } from "./handoff-api.js";
+import { createEntityService } from "./entity-service.js";
+import type { LLMProvider } from "./llm/index.js";
+import type { LLMMessage } from "./llm/types.js";
 
 // ---------------------------------------------------------------------------
 // ID Service URL resolution
@@ -96,6 +99,9 @@ export interface OnboardingRouteDeps {
   encKey?: Buffer;
   /** Gateway's own base URL for building handoff authUrl (e.g. "https://ai.on"). */
   gatewayBaseUrl?: string;
+  /** Gateway's active LLM provider — used for 0ME interview chat. Falls back to
+   *  direct Anthropic API call when not supplied. */
+  llmProvider?: LLMProvider;
 }
 
 /**
@@ -142,6 +148,63 @@ interface ActiveHandoff {
 }
 
 let activeHandoff: ActiveHandoff | null = null;
+
+// ---------------------------------------------------------------------------
+// activateTwin — create or return the $ME digital clone entity.
+// Idempotent: returns existing twin if already bound to the genesis entity.
+// ---------------------------------------------------------------------------
+
+async function activateTwin(
+  dataDir: string,
+  db: import("@agi/db-schema/client").Db,
+  encKey: Buffer,
+  log: ReturnType<typeof createComponentLogger>,
+): Promise<{ coaAlias: string; geid: string }> {
+  const entitySvc = createEntityService(db, encKey);
+
+  // Find the genesis entity (registered scope, lowest-index alias starting with #E)
+  const genesis = await entitySvc.getByAlias("#E0");
+  if (!genesis) throw new Error("Genesis entity (#E0) not found — complete Owner Profile first");
+
+  // Idempotency: return existing twin if one already exists
+  const existing = await entitySvc.getTwinEntity(genesis.id);
+  if (existing) {
+    const existingGeid = await entitySvc.getEntityGeid(existing.id);
+    log.info(`0ME twin already exists: ${existing.coaAlias}`);
+    return { coaAlias: existing.coaAlias, geid: existingGeid?.geid ?? "" };
+  }
+
+  // Read captured profiles
+  const zeroMeDir = join(dataDir, "0ME");
+  const readProfile = (domain: string): string => {
+    const p = join(zeroMeDir, `${domain}.md`);
+    return existsSync(p) ? readFileSync(p, "utf8").trim() : "";
+  };
+  const mind = readProfile("MIND");
+  const soul = readProfile("SOUL");
+  const skill = readProfile("SKILL");
+
+  if (!mind && !soul && !skill) {
+    throw new Error("No 0ME profiles captured yet — complete the 0ME steps first");
+  }
+
+  // Create the $ME entity
+  const twin = await entitySvc.createTwinEntity(genesis.id, `${genesis.displayName} (0ME)`);
+
+  // Assemble and persist the twin's defining prompt
+  const twinPromptParts: string[] = [
+    `You are $ME0 — the digital twin of ${genesis.displayName}. You think, reason, and respond as they would, based on their own words. You are not Aion ($A0); you are a living representation of the person.`,
+  ];
+  if (mind) twinPromptParts.push(`## MIND — Intellectual Interests\n${mind}`);
+  if (soul) twinPromptParts.push(`## SOUL — Purpose & Values\n${soul}`);
+  if (skill) twinPromptParts.push(`## SKILL — Expertise & Tools\n${skill}`);
+
+  mkdirSync(zeroMeDir, { recursive: true });
+  writeFileSync(join(zeroMeDir, "twin-prompt.md"), twinPromptParts.join("\n\n"), "utf8");
+
+  log.info(`0ME twin activated: ${twin.entity.coaAlias} (${twin.geid.geid})`);
+  return { coaAlias: twin.entity.coaAlias, geid: twin.geid.geid };
+}
 
 // ---------------------------------------------------------------------------
 export function registerOnboardingRoutes(
@@ -326,37 +389,44 @@ export function registerOnboardingRoutes(
     cfg.owner = owner;
     writeConfig(cfg);
 
-    // Register owner entity in Local-ID — creates #E0 + $A0
-    const idBaseUrl = resolveIdServiceUrl(cfg);
-    try {
-      const res = await fetch(`${idBaseUrl}/api/entities/register-owner`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ displayName: body.displayName.trim() }),
-      });
-
-      if (res.ok) {
-        const data = (await res.json()) as {
-          owner: { id: string; coaAlias: string; geid: string };
-          agent: { id: string; coaAlias: string; geid: string };
-          registrationId: string;
-        };
-
-        // Entity IDs are managed in Postgres by AGI (s180 Local-ID absorption).
-        // Do NOT write entityId/coaAlias/geid to gateway.json — OwnerConfigSchema
-        // and AgentConfigSchema both use .strict() and would crash on next start.
-        log.info(`Owner entity registered: ${data.owner.coaAlias} (${data.owner.geid})`);
-        log.info(`Agent entity registered: ${data.agent.coaAlias} (${data.agent.geid})`);
-      } else if (res.status === 409) {
-        // Genesis owner already exists — not an error (re-onboarding scenario)
-        log.info("Genesis owner already registered in Local-ID");
-      } else {
-        const errText = await res.text();
-        log.warn(`Local-ID register-owner failed (non-fatal): ${res.status} ${errText}`);
+    // Register owner entity directly — s180: Local-ID absorbed into gateway,
+    // no HTTP self-call needed (and it can't work during first-boot anyway).
+    let ownerGeid = "";
+    let ownerAlias = "";
+    let agentGeid = "";
+    let agentAlias = "";
+    if (deps.db && deps.encKey) {
+      try {
+        const entitySvc = createEntityService(deps.db, deps.encKey);
+        const hasOwner = await entitySvc.hasGenesisOwner();
+        if (!hasOwner) {
+          const result = await entitySvc.createOwnerEntity(body.displayName.trim());
+          ownerGeid = result.ownerGeid.geid;
+          ownerAlias = result.owner.coaAlias;
+          agentGeid = result.agentGeid.geid;
+          agentAlias = result.agent.coaAlias;
+          log.info(`Owner entity registered: ${ownerAlias} (${ownerGeid})`);
+          log.info(`Agent entity registered: ${agentAlias} (${agentGeid})`);
+        } else {
+          const ownerEntity = await entitySvc.getByAlias("#E0");
+          if (ownerEntity) {
+            const geidRecord = await entitySvc.getEntityGeid(ownerEntity.id);
+            ownerGeid = geidRecord?.geid ?? "";
+            ownerAlias = ownerEntity.coaAlias;
+            const agents = await entitySvc.getOwnerAgents(ownerEntity.id);
+            if (agents[0]) {
+              const agentGeidRecord = await entitySvc.getEntityGeid(agents[0].id);
+              agentGeid = agentGeidRecord?.geid ?? "";
+              agentAlias = agents[0].coaAlias;
+            }
+          }
+          log.info("Genesis owner already registered, reading existing identity");
+        }
+      } catch (e) {
+        log.warn(`Entity registration failed (non-fatal): ${String(e)}`);
       }
-    } catch (e) {
-      // Local-ID unreachable — non-fatal, entity can be created later
-      log.warn(`Local-ID unreachable during owner registration (non-fatal): ${String(e)}`);
+    } else {
+      log.warn("DB/encKey not available — entity registration skipped");
     }
 
     // Mark step completed
@@ -365,7 +435,53 @@ export function registerOnboardingRoutes(
     writeOnboardingState(state, dataDir);
 
     log.info(`Owner profile saved: ${body.displayName}`);
-    return reply.send({ ok: true });
+    return reply.send({
+      ok: true,
+      owner: { geid: ownerGeid, coaAlias: ownerAlias },
+      agent: { geid: agentGeid, coaAlias: agentAlias },
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/onboarding/owner-entity — read registered owner/agent GEID
+  // Used by AionimaIdStep after OwnerProfile step completes.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/onboarding/owner-entity", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err) return reply.code(403).send({ error: err });
+
+    if (!deps.db || !deps.encKey) {
+      return reply.code(503).send({ error: "Entity service unavailable" });
+    }
+
+    try {
+      const entitySvc = createEntityService(deps.db, deps.encKey);
+      const ownerEntity = await entitySvc.getByAlias("#E0");
+      if (!ownerEntity) {
+        return reply.send({ registered: false });
+      }
+      const ownerGeid = await entitySvc.getEntityGeid(ownerEntity.id);
+      const agents = await entitySvc.getOwnerAgents(ownerEntity.id);
+      const agent = agents[0] ?? null;
+      const agentGeid = agent ? await entitySvc.getEntityGeid(agent.id) : null;
+
+      return reply.send({
+        registered: true,
+        owner: {
+          displayName: ownerEntity.displayName,
+          coaAlias: ownerEntity.coaAlias,
+          geid: ownerGeid?.geid ?? "",
+        },
+        agent: {
+          coaAlias: agent?.coaAlias ?? "",
+          geid: agentGeid?.geid ?? "",
+        },
+      });
+    } catch (e) {
+      log.warn(`owner-entity lookup failed: ${String(e)}`);
+      return reply.code(500).send({ error: "Entity lookup failed" });
+    }
   });
 
   // -----------------------------------------------------------------------
@@ -736,10 +852,31 @@ export function registerOnboardingRoutes(
       return reply.code(400).send({ error: `Unknown domain: ${body.domain}` });
     }
 
-    const apiKey = secrets?.readSecret("ANTHROPIC_API_KEY") ?? process.env["ANTHROPIC_API_KEY"] ?? "";
+    // Route through the gateway's active LLM provider when available.
+    // This ensures local providers (Lemonade, Ollama) work during onboarding.
+    if (deps.llmProvider) {
+      try {
+        const llmMessages: LLMMessage[] = body.messages.map((m) => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        }));
+        const result = await deps.llmProvider.invoke({
+          system: systemPrompt,
+          messages: llmMessages,
+          entityId: "onboarding",
+          maxTokens: 1024,
+        });
+        return reply.send({ reply: result.text });
+      } catch (e) {
+        log.error(`zero-me/chat via llmProvider failed: ${String(e)}`);
+        return reply.code(500).send({ error: "LLM provider error during 0ME chat" });
+      }
+    }
 
+    // Fallback: direct Anthropic call when provider not yet wired.
+    const apiKey = secrets?.readSecret("ANTHROPIC_API_KEY") ?? process.env["ANTHROPIC_API_KEY"] ?? "";
     if (!apiKey) {
-      return reply.code(400).send({ error: "ANTHROPIC_API_KEY not configured" });
+      return reply.code(400).send({ error: "No LLM provider configured — set up an API key or local model first" });
     }
 
     try {
@@ -769,10 +906,57 @@ export function registerOnboardingRoutes(
       };
 
       const text = data.content.find((c) => c.type === "text")?.text ?? "";
-      return reply.send({ response: text });
+      return reply.send({ reply: text });
     } catch (e) {
       log.error(`zero-me/chat fetch failed: ${String(e)}`);
       return reply.code(500).send({ error: "Internal error during chat" });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/onboarding/zero-me/status — read existing 0ME profiles
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/onboarding/zero-me/status", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err) return reply.code(403).send({ error: err });
+
+    const zeroMeDir = join(dataDir, "0ME");
+    const profiles: Record<string, string> = {};
+    for (const domain of ["MIND", "SOUL", "SKILL"]) {
+      const filePath = join(zeroMeDir, `${domain}.md`);
+      if (existsSync(filePath)) {
+        profiles[domain] = readFileSync(filePath, "utf8");
+      }
+    }
+    return reply.send({ profiles });
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/onboarding/zero-me/twin — read twin entity without creating one
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/onboarding/zero-me/twin", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err) return reply.code(403).send({ error: err });
+
+    if (!deps.db || !deps.encKey) {
+      return reply.send({ twin: null });
+    }
+
+    try {
+      const entitySvc = createEntityService(deps.db, deps.encKey);
+      const genesis = await entitySvc.getByAlias("#E0");
+      if (!genesis) return reply.send({ twin: null });
+
+      const twin = await entitySvc.getTwinEntity(genesis.id);
+      if (!twin) return reply.send({ twin: null });
+
+      const twinGeid = await entitySvc.getEntityGeid(twin.id);
+      return reply.send({ twin: { coaAlias: twin.coaAlias, geid: twinGeid?.geid ?? "" } });
+    } catch (e) {
+      log.warn(`zero-me/twin lookup error: ${String(e)}`);
+      return reply.send({ twin: null });
     }
   });
 
@@ -805,7 +989,45 @@ export function registerOnboardingRoutes(
     writeOnboardingState(state, dataDir);
 
     log.info(`0ME/${body.domain}.md saved`);
-    return reply.send({ ok: true });
+
+    // When all three domains are captured, auto-activate the $ME twin entity.
+    const updatedState = readOnboardingState(dataDir);
+    const allCaptured =
+      updatedState.steps.zeroMeMind === "completed" &&
+      updatedState.steps.zeroMeSoul === "completed" &&
+      updatedState.steps.zeroMeSkill === "completed";
+
+    let twin: { coaAlias: string; geid: string } | null = null;
+    if (allCaptured && deps.db && deps.encKey) {
+      try {
+        twin = await activateTwin(dataDir, deps.db, deps.encKey, log);
+      } catch (e) {
+        log.warn(`0ME twin activation failed (non-fatal): ${String(e)}`);
+      }
+    }
+
+    return reply.send({ ok: true, twin });
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/onboarding/zero-me/activate — create or return $ME twin entity
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/onboarding/zero-me/activate", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err) return reply.code(403).send({ error: err });
+
+    if (!deps.db || !deps.encKey) {
+      return reply.code(503).send({ error: "Database not available" });
+    }
+
+    try {
+      const twin = await activateTwin(dataDir, deps.db, deps.encKey, log);
+      return reply.send({ ok: true, twin });
+    } catch (e) {
+      log.error(`0ME activate error: ${String(e)}`);
+      return reply.code(500).send({ error: String(e) });
+    }
   });
 
   // -----------------------------------------------------------------------

@@ -8,7 +8,13 @@ import {
   SlashCommandBuilder,
   PermissionFlagsBits,
 } from "discord.js";
-import type { AionimaPlugin, AionimaPluginAPI } from "@agi/plugins";
+import type {
+  AionimaPlugin,
+  AionimaPluginAPI,
+  AmbientEntry,
+  RegistrationSession,
+  PendingApprovalCaptureInput,
+} from "@agi/plugins";
 import type {
   ChatInputCommandInteraction,
   Guild,
@@ -28,6 +34,7 @@ import {
   DISCORD_CHANNEL_ID,
   normalizeMessage,
   buildDisplayName,
+  resolveDiscordMentions,
 } from "./normalizer.js";
 import { sendOutbound } from "./outbound.js";
 import {
@@ -45,6 +52,7 @@ export { isDiscordConfig } from "./config.js";
 export {
   normalizeMessage,
   buildDisplayName,
+  resolveDiscordMentions,
   DISCORD_CHANNEL_ID,
 } from "./normalizer.js";
 export { splitText } from "./outbound.js";
@@ -285,9 +293,184 @@ type CreateUserFn = (
   meta: { displayName?: string; username?: string },
 ) => Promise<{ userId: string; isNew: boolean }>;
 
+// ---------------------------------------------------------------------------
+// s194 — Registration flow helpers
+// ---------------------------------------------------------------------------
+
+/** Simple email format check — not exhaustive, just catches obvious mistakes. */
+function isValidEmail(s: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+}
+
+/** Validates MM/DD/YYYY date format. */
+function isValidBirthdate(s: string): boolean {
+  return /^\d{2}\/\d{2}\/\d{4}$/.test(s);
+}
+
+/** Send a DM to a Discord user; best-effort (DMs may be disabled). */
+async function sendDm(
+  author: { createDM: () => Promise<{ send: (text: string) => Promise<unknown> }> },
+  text: string,
+): Promise<void> {
+  try {
+    const dm = await author.createDM();
+    await dm.send(text);
+  } catch {
+    // Best-effort — user may have DMs disabled
+  }
+}
+
+type RegistrationOpts = {
+  getRegistrationSession?: (id: string) => RegistrationSession | null;
+  setRegistrationSession?: (s: RegistrationSession) => void;
+  deleteRegistrationSession?: (id: string) => void;
+  capturePendingApproval?: (input: PendingApprovalCaptureInput) => void;
+};
+
+/** Advance a registration session based on the user's DM reply. */
+async function handleRegistrationDm(
+  msg: { author: { id: string; username: string; createDM: () => Promise<{ send: (t: string) => Promise<unknown> }> }; content: string },
+  session: RegistrationSession,
+  reg: RegistrationOpts,
+): Promise<void> {
+  const input = msg.content.trim();
+  if (input.toLowerCase() === "cancel") {
+    reg.deleteRegistrationSession?.(session.sessionId);
+    await sendDm(msg.author, "Registration cancelled. Mention me in the server to restart anytime.");
+    return;
+  }
+
+  switch (session.step) {
+    case "name": {
+      if (input.length < 2) {
+        await sendDm(msg.author, "Please provide your full name (at least 2 characters):");
+        return;
+      }
+      reg.setRegistrationSession?.({ ...session, step: "email", data: { ...session.data, name: input } });
+      await sendDm(msg.author, `Thanks, ${input}! What's your email address?`);
+      break;
+    }
+    case "email": {
+      if (!isValidEmail(input)) {
+        await sendDm(msg.author, "That doesn't look like a valid email. Try again:");
+        return;
+      }
+      reg.setRegistrationSession?.({ ...session, step: "birthdate", data: { ...session.data, email: input } });
+      await sendDm(msg.author, "Got it! What's your birthdate? (MM/DD/YYYY)");
+      break;
+    }
+    case "birthdate": {
+      if (!isValidBirthdate(input)) {
+        await sendDm(msg.author, "Please use MM/DD/YYYY format (e.g. 01/15/1990):");
+        return;
+      }
+      reg.setRegistrationSession?.({ ...session, step: "pronouns" as const, data: { ...session.data, birthdate: input } });
+      await sendDm(msg.author, "Almost there! What are your preferred pronouns? (e.g. she/her, he/him, they/them — or type **skip** to leave blank)");
+      break;
+    }
+    case "pronouns": {
+      const pronounsValue = input.toLowerCase() === "skip" ? undefined : input;
+      const withPronouns = { ...session, step: "confirm" as const, data: { ...session.data, pronouns: pronounsValue } };
+      reg.setRegistrationSession?.(withPronouns);
+      const summary = [
+        `Name: ${withPronouns.data.name ?? ""}`,
+        `Email: ${withPronouns.data.email ?? ""}`,
+        `Birthdate: ${withPronouns.data.birthdate ?? ""}`,
+        ...(withPronouns.data.pronouns !== undefined ? [`Pronouns: ${withPronouns.data.pronouns}`] : []),
+        `Discord: @${session.discordHandle}`,
+      ].join("\n");
+      await sendDm(msg.author, `Almost done! Here's what I have:\n\n${summary}\n\nReply **yes** to submit, or **cancel** to abort.`);
+      break;
+    }
+    case "confirm": {
+      if (input.toLowerCase().startsWith("y")) {
+        reg.capturePendingApproval?.({
+          channelId: DISCORD_CHANNEL_ID,
+          roomId: `dm:${msg.author.id}`,
+          channelUserId: msg.author.id,
+          displayName: session.data.name ?? session.discordHandle,
+          firstMessagePreview: "(registration submitted via DM)",
+          registrationData: {
+            name: session.data.name,
+            email: session.data.email,
+            birthdate: session.data.birthdate,
+            pronouns: session.data.pronouns,
+            discordHandle: session.discordHandle,
+          },
+        });
+        reg.setRegistrationSession?.({ ...session, step: "submitted" });
+        await sendDm(msg.author, "Done! Your registration is pending owner approval. You can keep chatting with me in the meantime.");
+      } else {
+        await sendDm(msg.author, "Got it. Type **yes** when you're ready to submit, or **cancel** to abort.");
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+/** Initiate a registration flow for an unregistered user with an allowed role. */
+async function startRegistration(
+  msg: {
+    author: { id: string; username: string; createDM: () => Promise<{ send: (t: string) => Promise<unknown> }> };
+    guildId: string | null;
+    member: { displayName: string } | null;
+  },
+  reg: RegistrationOpts,
+): Promise<void> {
+  const displayName =
+    msg.member?.displayName ??
+    (msg.author as { globalName?: string }).globalName ??
+    msg.author.username;
+
+  const session: RegistrationSession = {
+    sessionId: `discord::${msg.author.id}`,
+    channelUserId: msg.author.id,
+    discordHandle: msg.author.username,
+    guildId: msg.guildId ?? undefined,
+    step: "name",
+    data: { name: displayName },
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  reg.setRegistrationSession?.(session);
+  await sendDm(
+    msg.author,
+    `Hi! Before I can help with project work, I need to verify your identity.\n\nI have your name as "${displayName}" — reply to confirm or type a different name.\n\n(Reply **cancel** at any time to stop.)`,
+  );
+}
+
+/** Format a list of ambient log entries as a timestamped conversation preamble. */
+function formatAmbientPreamble(entries: AmbientEntry[]): string {
+  return entries
+    .map((e) => {
+      const time = new Date(e.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      return `${time} ${e.displayName}: ${e.text}`;
+    })
+    .join("\n");
+}
+
 export function createDiscordPlugin(
   config: DiscordConfig,
-  opts?: { createUser?: CreateUserFn },
+  opts?: {
+    createUser?: CreateUserFn;
+    /** Log every raw channel message to the ambient daily session (s189). */
+    logMessage?: (channelId: string, entry: AmbientEntry) => void;
+    /** Return recent messages from today's ambient log for context injection (s189). */
+    getContext?: (channelId: string, limit: number) => AmbientEntry[];
+    /** s194: Check whether a user is verified in the entity store. */
+    isEntityVerified?: (channelId: string, userId: string) => Promise<boolean>;
+    /** s194: Retrieve an in-progress DM registration session. */
+    getRegistrationSession?: (sessionId: string) => RegistrationSession | null;
+    /** s194: Persist or update a registration session. */
+    setRegistrationSession?: (session: RegistrationSession) => void;
+    /** s194: Remove a session (cancelled or submitted). */
+    deleteRegistrationSession?: (sessionId: string) => void;
+    /** s194: Capture a pending approval record from the registration flow. */
+    capturePendingApproval?: (input: PendingApprovalCaptureInput) => void;
+  },
 ): AionimaChannelPlugin & {
   __client: Client;
   __config: DiscordConfig;
@@ -333,6 +516,16 @@ export function createDiscordPlugin(
     // Ignore messages from bots (including ourselves)
     if (msg.author.bot) return;
 
+    // s194: Intercept DMs for active registration sessions before any guild checks.
+    // Users completing registration always DM the bot — their guildId is null here.
+    if (msg.guildId === null && opts?.getRegistrationSession) {
+      const session = opts.getRegistrationSession(`discord::${msg.author.id}`);
+      if (session !== null && session.step !== "submitted" && session.step !== "cancelled") {
+        await handleRegistrationDm(msg, session, opts);
+        return;
+      }
+    }
+
     // Guild scope (always enforced)
     if (!isGuildAllowed(msg.guildId, normalizeDiscordArrayField(config.allowedGuildIds))) return;
 
@@ -346,6 +539,18 @@ export function createDiscordPlugin(
       hasExplicitChannels && !isRespondChannel && configuredPresence.includes(msg.channelId);
     // Off channel — drop completely
     if (hasExplicitChannels && !isRespondChannel && !isMonitorChannel) return;
+
+    // Ambient log — record every message from configured channels regardless of
+    // mode or mention so Aion can wake up with today's conversation context (s189).
+    if (opts?.logMessage) {
+      opts.logMessage(DISCORD_CHANNEL_ID, {
+        ts: new Date().toISOString(),
+        authorId: msg.author.id,
+        displayName: buildDisplayName(msg),
+        text: msg.content,
+        roomId: msg.guildId !== null ? `${msg.guildId}:${msg.channelId}` : `dm:${msg.author.id}`,
+      });
+    }
 
     // Monitor channels: track context + user registration, but skip AI routing entirely
     if (isMonitorChannel) {
@@ -381,6 +586,35 @@ export function createDiscordPlugin(
       }
     }
 
+    // s194: Registration flow — for users who have an allowed role but are not yet verified.
+    // Only applies when allowedRoleIds are configured (role-gated server).
+    // allowedRoleIds is already defined above in the role-check block.
+    if (
+      allowedRoleIds.length > 0 &&
+      msg.guildId !== null &&
+      opts?.isEntityVerified &&
+      opts?.getRegistrationSession
+    ) {
+      const isVerified = await opts.isEntityVerified(DISCORD_CHANNEL_ID, msg.author.id);
+      if (!isVerified) {
+        const sessionId = `discord::${msg.author.id}`;
+        const session = opts.getRegistrationSession(sessionId);
+        if (session === null) {
+          // No session — offer registration only when user @-mentions the bot
+          const isMentioned = client.user !== null && msg.mentions.has(client.user);
+          if (isMentioned) {
+            await startRegistration(msg, opts);
+          }
+          return; // Don't route to Aion until registered
+        }
+        if (session.step !== "submitted") {
+          // Active registration in DMs — drop guild message silently
+          return;
+        }
+        // step === "submitted": pending owner approval — allow routing without project scope
+      }
+    }
+
     // Mention filter: in guild channels, only respond to @mentions, replies,
     // or messages that call the bot by username / the "aion" alias.
     const mentionOnly = config.mentionOnly ?? true;
@@ -403,6 +637,11 @@ export function createDiscordPlugin(
         .trim();
     }
 
+    // Resolve user/role/channel mention tags to human-readable names (s193)
+    if (msg.guild !== null) {
+      msg.content = resolveDiscordMentions(msg.content, msg.guild);
+    }
+
     // Track the author→channel mapping for outbound replies
     replyChannelMap.set(msg.author.id, msg.channelId);
 
@@ -420,9 +659,23 @@ export function createDiscordPlugin(
     // When allowedRoleIds are configured, the role check above already verified
     // this sender. Signal the inbound-router to skip the pairing gate so
     // role-approved guild members don't see "pairing code / owner approval".
-    const normalizedWithMeta = allowedRoleIds.length > 0
+    let normalizedWithMeta = allowedRoleIds.length > 0
       ? { ...normalized, metadata: { ...normalized.metadata, bypassPairingGate: true } }
       : normalized;
+
+    // Inject today's ambient context as a preamble so Aion wakes up knowing
+    // what the channel has been discussing (s189). Prepended to the message
+    // text so it flows through the existing agent pipeline without changes.
+    if (opts?.getContext && normalizedWithMeta.content.type === "text") {
+      const recent = opts.getContext(DISCORD_CHANNEL_ID, 30);
+      if (recent.length > 0) {
+        const preamble = `[Today's channel conversation]\n${formatAmbientPreamble(recent)}\n\n---\n`;
+        normalizedWithMeta = {
+          ...normalizedWithMeta,
+          content: { type: "text", text: preamble + normalizedWithMeta.content.text },
+        };
+      }
+    }
 
     await messageHandler(normalizedWithMeta);
   });
@@ -657,10 +910,43 @@ export default {
   async activate(api: AionimaPluginAPI): Promise<void> {
     const channelConfig = api.getChannelConfig("discord");
     if (!channelConfig?.enabled) return;
+
+    // Register a config-only stub when botToken is absent so that
+    // Settings → Channels can render the credential field for initial setup.
+    if (!isDiscordConfig(channelConfig.config)) {
+      api.getLogger().warn("discord: botToken not configured — registering stub until credentials are saved");
+      api.registerChannel({
+        id: DISCORD_CHANNEL_ID,
+        meta: { name: "Discord", version: "0.0.0" },
+        capabilities: { text: false, media: false, voice: false, reactions: false, threads: false, ephemeral: false },
+        config: createConfigAdapter(),
+        gateway: { start: async () => {}, stop: async () => {}, isRunning: () => false },
+        outbound: { send: async () => {} },
+        messaging: { onMessage: () => {} },
+      });
+      return;
+    }
+
     const createUser = api.getOrCreateChannelUser?.bind(api);
+    const logMessage = api.logAmbientMessage?.bind(api);
+    const getContext = api.getAmbientContext?.bind(api);
+    const isEntityVerified = api.isEntityVerified?.bind(api);
+    const getRegistrationSession = api.getRegistrationSession?.bind(api);
+    const setRegistrationSession = api.setRegistrationSession?.bind(api);
+    const deleteRegistrationSession = api.deleteRegistrationSession?.bind(api);
+    const capturePendingApproval = api.capturePendingApproval?.bind(api);
     const plugin = createDiscordPlugin(
       channelConfig.config as unknown as DiscordConfig,
-      createUser ? { createUser } : undefined,
+      {
+        ...(createUser ? { createUser } : {}),
+        ...(logMessage ? { logMessage } : {}),
+        ...(getContext ? { getContext } : {}),
+        ...(isEntityVerified ? { isEntityVerified } : {}),
+        ...(getRegistrationSession ? { getRegistrationSession } : {}),
+        ...(setRegistrationSession ? { setRegistrationSession } : {}),
+        ...(deleteRegistrationSession ? { deleteRegistrationSession } : {}),
+        ...(capturePendingApproval ? { capturePendingApproval } : {}),
+      },
     );
     api.registerChannel(plugin);
 

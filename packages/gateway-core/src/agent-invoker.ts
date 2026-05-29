@@ -245,6 +245,10 @@ export interface AgentInvokerDeps {
   /** s112 t384 — episode extraction pipeline. When wired, every successful chat
    *  turn triggers a fire-and-forget episode extraction + scoring + storage cycle. */
   episodeExtractor?: EpisodeExtractor;
+  /** s112 Phase 3/5 — graph memory adapter for project-scoped queries + relationship traversal. */
+  graphAdapter?: import("@agi/memory").GraphMemoryAdapter;
+  /** s112 Phase 3 — doc indexer for doc chunk injection into context. */
+  docIndexer?: import("./doc-indexer.js").DocIndexer;
 }
 
 export interface InvocationRequest {
@@ -482,16 +486,75 @@ export class AgentInvoker extends EventEmitter {
       channel,
     };
 
-    // Inject recalled memories (if memory adapter is wired)
+    // Inject recalled memories — s112 Phase 5: project-scoped + relationships + doc chunks
     let memories: Array<{ content: string; category: string }> | undefined;
-    if (this.deps.memoryAdapter !== undefined) {
+    const projectPath = request.projectContext ?? null;
+    const queryText = typeof content === "string" ? content.slice(0, 300) : "";
+
+    if (this.deps.graphAdapter !== undefined) {
+      try {
+        const graph = this.deps.graphAdapter;
+
+        // Global episodic events (entity-wide)
+        const globalEvents = await graph.queryGraphEvents({
+          entityId: entity.id,
+          projectPath: null,
+          semantic: queryText,
+          limit: 4,
+        });
+
+        // Project-scoped episodic events
+        const projectEvents = projectPath
+          ? await graph.queryGraphEvents({ entityId: entity.id, projectPath, semantic: queryText, limit: 4 })
+          : [];
+
+        // Established relationship facts
+        const relationships = await graph.queryRelationships({
+          subjectEntityId: entity.id,
+          projectPath,
+          validAt: new Date(),
+          limit: 3,
+        });
+
+        // Doc chunks from k/ and agi/docs/
+        const docChunks = this.deps.docIndexer
+          ? await this.deps.docIndexer.query({
+              query: queryText || "memory context",
+              scope: projectPath ? `project:${projectPath}` : "global",
+              limit: 2,
+            }).catch(() => [])
+          : [];
+
+        const parts: Array<{ content: string; category: string }> = [];
+
+        for (const e of globalEvents) {
+          parts.push({ category: "memory", content: e.summary });
+        }
+        for (const e of projectEvents) {
+          parts.push({ category: "project-memory", content: e.summary });
+        }
+        for (const r of relationships) {
+          const since = new Date(r.validFrom).toISOString().slice(0, 10);
+          parts.push({ category: "fact", content: `${r.predicate}: ${r.objectLiteral} (since ${since})` });
+        }
+        for (const c of docChunks) {
+          const label = c.heading ? `**${c.heading}** (${c.sourcePath})` : c.sourcePath;
+          parts.push({ category: "docs", content: `${label}\n${c.content.slice(0, 200)}` });
+        }
+
+        if (parts.length > 0) memories = parts;
+      } catch {
+        // Memory recall failure is non-fatal
+      }
+    } else if (this.deps.memoryAdapter !== undefined) {
+      // Legacy fallback for non-graph adapters
       try {
         memories = await this.deps.memoryAdapter.query({
           entityId: entity.id,
           limit: 10,
         });
       } catch {
-        // Memory recall failure is non-fatal
+        // non-fatal
       }
     }
 
@@ -561,16 +624,15 @@ export class AgentInvoker extends EventEmitter {
     // tools it cannot actually call.
     const willOfferTools = shouldOfferTools(sanitizedText, requestType) && availableTools.length > 0;
 
-    // Iterative-work mode — when the project opts in via
-    // `iterativeWork.enabled: true`, hot-load agi/prompts/iterative-work.md so
-    // Aion participates in the tynn workflow on this turn. Read at use time
-    // (per `feedback_hot_config`); errors are swallowed so a missing prompt
-    // file never breaks invocation.
+    // Iterative-work mode — when the project has an enabled pm-loop job,
+    // hot-load agi/prompts/iterative-work.md so Aion participates in the tynn
+    // workflow on this turn. Read at use time (per `feedback_hot_config`);
+    // errors are swallowed so a missing prompt file never breaks invocation.
+    const hasPmLoop = projectConfigForTurn?.scheduledJobs?.some(
+      (j) => j.type === "pm-loop" && j.enabled,
+    ) ?? false;
     let iterativeWorkPrompt: string | undefined;
-    if (
-      requestType === "project" &&
-      projectConfigForTurn?.iterativeWork?.enabled === true
-    ) {
+    if (requestType === "project" && hasPmLoop) {
       try {
         const { readFileSync } = await import("node:fs");
         const { resolve: resolvePath } = await import("node:path");
@@ -620,6 +682,9 @@ export class AgentInvoker extends EventEmitter {
       }
     }
 
+    // s197 — doc topic index so Aion knows what platform docs exist.
+    const docTopicIndex = this.deps.docIndexer?.getDocTopicIndex();
+
     const promptCtx: SystemPromptContext = {
       entity: entityCtx,
       coaFingerprint,
@@ -643,6 +708,7 @@ export class AgentInvoker extends EventEmitter {
       iterativeWorkPrompt,
       ...(projectNotes !== undefined ? { projectNotes } : {}),
       ...(request.channelContext !== undefined ? { channelContext: request.channelContext } : {}),
+      ...(docTopicIndex !== undefined && Object.keys(docTopicIndex).length > 0 ? { docTopicIndex } : {}),
     };
 
     const { prompt: baseSystemPrompt, breakdown: promptBreakdown } = assembleSystemPromptWithBreakdown(promptCtx);
@@ -1262,6 +1328,7 @@ export class AgentInvoker extends EventEmitter {
           model: result.model,
           coaFingerprint: outboundFingerprint,
           sessionKey: sKey,
+          projectPath: request.projectContext ?? null,
         });
       }
 

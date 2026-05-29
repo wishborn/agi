@@ -50,6 +50,15 @@ ALLOWLIST=(
   "components/ui/table.tsx"
   "components/ui/dropdown-menu.tsx"
   "components/ui/panel-trigger.tsx"
+  # (Orb.tsx removed from allowlist — now consumed by StackStrip.tsx s199)
+  # s197 Hearth Home — old overview tab components temporarily displaced.
+  # Re-wire when /usage and /impactinomics dedicated routes ship (v0.4.0).
+  "components/ActivityFeed.tsx"
+  "components/TimelineChart.tsx"
+  "components/OverviewCards.tsx"
+  "components/UsageSection.tsx"
+  "components/ComingSoonOverlay.tsx"
+  "components/BreakdownChart.tsx"
 )
 
 is_allowlisted() {

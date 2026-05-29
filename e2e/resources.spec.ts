@@ -16,7 +16,7 @@ import { test, expect } from "@playwright/test";
 test.describe("Resource Usage", () => {
   test("navigate to /system — page renders without error", async ({ page }) => {
     await page.goto("/system");
-    await page.waitForSelector("[data-testid='app-sidebar']", { timeout: 10000 });
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10000 });
     // No unhandled error headings
     const errorHeading = page.getByRole("heading", { name: /error/i });
     await expect(errorHeading).toHaveCount(0);
@@ -37,7 +37,7 @@ test.describe("Resource Usage", () => {
 
   test("card section headings visible", async ({ page }) => {
     await page.goto("/system");
-    await page.waitForSelector("[data-testid='app-sidebar']", { timeout: 10000 });
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10000 });
     // Section card headings from resources.tsx (h3 elements)
     await expect(page.getByRole("heading", { name: "Running AI models" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Database Storage" })).toBeVisible();

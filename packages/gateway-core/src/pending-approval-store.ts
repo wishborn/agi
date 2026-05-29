@@ -49,6 +49,16 @@ export interface PendingApproval {
   firstMessagePreview: string;
   /** ISO 8601 timestamp when the pending record was created. */
   createdAt: string;
+  /** Collected via DM registration flow (s194). Present when user completed registration steps. */
+  registrationData?: {
+    name?: string;
+    email?: string;
+    birthdate?: string;
+    pronouns?: string;
+    discordHandle?: string;
+  };
+  /** Project paths owner assigned at approval time (s195). */
+  assignedProjectPaths?: string[];
 }
 
 /** Decision recorded when owner acts on the pending approval. */
@@ -168,17 +178,21 @@ export class PendingApprovalStore {
     roomId: string;
     channelUserId: string;
     displayName: string;
-    projectPath: string;
+    /** Project that binds this room. Empty string when the room is not yet bound to any project. */
+    projectPath?: string;
     firstMessagePreview: string;
+    /** Collected via DM registration flow (s194). */
+    registrationData?: PendingApproval["registrationData"];
   }): PendingApproval {
     const id = pendingApprovalId(input.channelId, input.roomId, input.channelUserId);
     const existing = this.approvals.get(id);
     if (existing !== undefined) {
-      // Refresh the display name + preview but keep the original id + createdAt
+      // Refresh display name + preview; merge registration data if now provided
       const refreshed: PendingApproval = {
         ...existing,
         displayName: input.displayName,
         firstMessagePreview: input.firstMessagePreview,
+        ...(input.registrationData !== undefined ? { registrationData: input.registrationData } : {}),
       };
       this.approvals.set(id, refreshed);
       this.save();
@@ -190,12 +204,13 @@ export class PendingApprovalStore {
       roomId: input.roomId,
       channelUserId: input.channelUserId,
       displayName: input.displayName,
-      projectPath: input.projectPath,
+      projectPath: input.projectPath ?? "",
       firstMessagePreview: input.firstMessagePreview.slice(0, 200),
       createdAt: new Date().toISOString(),
+      ...(input.registrationData !== undefined ? { registrationData: input.registrationData } : {}),
     };
     this.approvals.set(id, fresh);
-    this.log.info(`pending approval captured: ${id} (${input.displayName}, ${input.projectPath})`);
+    this.log.info(`pending approval captured: ${id} (${input.displayName}, ${input.projectPath ?? "(unbound)"})`);
     this.save();
     return fresh;
   }
@@ -215,21 +230,40 @@ export class PendingApprovalStore {
     return this.approvals.get(id) ?? null;
   }
 
+  /** Find the first pending approval by channel + channel-user (any room). Useful for gate logic. */
+  getByChannelUser(channelId: string, channelUserId: string): PendingApproval | null {
+    for (const approval of this.approvals.values()) {
+      if (approval.channelId === channelId && approval.channelUserId === channelUserId) {
+        return approval;
+      }
+    }
+    return null;
+  }
+
   /**
    * Mark the approval as approved and remove it from the pending queue.
    * Returns the resolved record + decision. Throws when the id isn't found.
    */
-  approve(id: string): { approval: PendingApproval; decision: PendingApprovalDecision } {
+  approve(
+    id: string,
+    opts?: { projectPaths?: string[] },
+  ): { approval: PendingApproval; decision: PendingApprovalDecision } {
     const approval = this.approvals.get(id);
     if (approval === undefined) {
       throw new Error(`Pending approval not found: ${id}`);
     }
+    const finalApproval: PendingApproval = {
+      ...approval,
+      ...(opts?.projectPaths !== undefined && opts.projectPaths.length > 0
+        ? { assignedProjectPaths: opts.projectPaths }
+        : {}),
+    };
     const decision: PendingApprovalDecision = { status: "approved", decidedAt: new Date().toISOString() };
     this.approvals.delete(id);
     this.decisions.set(id, decision);
     this.log.info(`pending approval APPROVED: ${id}`);
     this.save();
-    return { approval, decision };
+    return { approval: finalApproval, decision };
   }
 
   /**

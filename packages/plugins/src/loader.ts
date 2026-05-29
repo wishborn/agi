@@ -59,6 +59,20 @@ export interface PluginLoaderDeps {
     userId: string,
     meta: { displayName?: string; username?: string },
   ) => Promise<{ userId: string; isNew: boolean }>;
+  /** Log a raw channel message to the ambient daily session file (s189). */
+  logAmbientMessage?: (channelId: string, entry: import("./types.js").AmbientEntry) => void;
+  /** Return recent messages from today's ambient log (s189). */
+  getAmbientContext?: (channelId: string, limit: number) => import("./types.js").AmbientEntry[];
+  /** s194: Check whether a channel user is verified in the entity store. */
+  isEntityVerified?: (channelId: string, userId: string) => Promise<boolean>;
+  /** s194: Retrieve an in-progress DM registration session. */
+  getRegistrationSession?: (sessionId: string) => import("./types.js").RegistrationSession | null;
+  /** s194: Persist or update a registration session. */
+  setRegistrationSession?: (session: import("./types.js").RegistrationSession) => void;
+  /** s194: Remove a registration session. */
+  deleteRegistrationSession?: (sessionId: string) => void;
+  /** s194: Capture a pending approval from the registration flow. */
+  capturePendingApproval?: (input: import("./types.js").PendingApprovalCaptureInput) => void;
 }
 
 export interface LoadResult {
@@ -379,5 +393,12 @@ function createPluginAPI(
     },
 
     getOrCreateChannelUser: deps.createChannelUser,
+    logAmbientMessage: deps.logAmbientMessage,
+    getAmbientContext: deps.getAmbientContext,
+    isEntityVerified: deps.isEntityVerified,
+    getRegistrationSession: deps.getRegistrationSession,
+    setRegistrationSession: deps.setRegistrationSession,
+    deleteRegistrationSession: deps.deleteRegistrationSession,
+    capturePendingApproval: deps.capturePendingApproval,
   };
 }

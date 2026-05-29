@@ -150,6 +150,113 @@ export interface CommsLogEntry {
   createdAt: string;
 }
 
+export interface AmbientLogEntry {
+  ts: string;
+  authorId: string;
+  displayName: string;
+  text: string;
+  roomId: string;
+}
+
+export interface DiscordChannelDescriptor {
+  id: string;
+  name: string;
+  kind: "text" | "voice" | "forum" | "other";
+  parent?: string;
+}
+
+export interface DiscordGuildDescriptor {
+  id: string;
+  name: string;
+  iconUrl?: string;
+  memberCount?: number;
+  channels: DiscordChannelDescriptor[];
+}
+
+export interface DiscordChannelState {
+  connected: boolean;
+  snapshotAt: string;
+  user?: { id: string; tag: string; avatarUrl?: string };
+  guilds: DiscordGuildDescriptor[];
+}
+
+export interface CommsStats {
+  byChannel: Record<string, { today: number; total: number }>;
+  todayTotal: number;
+}
+
+export type ConversationEntry =
+  | { kind: "comms-in";  id: string; ts: string; senderName: string | null; text: string; channel: string }
+  | { kind: "comms-out"; id: string; ts: string; text: string; channel: string; confidence?: number; latencyMs?: number; model?: string }
+  | { kind: "ambient";   ts: string; authorId: string; displayName: string; text: string };
+
+// ---------------------------------------------------------------------------
+// Moderation
+// ---------------------------------------------------------------------------
+
+export type FlagSeverity = "critical" | "high" | "medium" | "low";
+export type FlagStatus = "open" | "actioned" | "dismissed";
+export type FlagActionKind =
+  | "dismiss"
+  | "warn"
+  | "timeout"
+  | "ban"
+  | "escalate"
+  | "redact"
+  | "monitor"
+  | "mark_constructive";
+
+export interface FlagScores {
+  toxicity?: number;
+  sarcasm?: number;
+  escalation?: number;
+}
+
+export interface FlagAction {
+  kind: FlagActionKind;
+  moderatorId: string;
+  at: string;
+  note?: string;
+}
+
+export interface ModerationFlag {
+  id: string;
+  channel: string;
+  userId: string;
+  displayName: string | null;
+  messagePreview: string;
+  severity: FlagSeverity;
+  status: FlagStatus;
+  reason: string;
+  recommendedAction?: string;
+  scores?: FlagScores;
+  priorFlagCount: number;
+  flaggedAt: string;
+  action?: FlagAction;
+  entityId?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Agent Events
+// ---------------------------------------------------------------------------
+
+export type AgentEventKind = "respond" | "tool" | "memory" | "route" | "escalate" | "approval" | "mod" | "skip";
+
+export interface AgentEventEntry {
+  id: string;
+  ts: string;
+  kind: AgentEventKind;
+  agentLabel: string;
+  channel: string;
+  target: string;
+  summary: string;
+  confidence?: number;
+  latencyMs?: number;
+  model?: string;
+  tokens?: { in: number; out: number };
+  entityId?: string | null;
+}
+
 export interface WorkerJobUpdate {
   jobId: string;
   status: "pending" | "running" | "checkpoint" | "complete" | "failed";
@@ -382,8 +489,41 @@ export interface ProjectTypeInfo {
   logSources?: LogSourceDefinition[];
 }
 
-/** Cadence keys offered by the iterative-work tab dropdown (s118 t442 D1). */
+/** Cadence keys available for all scheduled job types. */
 export type IterativeWorkCadence = "30m" | "1h" | "5h" | "12h" | "1d" | "5d" | "1w";
+
+// ---------------------------------------------------------------------------
+// Scheduled jobs (s118 redesign)
+// ---------------------------------------------------------------------------
+
+export type ScheduledJobType = "pm-loop" | "prompt" | "command" | "action";
+
+export interface ScheduledJobBase {
+  id: string;
+  name: string;
+  enabled: boolean;
+  cadence?: IterativeWorkCadence;
+  cron?: string;
+}
+export interface PmLoopJob extends ScheduledJobBase { type: "pm-loop" }
+export interface PromptJob extends ScheduledJobBase { type: "prompt"; prompt: string }
+export interface CommandJob extends ScheduledJobBase { type: "command"; command: string }
+export interface ActionJob extends ScheduledJobBase { type: "action"; actionId: string; params?: Record<string, unknown> }
+
+export type ScheduledJob = PmLoopJob | PromptJob | CommandJob | ActionJob;
+
+/** Per-job runtime snapshot returned alongside the job list. */
+export interface ScheduledJobStatus {
+  jobId: string;
+  type: string;
+  name: string;
+  enabled: boolean;
+  cron: string | null;
+  cadence: string | null;
+  inFlight: boolean;
+  lastFiredAt: string | null;
+  nextFireAt: string | null;
+}
 
 /** Cadence options visible per category (mirrors gateway-core cadenceOptionsFor). */
 export const ITERATIVE_WORK_CADENCE_OPTIONS: Record<string, IterativeWorkCadence[]> = {

@@ -368,6 +368,15 @@ export function createEntityService(db: Db, encKey: Buffer) {
     await db.update(users).set({ entityId }).where(eq(users.id, userId));
   }
 
+  async function deleteGuestEntity(id: string): Promise<{ ok: boolean; error?: string }> {
+    const entity = await getEntity(id);
+    if (!entity) return { ok: false, error: "Entity not found" };
+    if (entity.coaAlias === "#E0") return { ok: false, error: "Cannot delete the genesis owner entity" };
+    if (entity.type === "A") return { ok: false, error: "Cannot delete agent entities" };
+    await db.delete(entities).where(eq(entities.id, id));
+    return { ok: true };
+  }
+
   async function hasGenesisOwner(): Promise<boolean> {
     const [owner] = await db
       .select()
@@ -375,6 +384,39 @@ export function createEntityService(db: Db, encKey: Buffer) {
       .where(and(eq(entities.coaAlias, "#E0"), eq(entities.scope, "registered")))
       .limit(1);
     return owner !== undefined;
+  }
+
+  // -----------------------------------------------------------------------
+  // createTwinEntity — spawn a $ME digital clone bound to a genesis entity
+  // -----------------------------------------------------------------------
+
+  async function createTwinEntity(
+    genesisEntityId: string,
+    displayName: string,
+  ): Promise<CreateEntityResult> {
+    const twin = await createEntity("ME", displayName, "registered");
+
+    // Bind twin to genesis entity with bindingType "twin"
+    await db.insert(agentBindings).values({
+      id: randomBytes(16).toString("hex"),
+      ownerId: genesisEntityId,
+      agentId: twin.entity.id,
+      bindingType: "twin",
+      createdAt: new Date(),
+    });
+
+    return twin;
+  }
+
+  async function getTwinEntity(genesisEntityId: string): Promise<EntityRecord | null> {
+    const bindings = await db
+      .select()
+      .from(agentBindings)
+      .where(and(eq(agentBindings.ownerId, genesisEntityId), eq(agentBindings.bindingType, "twin")))
+      .limit(1);
+    if (bindings.length === 0) return null;
+    const entity = await getEntity(bindings[0]!.agentId);
+    return entity ?? null;
   }
 
   return {
@@ -390,6 +432,9 @@ export function createEntityService(db: Db, encKey: Buffer) {
     linkUserToEntity,
     hasGenesisOwner,
     nextAlias,
+    deleteGuestEntity,
+    createTwinEntity,
+    getTwinEntity,
   };
 }
 

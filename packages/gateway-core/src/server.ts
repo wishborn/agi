@@ -107,7 +107,12 @@ import { ChatEventBuffer } from "./chat-event-buffer.js";
 import { registerAllTools, registerAgentTools } from "./tools/index.js";
 import { createIssueHandler, ISSUE_TOOL_MANIFEST, ISSUE_TOOL_INPUT_SCHEMA } from "./tools/issue-tools.js";
 import { SkillRegistry } from "@agi/skills";
-import { CompositeMemoryAdapter, CandidateDatasetAccumulator } from "@agi/memory";
+import {
+  GraphMemoryAdapter,
+  EmbeddingEngine,
+  CandidateDatasetAccumulator,
+} from "@agi/memory";
+import { ConsolidationEngine } from "@agi/memory";
 import {
   VoicePipeline,
   WhisperSTTProvider,
@@ -117,6 +122,7 @@ import {
 } from "@agi/voice";
 import type { CanvasDocument } from "./canvas-types.js";
 import { ChannelRegistry } from "./channel-registry.js";
+import { ChannelAmbientLog } from "./channel-ambient-log.js";
 import { DashboardApi } from "./dashboard-api.js";
 import { DashboardQueries } from "./dashboard-queries.js";
 import { DashboardEventBroadcaster } from "./dashboard-events.js";
@@ -127,6 +133,7 @@ import { HeartbeatScheduler } from "./heartbeat.js";
 import { PrimeLoader } from "./prime-loader.js";
 import { AlignmentScorer } from "./prime-alignment-scorer.js";
 import { EpisodeExtractor } from "./episode-extractor.js";
+import { DocIndexer } from "./doc-indexer.js";
 import { resolvePrimeDir } from "./resolve-paths.js";
 import { checkProtocolCompatibility } from "./protocol-check.js";
 import { PlanStore, migrateProjectPlans } from "./plan-store.js";
@@ -143,6 +150,8 @@ import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
 import { ChannelEventDispatcher } from "./channel-event-dispatcher.js";
 import { PendingApprovalStore } from "./pending-approval-store.js";
+import { ModerationFlagStore } from "./moderation-flag-store.js";
+import { RegistrationSessionStore } from "./registration-session-store.js";
 import { ChannelWorkflowBindingStore } from "./channel-workflow-binding-store.js";
 import { runWorkflow } from "./mapp-executor.js";
 import { migrateAllProjectConfigShapes } from "./project-config-shape-migration.js";
@@ -489,6 +498,34 @@ export async function startGatewayServer(
   // wires audit identity context for boot-time resolves.
   const vaultResolver = new VaultResolver(vaultStorage);
 
+  // Resolve vault:// and $VAR references in all channel config leaf values.
+  // Called before every loadPlugins() so channel adapters receive resolved credentials.
+  const resolveChannelConfigs = async (
+    channels: Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>
+  ): Promise<Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>> =>
+    Promise.all(
+      channels.map(async (ch) => {
+        if (!ch.config) return ch;
+        const resolved: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(ch.config)) {
+          if (typeof v === "string" && v.startsWith("vault://")) {
+            try {
+              const r = await vaultResolver.resolve(v);
+              resolved[k] = typeof r === "string" ? r : v;
+            } catch {
+              log.warn(`channel "${ch.id}": vault reference for "${k}" failed to resolve`);
+              resolved[k] = v;
+            }
+          } else if (typeof v === "string" && v.startsWith("$")) {
+            resolved[k] = process.env[v.slice(1)] ?? v;
+          } else {
+            resolved[k] = v;
+          }
+        }
+        return { ...ch, config: resolved };
+      })
+    );
+
   // -------------------------------------------------------------------------
   // Step 2: Auth bootstrap
   // -------------------------------------------------------------------------
@@ -677,6 +714,7 @@ export async function startGatewayServer(
     nodeId,
     voicePipeline,
     getGatewayState: () => stateMachine.getState(),
+    commsLog,
     logger,
   });
 
@@ -704,6 +742,11 @@ export async function startGatewayServer(
   const inboundPendingApprovalStore = new PendingApprovalStore({
     logger,
     persistPath: `${homedir()}/.agi/pending-approvals.json`,
+  });
+
+  // s194: Registration session store — tracks in-progress Discord DM flows.
+  const registrationSessionStore = new RegistrationSessionStore({
+    persistPath: `${homedir()}/.agi/registration-sessions.json`,
   });
 
   // s167 CHN-F slice 1 (2026-05-14) — workflow binding store. Owner-declared
@@ -906,6 +949,17 @@ export async function startGatewayServer(
     logger,
   });
 
+  // s112 Phase 2 — Embedding engine instantiated early so it can be passed to registerAllTools
+  // for search_prime semantic reranking (s197). Actual availability check happens async below.
+  const embeddingEngine = new EmbeddingEngine({
+    model: config.memory?.embeddingModel ?? "nomic-embed-text",
+  });
+
+  // Placeholder — DocIndexer is wired after memoryAdapter+embeddingEngine below.
+  // registerAllTools accepts undefined so the tool is simply not registered
+  // until the indexer is ready. The late-bound ref pattern keeps boot order intact.
+  let docIndexer: DocIndexer | undefined;
+
   const toolCount = registerAllTools(toolRegistry, {
     workspaceRoot,
     resourceEntityId: resourceId,
@@ -915,6 +969,8 @@ export async function startGatewayServer(
     },
     userContextStore,
     primeLoader,
+    embeddingEngine,
+    // docIndexer registered after boot completes (late-bound below)
     projectDirs: projectPaths,
     projectConfigManager,
     imageBlobStore,
@@ -1010,13 +1066,42 @@ export async function startGatewayServer(
     skillRegistry.startWatching();
   }
 
-  // Memory adapter — composite (file + optional Cognee)
+  // s112 — Graph memory adapter (CoALA+TiMem, Postgres-backed via agi_data).
   const memoryDir = config.memory?.directory ?? "./data/memory";
-  const memoryAdapter = new CompositeMemoryAdapter({
-    getState: () => stateMachine.getState(),
-    localMemDir: memoryDir,
+  const memoryAdapter = new GraphMemoryAdapter({
+    db,
+    legacyMemDir: memoryDir,
   });
-  log.info(`memory adapter initialized (dir: ${memoryDir})`);
+  log.info("graph memory adapter initialized (agi_data memory_events/relationships/doc_chunks)");
+
+  // s112 Phase 2 — Embedding engine availability check (engine instantiated early above).
+  void embeddingEngine.checkAvailability().then((avail) => {
+    if (avail) {
+      log.info(`embedding engine ready (model: ${embeddingEngine.model})`);
+      // Pre-compute PRIME corpus embeddings for semantic search_prime reranking (s197).
+      void primeLoader.computeEmbeddings(embeddingEngine).catch(() => { /* non-fatal */ });
+    } else {
+      log.info("embedding engine unavailable — using FTS5 BM25 fallback");
+    }
+  });
+
+  // s112 Phase 4 — Consolidation engine (session/job boundary relationship extraction).
+  const consolidationEngine = new ConsolidationEngine({
+    graph: memoryAdapter,
+    invoke: (prompt: string) => getLLMProvider().summarize(prompt, ""),
+    logger: log,
+  });
+
+  // Idle consolidation timer — runs every 30 minutes.
+  setInterval(
+    () => {
+      void consolidationEngine.maybeConsolidate({
+        entityId: resourceId,
+        trigger: "idle",
+      }).catch(() => { /* non-fatal */ });
+    },
+    30 * 60 * 1000,
+  );
 
   // s112 — Memory & Learning pipeline (EpisodeExtractor + CandidateDatasetAccumulator).
   // Fire-and-forget: every successful agent invocation extracts an EpisodicRecord,
@@ -1038,9 +1123,33 @@ export async function startGatewayServer(
     coaAlias: resourceId,
     alignmentScorer: _alignmentScorer,
     accumulator: _accumulator,
+    consolidationEngine,
     logger: log,
   });
   log.info("episodic memory pipeline initialized (extractor + accumulator)");
+
+  // s112 Phase 3 — Doc indexer (agi/docs/ + global k/ + per-project k/).
+  // agiRoot comes from config.workspace.selfRepo (the deployed AGI repo path).
+  // globalKDir is optional: set memory.globalKDir in gateway.json to index
+  // a global knowledge directory such as _aionima/k/.
+  docIndexer = new DocIndexer({
+    graph: memoryAdapter,
+    embeddingEngine,
+    agiRoot,
+    globalKDir: config.memory?.globalKDir,
+    projectDirs: projectPaths,
+    cacheDir: join(homedir(), ".agi", "doc-index"),
+    logger: log,
+  });
+  void docIndexer.indexAll().catch(() => { /* non-fatal */ });
+  docIndexer.watchForChanges();
+  // Late-register search_docs + lookup_doc tools (s197 — no state/tier gate).
+  const { createSearchDocsHandler, SEARCH_DOCS_MANIFEST, SEARCH_DOCS_INPUT_SCHEMA } = await import("./tools/search-docs.js");
+  toolRegistry.register(SEARCH_DOCS_MANIFEST as import("./system-prompt.js").ToolManifestEntry, createSearchDocsHandler({ docIndexer }), SEARCH_DOCS_INPUT_SCHEMA);
+  const { createLookupDocHandler, LOOKUP_DOC_MANIFEST, LOOKUP_DOC_INPUT_SCHEMA } = await import("./tools/lookup-doc.js");
+  const docsDir = join(agiRoot, "docs");
+  toolRegistry.register(LOOKUP_DOC_MANIFEST as import("./system-prompt.js").ToolManifestEntry, createLookupDocHandler({ docsDir }), LOOKUP_DOC_INPUT_SCHEMA);
+  log.info("doc indexer initialized + search_docs + lookup_doc tools registered");
 
   // s152 t651 — UserNotes store. Constructed here (before AgentInvoker)
   // so the invoker can read notes per project + global on each turn and
@@ -1065,6 +1174,8 @@ export async function startGatewayServer(
     resourceId,
     nodeId,
     memoryAdapter,
+    graphAdapter: memoryAdapter,
+    docIndexer,
     skillRegistry,
     userContextStore,
     primeLoader,
@@ -1097,73 +1208,86 @@ export async function startGatewayServer(
   // Step 5a2: Iterative-work fire handler — closes the autonomy loop
   // -------------------------------------------------------------------------
   // When the scheduler decides a project is due, this handler resolves the
-  // $ITERATIVE-WORK system entity, builds a synthetic tick prompt, and routes
-  // it through agentInvoker.process() with projectContext set. The system
-  // prompt assembler (cycle 37 wiring) sees iterativeWork.enabled === true
-  // for this project and injects agi/prompts/iterative-work.md into Aion's
-  // context — Aion then participates in the tynn workflow on the project's
-  // behalf. markComplete is called in finally so a failed invocation still
+  // Scheduled job fire consumer — dispatches by job.type. The pm-loop type
+  // preserves the original iterative-work behavior (synthetic tick prompt via
+  // AgentInvoker). prompt fires a user-authored message. command runs via
+  // `agi bash`. action invokes a plugin-registered handler. markComplete +
+  // recordCompletion are called in finally so a failed invocation still
   // releases the in-flight slot for the next due tick.
-  //
-  // Pattern mirrors heartbeat.ts (channel: "system", synthetic coa, unique
-  // queueMessageId) — same "system-invoked agent call" shape.
   const ITERATIVE_WORK_TICK_PROMPT = "[iterative-work tick] Continue your work on this project per the iterative-work discipline. First action: consume prior markers (don't re-derive). Then pick the highest-priority READY task and ship a slice. End-of-cycle: report Show-Stoppers / Drift / Clarity counts.";
 
   iterativeWorkScheduler.on("fire", (fire) => {
     void (async () => {
+      const { job } = fire;
       const outcome: { status: "done" | "error"; error?: string; artifact?: import("./iterative-work/types.js").IterativeWorkArtifact } = { status: "done" };
       try {
         const slug = projectSlug(fire.projectPath);
-        const systemEntity = await entityStore.resolveOrCreate(
-          "system",
-          "$ITERATIVE-WORK",
-          "Iterative Work System",
-        );
-        const coaFingerprint = `${resourceId}.${systemEntity.coaAlias}.${nodeId}.iterative-work(${slug})`;
-        log.info(`iterative-work fire: ${fire.projectPath} (cron=${fire.cron})`);
-        await agentInvoker.process({
-          entity: systemEntity,
-          channel: "system",
-          content: ITERATIVE_WORK_TICK_PROMPT,
-          coaFingerprint,
-          queueMessageId: `iter-work-${slug}-${String(fire.firedAt.getTime())}`,
-          projectContext: fire.projectPath,
-          isOwner: true,
-        });
+        log.info(`scheduled-job fire: ${fire.projectPath} job=${job.id} type=${job.type} cron=${fire.cron}`);
 
-        // s124 t469 — capture a screenshot of the project's deployed URL
-        // (when hosting is configured). Resolved Q-2 mechanism: full-page
-        // headless Chromium via Playwright (not Puppeteer — Playwright is
-        // already in deps for e2e). Failure-tolerant: a missed thumbnail
-        // just leaves artifact.thumbnailPath undefined; the
-        // IterativeWorkArtifactCard renders gracefully without it.
-        try {
-          const hosting = projectConfigManager.readHosting(fire.projectPath) as { hostname?: string } | null;
-          const hostname = hosting?.hostname;
-          if (typeof hostname === "string" && hostname.length > 0) {
-            const baseDomain = (config as { hosting?: { baseDomain?: string } }).hosting?.baseDomain ?? "ai.on";
-            const url = `https://${hostname}.${baseDomain}`;
-            const { captureProjectScreenshot } = await import("./iterative-work/screenshot.js");
-            const thumbnailPath = await captureProjectScreenshot({
-              hostingUrl: url,
-              log: (msg) => { log.warn(`iter-screenshot: ${msg}`); },
-            });
-            if (thumbnailPath !== null) {
-              outcome.artifact = { ...outcome.artifact, thumbnailPath };
-              log.info(`iterative-work screenshot captured: ${thumbnailPath}`);
+        if (job.type === "pm-loop" || job.type === "prompt") {
+          const content = job.type === "pm-loop" ? ITERATIVE_WORK_TICK_PROMPT : job.prompt;
+          const systemEntity = await entityStore.resolveOrCreate(
+            "system",
+            "$ITERATIVE-WORK",
+            "Iterative Work System",
+          );
+          const coaFingerprint = `${resourceId}.${systemEntity.coaAlias}.${nodeId}.scheduled-job(${slug}.${job.id})`;
+          await agentInvoker.process({
+            entity: systemEntity,
+            channel: "system",
+            content,
+            coaFingerprint,
+            queueMessageId: `sched-job-${slug}-${job.id}-${String(fire.firedAt.getTime())}`,
+            projectContext: fire.projectPath,
+            isOwner: true,
+          });
+
+          // s124 t469 — screenshot capture for pm-loop completions only.
+          if (job.type === "pm-loop") {
+            try {
+              const hosting = projectConfigManager.readHosting(fire.projectPath) as { hostname?: string } | null;
+              const hostname = hosting?.hostname;
+              if (typeof hostname === "string" && hostname.length > 0) {
+                const baseDomain = (config as { hosting?: { baseDomain?: string } }).hosting?.baseDomain ?? "ai.on";
+                const url = `https://${hostname}.${baseDomain}`;
+                const { captureProjectScreenshot } = await import("./iterative-work/screenshot.js");
+                const thumbnailPath = await captureProjectScreenshot({
+                  hostingUrl: url,
+                  log: (msg) => { log.warn(`iter-screenshot: ${msg}`); },
+                });
+                if (thumbnailPath !== null) {
+                  outcome.artifact = { ...outcome.artifact, thumbnailPath };
+                  log.info(`scheduled-job screenshot captured: ${thumbnailPath}`);
+                }
+              }
+            } catch (err) {
+              log.warn(`scheduled-job screenshot block failed for ${fire.projectPath}: ${err instanceof Error ? err.message : String(err)}`);
             }
           }
-        } catch (err) {
-          log.warn(`iterative-work screenshot block failed for ${fire.projectPath}: ${err instanceof Error ? err.message : String(err)}`);
+        } else if (job.type === "command") {
+          // Run via `agi bash` for policy-gating + audit logging.
+          const { execFile } = await import("node:child_process");
+          const { promisify } = await import("node:util");
+          const execFileAsync = promisify(execFile);
+          const agiBin = process.env.AGI_BIN ?? "agi";
+          const { stdout, stderr } = await execFileAsync(agiBin, ["bash", job.command], { timeout: 300_000 });
+          if (stderr) log.warn(`scheduled-job command stderr: ${stderr.trim()}`);
+          if (stdout) log.info(`scheduled-job command stdout: ${stdout.trim()}`);
+        } else if (job.type === "action") {
+          // Plugin action dispatch — reserved for when the plugin action
+          // registry is wired. Log a warning for now so the job doesn't
+          // silently no-op if someone configures an action job before plugins
+          // register action handlers.
+          log.warn(`scheduled-job action type not yet dispatched (actionId=${job.actionId}); plugin action registry not yet wired`);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        log.error(`iterative-work fire failed for ${fire.projectPath}: ${message}`);
+        log.error(`scheduled-job fire failed for ${fire.projectPath} job=${job.id}: ${message}`);
         outcome.status = "error";
         outcome.error = message;
       } finally {
-        iterativeWorkScheduler.recordCompletion(fire.projectPath, outcome);
-        iterativeWorkScheduler.markComplete(fire.projectPath);
+        iterativeWorkScheduler.recordCompletion(fire.projectPath, job.id, outcome);
+        iterativeWorkScheduler.markComplete(fire.projectPath, job.id);
       }
     })();
   });
@@ -1727,6 +1851,14 @@ export async function startGatewayServer(
     return { userId: existing?.id ?? id, isNew: false };
   };
 
+  // Ambient log for channel message capture (s189). Shares the same ~/.agi
+  // root as all other runtime data so daily logs land alongside chat history.
+  const channelAmbientLog = new ChannelAmbientLog(join(homedir(), ".agi"));
+
+  // Moderation flag store (s191) — in-memory ring buffer for AI-raised flags.
+  // Ephemeral by design; a Postgres-backed store can replace this when needed.
+  const moderationFlagStore = new ModerationFlagStore();
+
   {
     for (const err of discovered.errors) {
       log.warn(`plugin discovery: ${err.path} — ${err.error}`);
@@ -1768,9 +1900,27 @@ export async function startGatewayServer(
 
     // All discovered plugins are installed plugins (from search paths or
     // the install cache). Only skip if explicitly disabled in config.
-    const enabledPlugins = discovered.plugins.filter(p =>
-      pluginPrefs?.[p.manifest.id]?.enabled !== false,
+    // Exception: built-in channel plugins (id starts with "channel-") are
+    // controlled by channels[].enabled, not plugins[].enabled. If the channel
+    // config says enabled=true, load the plugin even if plugins[id].enabled was
+    // inadvertently set to false (e.g. via a Plugins-settings toggle). This
+    // prevents the two-flag split from silently blocking channels at boot.
+    const channelConfigMap = new Map(
+      (config.channels as Array<{ id: string; enabled?: boolean }> | undefined ?? []).map(c => [c.id, c.enabled]),
     );
+    const enabledPlugins = discovered.plugins.filter(p => {
+      if (pluginPrefs?.[p.manifest.id]?.enabled === false) {
+        // For built-in channel plugins, defer to channels[].enabled when set.
+        const channelId = p.manifest.id.startsWith("channel-")
+          ? p.manifest.id.slice("channel-".length)
+          : null;
+        if (channelId !== null && channelConfigMap.get(channelId) === true) {
+          return true;
+        }
+        return false;
+      }
+      return true;
+    });
 
     // Build priority map from config
     const pluginPriorities: Record<string, number> = {};
@@ -1794,6 +1944,16 @@ export async function startGatewayServer(
         channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
         circuitBreaker: circuitBreakerTracker,
         createChannelUser,
+        logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
+        getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+        isEntityVerified: async (channelId, userId) => {
+          const entity = await entityStore.getEntityByChannel(channelId, userId);
+          return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
+        },
+        getRegistrationSession: (id) => registrationSessionStore.get(id),
+        setRegistrationSession: (s) => registrationSessionStore.set(s),
+        deleteRegistrationSession: (id) => registrationSessionStore.delete(id),
+        capturePendingApproval: (input) => inboundPendingApprovalStore.capture(input),
       });
       log.info(`plugins: ${String(result.loaded.length)} loaded, ${String(result.failed.length)} failed`);
       if (discovered.plugins.length > enabledPlugins.length) {
@@ -1851,9 +2011,19 @@ export async function startGatewayServer(
                         Object.entries(pluginPrefs ?? {}).filter(([, v]) => v.priority !== undefined).map(([k, v]) => [k, v.priority!]),
                       ),
                       channelRegistry,
-                      channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+                      channelConfigs: await resolveChannelConfigs(config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>),
                       circuitBreaker: circuitBreakerTracker,
                       createChannelUser,
+                      logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
+                      getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+                      isEntityVerified: async (channelId, userId) => {
+                        const entity = await entityStore.getEntityByChannel(channelId, userId);
+                        return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
+                      },
+                      getRegistrationSession: (id) => registrationSessionStore.get(id),
+                      setRegistrationSession: (s) => registrationSessionStore.set(s),
+                      deleteRegistrationSession: (id) => registrationSessionStore.delete(id),
+                      capturePendingApproval: (input) => inboundPendingApprovalStore.capture(input),
                     });
                     bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
                     // Retry provider creation now that the plugin is loaded
@@ -3203,7 +3373,9 @@ export async function startGatewayServer(
       pmProvider,
       mcpClient,
       commsLog,
+      channelAmbientLog,
       notificationStore,
+      moderationFlagStore,
       chatPersistence,
       imageBlobStore,
       pluginRegistry,
@@ -3228,8 +3400,11 @@ export async function startGatewayServer(
       pluginPrefs,
       primeLoader,
       primeDir,
+      llmProvider: getLLMProvider(),
       aionMicro: aionMicroManager,
-        marketplaceManager,
+      marketplaceManager,
+      graphAdapter: memoryAdapter,
+      docIndexer,
       onPluginInstalled: async (installPath: string) => {
         try {
           // installPath is the plugin's own directory (e.g. ~/.agi/plugins/cache/<id>).
@@ -3255,9 +3430,19 @@ export async function startGatewayServer(
               Object.entries(pluginPrefs ?? {}).filter(([, v]) => v.priority !== undefined).map(([k, v]) => [k, v.priority!]),
             ),
             channelRegistry,
-            channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+            channelConfigs: await resolveChannelConfigs(config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>),
             circuitBreaker: circuitBreakerTracker,
             createChannelUser,
+            logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
+            getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+            isEntityVerified: async (channelId, userId) => {
+              const entity = await entityStore.getEntityByChannel(channelId, userId);
+              return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
+            },
+            getRegistrationSession: (id) => registrationSessionStore.get(id),
+            setRegistrationSession: (s) => registrationSessionStore.set(s),
+            deleteRegistrationSession: (id) => registrationSessionStore.delete(id),
+            capturePendingApproval: (input) => inboundPendingApprovalStore.capture(input),
           });
           if (result.loaded.length > 0) {
             // Bridge newly registered capabilities and sync stacks to the registry
@@ -3300,9 +3485,19 @@ export async function startGatewayServer(
               Object.entries(pluginPrefs ?? {}).filter(([, v]) => v.priority !== undefined).map(([k, v]) => [k, v.priority!]),
             ),
             channelRegistry,
-            channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+            channelConfigs: await resolveChannelConfigs(config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>),
             circuitBreaker: circuitBreakerTracker,
             createChannelUser,
+            logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
+            getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+            isEntityVerified: async (channelId, userId) => {
+              const entity = await entityStore.getEntityByChannel(channelId, userId);
+              return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
+            },
+            getRegistrationSession: (id) => registrationSessionStore.get(id),
+            setRegistrationSession: (s) => registrationSessionStore.set(s),
+            deleteRegistrationSession: (id) => registrationSessionStore.delete(id),
+            capturePendingApproval: (input) => inboundPendingApprovalStore.capture(input),
           }, { bustCache: true });
           if (result.loaded.length > 0) {
             bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
@@ -3382,9 +3577,19 @@ export async function startGatewayServer(
               Object.entries(pluginPrefs ?? {}).filter(([, v]) => v.priority !== undefined).map(([k, v]) => [k, v.priority!]),
             ),
             channelRegistry,
-            channelConfigs: freshChannelConfigs,
+            channelConfigs: await resolveChannelConfigs(freshChannelConfigs),
             circuitBreaker: circuitBreakerTracker,
             createChannelUser,
+            logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
+            getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+            isEntityVerified: async (channelId, userId) => {
+              const entity = await entityStore.getEntityByChannel(channelId, userId);
+              return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
+            },
+            getRegistrationSession: (id) => registrationSessionStore.get(id),
+            setRegistrationSession: (s) => registrationSessionStore.set(s),
+            deleteRegistrationSession: (id) => registrationSessionStore.delete(id),
+            capturePendingApproval: (input) => inboundPendingApprovalStore.capture(input),
           });
           if (result.loaded.length > 0) {
             bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });

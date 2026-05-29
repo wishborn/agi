@@ -408,6 +408,22 @@ export function registerDeviceFlowRoutes(fastify: FastifyInstance, deps: DeviceF
     });
   });
 
+  // DELETE /api/auth/device-flow/connection?provider=...&role=...
+  fastify.delete("/api/auth/device-flow/connection", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivate(clientIp)) return reply.code(403).send({ error: "Only available from private network" });
+
+    const { provider, role } = request.query as { provider?: string; role?: string };
+    if (!provider) return reply.code(400).send({ error: "provider query param required" });
+
+    const result = await db.delete(connections).where(
+      and(eq(connections.provider, provider), eq(connections.role, role ?? "owner")),
+    );
+
+    log.info(`Connection removed: provider=${provider} role=${role ?? "owner"} rows=${result.rowCount ?? 0}`);
+    return reply.send({ ok: true });
+  });
+
   // POST /api/auth/device-flow/refresh
   fastify.post("/api/auth/device-flow/refresh", async (request, reply) => {
     const clientIp = getClientIp(request.raw);

@@ -837,6 +837,49 @@ export interface WorkerDefinition {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Ambient log — shared data shape for channel message logging (s189)
+// ---------------------------------------------------------------------------
+
+/**
+ * A single raw message captured by the channel ambient log. Defined here
+ * (not in gateway-core) so channel plugins can reference the type without
+ * creating a circular dependency on gateway-core.
+ */
+export interface AmbientEntry {
+  ts: string;
+  authorId: string;
+  displayName: string;
+  text: string;
+  roomId: string;
+}
+
+/** s194: Registration step in the Discord DM onboarding flow. */
+export type RegistrationStep = "name" | "email" | "birthdate" | "pronouns" | "confirm" | "submitted" | "cancelled";
+
+/** s194: In-progress Discord DM registration session. Key: "discord::{userId}". */
+export interface RegistrationSession {
+  sessionId: string;
+  channelUserId: string;
+  discordHandle: string;
+  guildId?: string;
+  step: RegistrationStep;
+  data: { name?: string; email?: string; birthdate?: string; pronouns?: string };
+  startedAt: string;
+  updatedAt: string;
+}
+
+/** s194: Input shape for capturing a pending approval from the registration flow. */
+export interface PendingApprovalCaptureInput {
+  channelId: string;
+  roomId: string;
+  channelUserId: string;
+  displayName: string;
+  projectPath?: string;
+  firstMessagePreview: string;
+  registrationData?: { name?: string; email?: string; birthdate?: string; pronouns?: string; discordHandle?: string };
+}
+
 // Plugin API — what plugins receive on activation
 // ---------------------------------------------------------------------------
 
@@ -914,6 +957,29 @@ export interface AionimaPluginAPI {
   getProjectConfig(projectPath: string): Record<string, unknown> | null;
   /** Get installed stacks for a project. */
   getProjectStacks(projectPath: string): Array<{ stackId: string; addedAt: string }>;
+  /**
+   * Log a raw channel message to today's ambient session file for the given
+   * channel. Used by channel plugins (e.g., Discord) to record ALL messages,
+   * not just those routed to Aion. Optional — only wired when the gateway
+   * supplies a ChannelAmbientLog in PluginLoaderDeps (s189).
+   */
+  logAmbientMessage?: (channelId: string, entry: AmbientEntry) => void;
+  /**
+   * Return recent messages from today's ambient log for the given channel.
+   * Used by channel plugins to inject wake-up context when Aion is mentioned.
+   * Optional — only wired alongside logAmbientMessage (s189).
+   */
+  getAmbientContext?: (channelId: string, limit: number) => AmbientEntry[];
+  /** s194: Check whether a channel user is verified in the entity store. */
+  isEntityVerified?: (channelId: string, userId: string) => Promise<boolean>;
+  /** s194: Retrieve an active registration session by sessionId. */
+  getRegistrationSession?: (sessionId: string) => RegistrationSession | null;
+  /** s194: Persist or update a registration session. */
+  setRegistrationSession?: (session: RegistrationSession) => void;
+  /** s194: Remove a registration session (cancelled or completed). */
+  deleteRegistrationSession?: (sessionId: string) => void;
+  /** s194: Capture a pending approval record (e.g., from a completed registration flow). */
+  capturePendingApproval?: (input: PendingApprovalCaptureInput) => void;
 }
 
 // ---------------------------------------------------------------------------

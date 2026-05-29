@@ -50,6 +50,7 @@ import type { RouteHandler, RuntimeDefinition } from "@agi/plugins";
 import { categoryToProvides } from "@agi/plugins";
 import type { ServiceManager } from "./service-manager.js";
 import { registerCommsRoutes } from "./comms-api.js";
+import type { ChannelAmbientLog } from "./channel-ambient-log.js";
 import { registerModelsRoutes } from "./models-api.js";
 import type { ChatPersistence } from "./chat-persistence.js";
 import { registerChatHistoryRoutes } from "./chat-history-api.js";
@@ -65,6 +66,7 @@ import type { SecretsManager } from "./secrets.js";
 import { DashboardUserStore, hasRole } from "./dashboard-user-store.js";
 import type { IdentityProvider } from "./identity-provider.js";
 import type { OAuthHandler } from "./oauth-handler.js";
+import type { LLMProvider } from "./llm/index.js";
 import { registerIdentityRoutes } from "./identity-api.js";
 import { registerSubUserRoutes } from "./sub-user-api.js";
 import type { VisitorAuthManager } from "./visitor-auth.js";
@@ -93,6 +95,7 @@ import { dispatchJobsDir } from "./dispatch-paths.js";
 import { summarizeQueue, type DispatchJobLike } from "./taskmaster-queue-diagnostic.js";
 import type { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
 import { cadenceToStaggeredCron } from "./iterative-work/cron.js";
+import { ScheduledJobSchema, type ScheduledJob } from "@agi/config";
 import {
   listProjectEnvKeys,
   readProjectEnv,
@@ -228,8 +231,12 @@ export interface RuntimeStateDeps {
   mappMarketplaceDir?: string;
   /** CommsLog — persistent message log for comms page. */
   commsLog?: CommsLog;
+  /** ChannelAmbientLog — per-channel daily JSONL log for the conversation view. */
+  channelAmbientLog?: ChannelAmbientLog;
   /** NotificationStore — persistent notification storage. */
   notificationStore?: NotificationStore;
+  /** ModerationFlagStore — in-memory ring buffer of AI-raised moderation flags. */
+  moderationFlagStore?: import("./moderation-flag-store.js").ModerationFlagStore;
   /** ChatPersistence — file-based chat history storage. */
   chatPersistence?: ChatPersistence;
   /** ImageBlobStore — file-backed image storage for chat sessions. */
@@ -264,6 +271,8 @@ export interface RuntimeStateDeps {
   serviceManager?: ServiceManager;
   /** SecretsManager — TPM2-sealed credential store. */
   secrets?: SecretsManager;
+  /** Active LLM provider — passed to onboarding routes for 0ME interview chat. */
+  llmProvider?: LLMProvider;
   /** UsageStore — LLM token usage and cost tracking. */
   usageStore?: { getSummary(days?: number): unknown; getByProject(days?: number): unknown; getByProjectAndSource(days?: number): unknown; getHistory(days?: number, bucket?: string): unknown };
 
@@ -319,6 +328,10 @@ export interface RuntimeStateDeps {
   preListenHooks?: ((fastify: import("fastify").FastifyInstance) => void)[];
   /** Drizzle DB instance — passed to route groups that do direct DB auth (user mgmt, etc.). */
   db?: import("@agi/db-schema/client").Db;
+  /** GraphMemoryAdapter — exposes /api/memory/* browser endpoints. */
+  graphAdapter?: import("@agi/memory").GraphMemoryAdapter;
+  /** DocIndexer — exposes /api/memory/search-docs browser endpoint. */
+  docIndexer?: import("./doc-indexer.js").DocIndexer;
 }
 
 export interface ReloadResult {
@@ -1189,7 +1202,7 @@ export async function createGatewayRuntimeState(
       } else {
         const entry = channels[idx]!;
         if (body?.enabled !== undefined) entry.enabled = body.enabled;
-        if (body?.config !== undefined) entry.config = body.config;
+        if (body?.config !== undefined) entry.config = { ...entry.config, ...body.config };
       }
       cfg.channels = channels;
       writeFileSync(deps.configPath, JSON.stringify(cfg, null, 2) + "\n", "utf-8");
@@ -1989,13 +2002,14 @@ export async function createGatewayRuntimeState(
     return reply.send({ pending, count: pending.length });
   });
 
-  fastify.post<{ Params: { id: string } }>("/api/identity/pending/:id/approve", async (request, reply) => {
+  fastify.post<{ Params: { id: string }; Body: { projectPaths?: string[] } }>("/api/identity/pending/:id/approve", async (request, reply) => {
     const clientIp = getClientIp(request.raw);
     if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
     if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
     const { id } = request.params;
+    const { projectPaths } = (request.body as { projectPaths?: string[] } | undefined) ?? {};
     try {
-      const { approval, decision } = deps.pendingApprovalStore.approve(id);
+      const { approval, decision } = deps.pendingApprovalStore.approve(id, { projectPaths });
       // CHN-E slice 5: composite entity-tier promotion. When an entity
       // already exists for this (channelId, channelUserId), bump its
       // verificationTier to "verified". Approval = verified is the
@@ -2267,8 +2281,157 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
-  // GET /api/projects/iterative-work/status — per-project IW snapshot
-  // (private network only)
+  // -----------------------------------------------------------------------
+  // Scheduled-jobs CRUD (s118 redesign)
+  // -----------------------------------------------------------------------
+
+  const resolveWorkspacePath = (rawPath: string | undefined): { targetPath: string } | { error: string; code: number } => {
+    const projectDirs = deps.workspaceProjects ?? [];
+    if (!rawPath) return { error: "path query parameter is required", code: 400 };
+    const targetPath = resolvePath(rawPath);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return { error: "Path is not inside a configured workspace.projects directory", code: 403 };
+    }
+    return { targetPath };
+  };
+
+  // GET /api/projects/scheduled-jobs?path= — list all jobs with per-job status
+  fastify.get("/api/projects/scheduled-jobs", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Private network only" });
+    if (!deps.projectConfigManager || !deps.iterativeWorkScheduler) return reply.code(503).send({ error: "Not available" });
+    const query = request.query as Record<string, string>;
+    const resolved = resolveWorkspacePath(query["path"]);
+    if ("error" in resolved) return reply.code(resolved.code).send({ error: resolved.error });
+    const { targetPath } = resolved;
+    const config = deps.projectConfigManager.read(targetPath);
+    if (!config) return reply.code(404).send({ error: "Project has no project.json" });
+    const status = deps.iterativeWorkScheduler.getProjectStatus(targetPath);
+    return reply.send({ jobs: config.scheduledJobs ?? [], status: status?.jobs ?? [] });
+  });
+
+  // POST /api/projects/scheduled-jobs — create a job (server assigns UUID)
+  fastify.post("/api/projects/scheduled-jobs", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Private network only" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Not available" });
+    const body = request.body as { path?: string; job?: Record<string, unknown> } | undefined;
+    const resolved = resolveWorkspacePath(body?.path);
+    if ("error" in resolved) return reply.code(resolved.code).send({ error: resolved.error });
+    const { targetPath } = resolved;
+    if (!existsSync(projectConfigPath(targetPath))) return reply.code(404).send({ error: "Project has no project.json" });
+    if (!body?.job) return reply.code(400).send({ error: "body.job is required" });
+
+    const { randomUUID } = await import("node:crypto");
+    const jobRaw = { ...body.job, id: randomUUID() };
+    const parsed = ScheduledJobSchema.safeParse(jobRaw);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.message });
+    const newJob: ScheduledJob = parsed.data;
+
+    // Auto-compute staggered cron when cadence is provided
+    if (newJob.cadence && !newJob.cron) {
+      (newJob as Record<string, unknown>)["cron"] = cadenceToStaggeredCron(newJob.cadence, targetPath);
+    }
+
+    try {
+      const cur = deps.projectConfigManager.read(targetPath);
+      const existingJobs = cur?.scheduledJobs ?? [];
+      await deps.projectConfigManager.update(targetPath, { scheduledJobs: [...existingJobs, newJob] });
+      return reply.code(201).send({ ok: true, job: newJob });
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // PUT /api/projects/scheduled-jobs/:id — update a job
+  fastify.put("/api/projects/scheduled-jobs/:id", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Private network only" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Not available" });
+    const { id: jobId } = request.params as { id: string };
+    const body = request.body as { path?: string; job?: Record<string, unknown> } | undefined;
+    const resolved = resolveWorkspacePath(body?.path);
+    if ("error" in resolved) return reply.code(resolved.code).send({ error: resolved.error });
+    const { targetPath } = resolved;
+    if (!body?.job) return reply.code(400).send({ error: "body.job is required" });
+
+    const cur = deps.projectConfigManager.read(targetPath);
+    if (!cur) return reply.code(404).send({ error: "Project has no project.json" });
+    const existingJobs = cur.scheduledJobs ?? [];
+    const idx = existingJobs.findIndex((j) => j.id === jobId);
+    if (idx === -1) return reply.code(404).send({ error: `Job ${jobId} not found` });
+
+    const merged = { ...existingJobs[idx], ...body.job, id: jobId };
+    const parsed = ScheduledJobSchema.safeParse(merged);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.message });
+    const updatedJob: ScheduledJob = parsed.data;
+
+    if (updatedJob.cadence && !body.job["cron"]) {
+      (updatedJob as Record<string, unknown>)["cron"] = cadenceToStaggeredCron(updatedJob.cadence, targetPath);
+    }
+
+    const updatedJobs = [...existingJobs];
+    updatedJobs[idx] = updatedJob;
+    try {
+      await deps.projectConfigManager.update(targetPath, { scheduledJobs: updatedJobs });
+      return reply.send({ ok: true, job: updatedJob });
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // DELETE /api/projects/scheduled-jobs/:id?path= — remove a job
+  fastify.delete("/api/projects/scheduled-jobs/:id", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Private network only" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Not available" });
+    const { id: jobId } = request.params as { id: string };
+    const query = request.query as Record<string, string>;
+    const resolved = resolveWorkspacePath(query["path"]);
+    if ("error" in resolved) return reply.code(resolved.code).send({ error: resolved.error });
+    const { targetPath } = resolved;
+
+    const cur = deps.projectConfigManager.read(targetPath);
+    if (!cur) return reply.code(404).send({ error: "Project has no project.json" });
+    const existingJobs = cur.scheduledJobs ?? [];
+    if (!existingJobs.some((j) => j.id === jobId)) return reply.code(404).send({ error: `Job ${jobId} not found` });
+
+    deps.iterativeWorkScheduler?.forceClearProject(targetPath, jobId);
+    try {
+      await deps.projectConfigManager.update(targetPath, { scheduledJobs: existingJobs.filter((j) => j.id !== jobId) });
+      return reply.send({ ok: true });
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // POST /api/projects/scheduled-jobs/:id/stop?path= — kill in-flight
+  fastify.post("/api/projects/scheduled-jobs/:id/stop", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Private network only" });
+    const { id: jobId } = request.params as { id: string };
+    const query = request.query as Record<string, string>;
+    const resolved = resolveWorkspacePath(query["path"]);
+    if ("error" in resolved) return reply.code(resolved.code).send({ error: resolved.error });
+    const cleared = deps.iterativeWorkScheduler?.forceClearProject(resolved.targetPath, jobId) ?? { wasInFlight: 0, hadLastFired: 0 };
+    return reply.send({ ok: true, ...cleared });
+  });
+
+  // POST /api/projects/scheduled-jobs/:id/run-now — manual trigger
+  fastify.post("/api/projects/scheduled-jobs/:id/run-now", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Private network only" });
+    if (!deps.iterativeWorkScheduler) return reply.code(503).send({ error: "Scheduler not available" });
+    const { id: jobId } = request.params as { id: string };
+    const body = request.body as { path?: string } | undefined;
+    const resolved = resolveWorkspacePath(body?.path);
+    if ("error" in resolved) return reply.code(resolved.code).send({ error: resolved.error });
+    deps.iterativeWorkScheduler.tick(new Date(), jobId);
+    return reply.send({ ok: true });
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/projects/iterative-work/status — legacy shim (maps first pm-loop job)
   // -----------------------------------------------------------------------
 
   fastify.get("/api/projects/iterative-work/status", async (request, reply) => {
@@ -2361,13 +2524,11 @@ export async function createGatewayRuntimeState(
       });
     }
 
-    // Build the persisted iterativeWork object.
-    const iw: { enabled?: boolean; cadence?: IterativeWorkCadence; cron?: string } = {};
-    if (body.iterativeWork.enabled !== undefined) iw.enabled = body.iterativeWork.enabled;
-
-    if (body.iterativeWork.cadence !== undefined) {
-      const cadence = body.iterativeWork.cadence as IterativeWorkCadence;
-      // Validate cadence is in the type-aware option set for this category.
+    // Build the pm-loop job fields from the legacy iterativeWork body.
+    const iw = body.iterativeWork;
+    let cronVal: string | undefined;
+    if (iw.cadence !== undefined) {
+      const cadence = iw.cadence as IterativeWorkCadence;
       if (projectCategory !== undefined) {
         const opts = cadenceOptionsFor(projectCategory);
         if (!opts.includes(cadence)) {
@@ -2376,17 +2537,29 @@ export async function createGatewayRuntimeState(
           });
         }
       }
-      iw.cadence = cadence;
-      // Auto-compute the staggered cron (D3).
-      iw.cron = cadenceToStaggeredCron(cadence, targetPath);
-    } else if (body.iterativeWork.cron !== undefined) {
-      // Legacy passthrough — caller manually set a cron expression. Preserve.
-      iw.cron = body.iterativeWork.cron;
+      cronVal = cadenceToStaggeredCron(cadence, targetPath);
+    } else if (iw.cron !== undefined) {
+      cronVal = iw.cron;
     }
 
     try {
-      const updated = await deps.projectConfigManager.update(targetPath, { iterativeWork: iw });
-      return reply.send({ ok: true, iterativeWork: updated.iterativeWork ?? null });
+      const { randomUUID } = await import("node:crypto");
+      const cur = deps.projectConfigManager.read(targetPath);
+      const existingJobs = cur?.scheduledJobs ?? [];
+      const existingIdx = existingJobs.findIndex((j) => j.type === "pm-loop");
+      const base = existingIdx >= 0 ? existingJobs[existingIdx]! : { id: randomUUID(), type: "pm-loop" as const, name: "PM Loop", enabled: false };
+      const updated: ScheduledJob = {
+        ...base,
+        ...(iw.enabled !== undefined ? { enabled: iw.enabled } : {}),
+        ...(iw.cadence ? { cadence: iw.cadence as IterativeWorkCadence } : {}),
+        ...(cronVal ? { cron: cronVal } : {}),
+      };
+      const updatedJobs = existingIdx >= 0
+        ? existingJobs.map((j, i) => (i === existingIdx ? updated : j))
+        : [...existingJobs, updated];
+      const savedConfig = await deps.projectConfigManager.update(targetPath, { scheduledJobs: updatedJobs });
+      const pmLoop = savedConfig.scheduledJobs?.find((j) => j.type === "pm-loop") ?? null;
+      return reply.send({ ok: true, iterativeWork: pmLoop ? { enabled: pmLoop.enabled, cadence: pmLoop.cadence, cron: pmLoop.cron } : null });
     } catch (err) {
       return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
     }
@@ -2417,18 +2590,20 @@ export async function createGatewayRuntimeState(
 
     let configFlipped = false;
     try {
-      const cur = await deps.projectConfigManager.read(targetPath);
-      const iw = ((cur as { iterativeWork?: { enabled?: boolean } }).iterativeWork) ?? {};
-      if (iw.enabled !== false) {
-        await deps.projectConfigManager.update(targetPath, { iterativeWork: { ...iw, enabled: false } });
+      const cur = deps.projectConfigManager?.read(targetPath);
+      const pmLoop = cur?.scheduledJobs?.find((j) => j.type === "pm-loop");
+      if (pmLoop?.enabled !== false) {
+        const updatedJobs = (cur?.scheduledJobs ?? []).map((j) =>
+          j.type === "pm-loop" ? { ...j, enabled: false } : j,
+        );
+        await deps.projectConfigManager!.update(targetPath, { scheduledJobs: updatedJobs });
         configFlipped = true;
       }
     } catch (err) {
-      // Continue — the runtime force-clear is the more important hard-stop.
       deps.logger?.warn?.("iterative-work", `stop: config update for ${targetPath} failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    const cleared = deps.iterativeWorkScheduler?.forceClearProject(targetPath) ?? { wasInFlight: false, hadLastFired: false };
+    const cleared = deps.iterativeWorkScheduler?.forceClearProject(targetPath) ?? { wasInFlight: 0, hadLastFired: 0 };
     return reply.send({ ok: true, configFlipped, ...cleared });
   });
 
@@ -2462,10 +2637,11 @@ export async function createGatewayRuntimeState(
       for (const slug of entries) {
         const projectPath = resolvePath(`${wsDir}/${slug}`);
         try {
-          const cur = await deps.projectConfigManager.read(projectPath);
-          const iw = ((cur as { iterativeWork?: { enabled?: boolean } }).iterativeWork);
-          if (iw?.enabled === true) {
-            await deps.projectConfigManager.update(projectPath, { iterativeWork: { ...iw, enabled: false } });
+          const cur = deps.projectConfigManager.read(projectPath);
+          const hasEnabled = cur?.scheduledJobs?.some((j) => j.enabled);
+          if (hasEnabled) {
+            const updated = (cur!.scheduledJobs ?? []).map((j) => ({ ...j, enabled: false }));
+            await deps.projectConfigManager.update(projectPath, { scheduledJobs: updated });
             configFlippedCount++;
           }
         } catch {
@@ -2766,7 +2942,10 @@ export async function createGatewayRuntimeState(
       }
       limit = parsed;
     }
-    const entries = deps.iterativeWorkScheduler.getLog(targetPath, limit);
+    const jobId = query["jobId"];
+    const entries = jobId
+      ? deps.iterativeWorkScheduler.getLog(targetPath, jobId, limit)
+      : deps.iterativeWorkScheduler.getLogLegacy(targetPath, limit);
     return reply.send({ entries });
   });
 
@@ -6384,6 +6563,8 @@ export async function createGatewayRuntimeState(
     registerCommsRoutes(fastify, {
       commsLog: deps.commsLog,
       notificationStore: deps.notificationStore,
+      channelAmbientLog: deps.channelAmbientLog,
+      moderationFlagStore: deps.moderationFlagStore,
     });
   }
 
@@ -6433,6 +6614,7 @@ export async function createGatewayRuntimeState(
     db: deps.db,
     encKey: encryptionKey,
     gatewayBaseUrl,
+    llmProvider: deps.llmProvider,
   });
 
   // Handoff, device-flow, connections, entity management, and federation routes
@@ -7079,6 +7261,8 @@ export async function createGatewayRuntimeState(
       identityProvider: deps.identityProvider,
       oauthHandler: deps.oauthHandler ?? null,
       logger: deps.logger,
+      db: deps.db,
+      encKey: encryptionKey,
     });
   }
 
@@ -7383,6 +7567,53 @@ export async function createGatewayRuntimeState(
     try {
       renameSync(src, dest);
       return reply.send({ ok: true });
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Memory browser endpoints — s112 Phase UI
+  // -----------------------------------------------------------------------
+
+  // GET /api/memory/events — episodic events for the memory browser
+  fastify.get("/api/memory/events", async (request, reply) => {
+    if (!deps.graphAdapter) return reply.code(503).send({ error: "Memory adapter unavailable" });
+    const q = request.query as { q?: string; projectPath?: string; entityId?: string; limit?: string };
+    const limit = Math.min(parseInt(q.limit ?? "50", 10) || 50, 200);
+    const projectPath = q.projectPath === "null" ? null : q.projectPath;
+    try {
+      const events = await deps.graphAdapter.queryGraphEvents({
+        entityId: q.entityId,
+        projectPath,
+        semantic: q.q,
+        limit,
+      });
+      return reply.send({
+        events: events.map((e) => ({
+          id: e.id,
+          summary: e.summary,
+          tags: e.tags,
+          confidence: e.confidence,
+          createdAt: String(e.createdAt),
+          projectPath: e.projectPath ?? null,
+          coaFingerprint: e.coaFingerprint,
+        })),
+      });
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // GET /api/memory/search-docs — full-text search over doc chunks
+  fastify.get("/api/memory/search-docs", async (request, reply) => {
+    if (!deps.docIndexer) return reply.code(503).send({ error: "Doc indexer unavailable" });
+    const q = request.query as { q?: string; scope?: string; limit?: string };
+    if (!q.q?.trim()) return reply.send({ chunks: [] });
+    const limit = Math.min(parseInt(q.limit ?? "10", 10) || 10, 50);
+    try {
+      const chunks = await deps.docIndexer.query({ query: q.q, scope: q.scope, limit });
+      return reply.send({ chunks });
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
     }

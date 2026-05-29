@@ -82,6 +82,15 @@ import {
   LOOKUP_KNOWLEDGE_INPUT_SCHEMA,
 } from "./lookup-knowledge.js";
 import type { PrimeLoader } from "../prime-loader.js";
+import type { EmbeddingEngine } from "@agi/memory";
+
+// Doc search tool (s112 Phase 3)
+import {
+  createSearchDocsHandler,
+  SEARCH_DOCS_MANIFEST,
+  SEARCH_DOCS_INPUT_SCHEMA,
+} from "./search-docs.js";
+import type { DocIndexer } from "../doc-indexer.js";
 
 // Plan tools — handlers/manifests retired (plans now via pm tool Wish #17)
 
@@ -163,6 +172,10 @@ export interface ToolRegistrationConfig {
   userContextStore?: UserContextStore;
   /** Optional PRIME knowledge loader — enables search_prime and lookup_knowledge tools. */
   primeLoader?: PrimeLoader;
+  /** Optional embedding engine — enables semantic reranking in search_prime. */
+  embeddingEngine?: EmbeddingEngine;
+  /** Optional doc indexer — enables search_docs tool. */
+  docIndexer?: DocIndexer;
   /** Workspace project directories — enables manage_project tool. */
   projectDirs?: string[];
   /** ProjectConfigManager for validated project config I/O. */
@@ -334,13 +347,22 @@ export function registerAllTools(
   if (config.primeLoader !== undefined) {
     register(
       SEARCH_PRIME_MANIFEST as ToolManifestEntry,
-      createSearchPrimeHandler({ primeLoader: config.primeLoader }),
+      createSearchPrimeHandler({ primeLoader: config.primeLoader, embeddingEngine: config.embeddingEngine }),
       SEARCH_PRIME_INPUT_SCHEMA,
     );
     register(
       LOOKUP_KNOWLEDGE_MANIFEST as ToolManifestEntry,
       createLookupKnowledgeHandler({ primeLoader: config.primeLoader }),
       LOOKUP_KNOWLEDGE_INPUT_SCHEMA,
+    );
+  }
+
+  // Doc search tool (s112 Phase 3 — always available when docIndexer is wired)
+  if (config.docIndexer !== undefined) {
+    register(
+      SEARCH_DOCS_MANIFEST as ToolManifestEntry,
+      createSearchDocsHandler({ docIndexer: config.docIndexer }),
+      SEARCH_DOCS_INPUT_SCHEMA,
     );
   }
 

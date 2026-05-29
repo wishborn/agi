@@ -8,6 +8,13 @@ import type {
   BreakdownSlice,
   COAExplorerEntry,
   CommsLogEntry,
+  AmbientLogEntry,
+  AgentEventEntry,
+  ModerationFlag,
+  FlagSeverity,
+  FlagStatus,
+  FlagActionKind,
+  CommsStats,
   DashboardOverview,
   EntityImpactProfile,
   GitAction,
@@ -1501,6 +1508,55 @@ export async function fetchDocsTree(): Promise<FileNode[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Memory Browser API — /api/memory/*
+// ---------------------------------------------------------------------------
+
+export interface MemoryEvent {
+  id: string;
+  summary: string;
+  tags: string[];
+  confidence: number;
+  createdAt: string;
+  projectPath: string | null;
+  coaFingerprint: string;
+}
+
+export interface MemoryDocChunk {
+  heading: string | null;
+  content: string;
+  sourcePath: string;
+  scope: string;
+}
+
+export async function fetchMemoryEvents(params?: {
+  q?: string;
+  projectPath?: string | null;
+  entityId?: string;
+  limit?: number;
+}): Promise<MemoryEvent[]> {
+  const url = new URL("/api/memory/events", window.location.origin);
+  if (params?.q) url.searchParams.set("q", params.q);
+  if (params?.projectPath !== undefined) url.searchParams.set("projectPath", params.projectPath ?? "null");
+  if (params?.entityId) url.searchParams.set("entityId", params.entityId);
+  if (params?.limit) url.searchParams.set("limit", String(params.limit));
+  const res = await fetch(url.toString(), { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`Memory events fetch failed: ${res.status}`);
+  const data = await res.json() as { events: MemoryEvent[] };
+  return data.events;
+}
+
+export async function searchMemoryDocs(q: string, scope?: string, limit = 10): Promise<MemoryDocChunk[]> {
+  const url = new URL("/api/memory/search-docs", window.location.origin);
+  url.searchParams.set("q", q);
+  if (scope) url.searchParams.set("scope", scope);
+  url.searchParams.set("limit", String(limit));
+  const res = await fetch(url.toString(), { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`Doc search failed: ${res.status}`);
+  const data = await res.json() as { chunks: MemoryDocChunk[] };
+  return data.chunks;
+}
+
+// ---------------------------------------------------------------------------
 // Project File API — /api/files/project-*
 // ---------------------------------------------------------------------------
 
@@ -1732,12 +1788,15 @@ export async function deleteChatSession(id: string): Promise<{ ok: boolean }> {
 export async function fetchCommsLog(opts?: {
   channel?: string;
   direction?: string;
+  /** YYYY-MM-DD filter — only entries from that calendar day. */
+  date?: string;
   limit?: number;
   offset?: number;
 }): Promise<{ entries: CommsLogEntry[]; total: number }> {
   const url = new URL("/api/comms", window.location.origin);
   if (opts?.channel) url.searchParams.set("channel", opts.channel);
   if (opts?.direction) url.searchParams.set("direction", opts.direction);
+  if (opts?.date) url.searchParams.set("date", opts.date);
   if (opts?.limit !== undefined) url.searchParams.set("limit", String(opts.limit));
   if (opts?.offset !== undefined) url.searchParams.set("offset", String(opts.offset));
   const res = await fetch(url.toString());
@@ -1746,6 +1805,90 @@ export async function fetchCommsLog(opts?: {
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<{ entries: CommsLogEntry[]; total: number }>;
+}
+
+export async function fetchAmbientLog(opts: {
+  channelId: string;
+  date: string;
+  limit?: number;
+}): Promise<{ entries: AmbientLogEntry[] }> {
+  const url = new URL("/api/comms/ambient", window.location.origin);
+  url.searchParams.set("channelId", opts.channelId);
+  url.searchParams.set("date", opts.date);
+  if (opts.limit !== undefined) url.searchParams.set("limit", String(opts.limit));
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ entries: AmbientLogEntry[] }>;
+}
+
+export async function fetchCommsStats(): Promise<CommsStats> {
+  const res = await fetch("/api/comms/stats");
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<CommsStats>;
+}
+
+export async function fetchAgentEvents(opts?: {
+  channel?: string;
+  kind?: string;
+  date?: string;
+  limit?: number;
+}): Promise<{ events: AgentEventEntry[]; total: number }> {
+  const url = new URL("/api/agent/events", window.location.origin);
+  if (opts?.channel) url.searchParams.set("channel", opts.channel);
+  if (opts?.kind) url.searchParams.set("kind", opts.kind);
+  if (opts?.date) url.searchParams.set("date", opts.date);
+  if (opts?.limit !== undefined) url.searchParams.set("limit", String(opts.limit));
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ events: AgentEventEntry[]; total: number }>;
+}
+
+// ---------------------------------------------------------------------------
+// Moderation API — /api/moderation
+// ---------------------------------------------------------------------------
+
+export async function fetchModerationFlags(opts?: {
+  status?: FlagStatus;
+  severity?: FlagSeverity;
+  channel?: string;
+  limit?: number;
+}): Promise<{ flags: ModerationFlag[]; total: number }> {
+  const url = new URL("/api/moderation/flags", window.location.origin);
+  if (opts?.status) url.searchParams.set("status", opts.status);
+  if (opts?.severity) url.searchParams.set("severity", opts.severity);
+  if (opts?.channel) url.searchParams.set("channel", opts.channel);
+  if (opts?.limit !== undefined) url.searchParams.set("limit", String(opts.limit));
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ flags: ModerationFlag[]; total: number }>;
+}
+
+export async function applyModerationAction(
+  id: string,
+  action: { kind: FlagActionKind; note?: string },
+): Promise<ModerationFlag> {
+  const res = await fetch(`/api/moderation/${id}/action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: action.kind, moderatorId: "owner", note: action.note }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<ModerationFlag>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1814,6 +1957,15 @@ export interface ChannelOpsLogEntry {
   level: "debug" | "info" | "warn" | "error";
   component: string;
   msg: string;
+}
+
+export async function fetchChannelState(id: string): Promise<import("./types.js").DiscordChannelState> {
+  const res = await fetch(`/api/channels/${encodeURIComponent(id)}/state`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<import("./types.js").DiscordChannelState>;
 }
 
 export async function fetchChannelOpsLog(
@@ -3983,6 +4135,14 @@ export interface PendingApproval {
   projectPath: string;
   firstMessagePreview: string;
   createdAt: string;
+  registrationData?: {
+    name?: string;
+    email?: string;
+    birthdate?: string;
+    pronouns?: string;
+    discordHandle?: string;
+  };
+  assignedProjectPaths?: string[];
 }
 
 export async function fetchPendingApprovals(opts: { project?: string } = {}): Promise<PendingApproval[]> {
@@ -3998,9 +4158,13 @@ export async function fetchPendingApprovals(opts: { project?: string } = {}): Pr
   return data.pending;
 }
 
-export async function approvePendingApproval(id: string): Promise<PendingApproval> {
+export async function approvePendingApproval(id: string, opts?: { projectPaths?: string[] }): Promise<PendingApproval> {
   const url = `/api/identity/pending/${encodeURIComponent(id)}/approve`;
-  const res = await fetch(url, { method: "POST" });
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectPaths: opts?.projectPaths ?? [] }),
+  });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);

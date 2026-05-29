@@ -10,7 +10,7 @@ test.describe("Dark Mode & Theme System", () => {
   test("cards have dark background, not white", async ({ page }) => {
     await page.goto("/");
     // Wait for the dashboard to render
-    await page.waitForSelector("[data-testid='app-sidebar']", { timeout: 10000 });
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10000 });
 
     // Check that no visible card-like element has a white background
     const cards = page.locator(".bg-card, [class*='Card']");
@@ -25,7 +25,7 @@ test.describe("Dark Mode & Theme System", () => {
 
   test("color-scheme is dark on html element", async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector("[data-testid='app-sidebar']", { timeout: 10000 });
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10000 });
     // applyTheme is async — poll until colorScheme reflects dark
     await expect(async () => {
       const colorScheme = await page.locator("html").evaluate(
@@ -37,7 +37,7 @@ test.describe("Dark Mode & Theme System", () => {
 
   test("theme CSS custom properties are set", async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector("[data-testid='app-sidebar']", { timeout: 10000 });
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10000 });
 
     const bgColor = await page.locator("html").evaluate(
       (el) => getComputedStyle(el).getPropertyValue("--color-background").trim(),

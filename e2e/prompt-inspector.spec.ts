@@ -52,10 +52,11 @@ test.describe("Prompt Inspector", () => {
     await expect(page.getByTestId("prompt-inspector-token-estimate")).toBeVisible();
   });
 
-  test("admin sidebar has a Prompt Inspector entry", async ({ page }) => {
-    const sidebar = page.getByTestId("app-sidebar");
-    await expect(sidebar).toBeVisible();
-    // Sidebar.Item renders as <button>, not <a> — no link role
-    await expect(sidebar.getByRole("button", { name: "Prompt Inspector" })).toBeVisible();
+  test("workspace chip admin tab has a Prompt Inspector entry", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("workspace-chip").click();
+    const dropdown = page.getByTestId("workspace-chip-dropdown");
+    await dropdown.getByRole("button", { name: "Admin" }).click();
+    await expect(dropdown.getByRole("link", { name: "Prompt Inspector" })).toBeVisible();
   });
 });

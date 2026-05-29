@@ -197,6 +197,12 @@ export interface SystemPromptContext {
    * Populated by the inbound router from AionimaMessage.metadata.
    */
   channelContext?: ChannelContextData;
+  /**
+   * Compact doc topic index grouped by agi/docs/ subdirectory — injected
+   * alongside the PRIME topic index so Aion knows what platform docs exist
+   * and can look them up via search_docs / lookup_doc (s197).
+   */
+  docTopicIndex?: Record<string, string[]>;
 }
 
 /**
@@ -478,14 +484,75 @@ function buildSkillsSection(skills: SkillPromptEntry[]): string {
   return `## Active Skills\n\nThe following skills are relevant to this interaction:\n\n${entries.join("\n\n---\n\n")}`;
 }
 
+/**
+ * Standing memory behavioral instructions — injected on every non-worker invocation.
+ * Tells Aion how its memory system works regardless of whether any memories are recalled.
+ */
+function buildMemoryInstructionsSection(): string {
+  return `## Memory System
+
+Your memory is persistent across all sessions and automatically recorded — you do not need to call any tool to store it. Every invocation is captured and consolidated into searchable episodic records.
+
+**Reading recalled context (when a ## Memory section appears below):**
+- **Recalled context (global)** — your prior observations and decisions across all work
+- **Project context** — prior work and decisions scoped to the current project
+- **Established facts** — consolidated relationship triples extracted from prior sessions (subject → predicate → object with temporal validity)
+- **Related docs** — relevant chunks from \`agi/docs/\` or project \`k/\` knowledge files
+
+**Active recall tools (use when context is insufficient):**
+- \`search_docs\` — semantic search over \`agi/docs/\`, the global \`k/\` folder, and the current project's \`k/\` folder. Use when you need specific platform documentation or project knowledge that isn't already in context.
+- \`search_prime\` — search the PRIME corpus for Impactivism, COA, entity model, or 0TRUTH knowledge.
+
+**Continuity discipline:** When recalled context is present, treat it as ground truth about prior work. Do not re-derive what is already established. Explicitly reference prior decisions when they are relevant to the current request.`;
+}
+
 function buildMemorySection(memories: MemoryPromptEntry[]): string {
   if (memories.length === 0) return "";
 
-  const entries = memories.map((m) =>
-    `- [${m.category}] ${m.content}`
-  );
+  // s112 Phase 5 — structured sections: global events, project events, facts, docs
+  const global: MemoryPromptEntry[] = [];
+  const project: MemoryPromptEntry[] = [];
+  const facts: MemoryPromptEntry[] = [];
+  const docs: MemoryPromptEntry[] = [];
+  const legacy: MemoryPromptEntry[] = [];
 
-  return `## Entity Memory\n\nRecalled context from previous interactions:\n${entries.join("\n")}`;
+  for (const m of memories) {
+    if (m.category === "memory") global.push(m);
+    else if (m.category === "project-memory") project.push(m);
+    else if (m.category === "fact") facts.push(m);
+    else if (m.category === "docs") docs.push(m);
+    else legacy.push(m);
+  }
+
+  // Legacy flat format (old MemoryEntry shape)
+  if (global.length === 0 && project.length === 0 && facts.length === 0 && docs.length === 0) {
+    const entries = legacy.map((m) => `- [${m.category}] ${m.content}`);
+    return `## Memory\n\n${entries.join("\n")}`;
+  }
+
+  const parts: string[] = ["## Memory"];
+
+  if (global.length > 0) {
+    parts.push("### Recalled context (global)");
+    for (const m of global) parts.push(`- ${m.content}`);
+  }
+
+  if (project.length > 0) {
+    parts.push("### Project context");
+    for (const m of project) parts.push(`- ${m.content}`);
+  }
+
+  if (facts.length > 0) {
+    parts.push("### Established facts");
+    for (const m of facts) parts.push(`- ${m.content}`);
+  }
+
+  if (docs.length > 0) {
+    parts.push("### Related docs");
+    for (const m of docs) parts.push(m.content);
+  }
+
+  return parts.join("\n\n");
 }
 
 function buildDevIdentitySection(): string {
@@ -536,6 +603,36 @@ function buildPrimeDirectiveSection(prime: PrimeContext): string {
   }
 
   return parts.join("\n\n");
+}
+
+/**
+ * Build doc topic index section from agi/docs/ directory listing.
+ * Gives Aion awareness of what platform documentation exists so it can use
+ * search_docs / lookup_doc without guessing paths (s197).
+ */
+function buildDocTopicIndexSection(docTopicIndex: Record<string, string[]>): string {
+  const subdirs = Object.keys(docTopicIndex).filter((k) => k !== "");
+  const rootFiles = docTopicIndex[""] ?? [];
+  if (subdirs.length === 0 && rootFiles.length === 0) return "";
+
+  const lines: string[] = [
+    "## Platform Documentation Index",
+    "",
+    "The following AGI platform docs are available via `search_docs` (keyword/semantic) and `lookup_doc` (full read by path). Cite the source path when referencing content.",
+    "",
+  ];
+
+  for (const subdir of subdirs.sort()) {
+    const files = docTopicIndex[subdir];
+    if (!files || files.length === 0) continue;
+    lines.push(`**${subdir}/:** ${files.join(", ")}`);
+  }
+
+  if (rootFiles.length > 0) {
+    lines.push(`**root:** ${rootFiles.join(", ")}`);
+  }
+
+  return lines.join("\n");
 }
 
 /**
@@ -1041,6 +1138,13 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
   // call won't pass `tools:` anyway (chat with no action verbs).
   sections.push(ctx.toolsAvailable === false ? buildToolsHintSection(ctx.tools) : buildToolsSection(ctx.tools));
 
+  // Memory behavioral instructions — always present so Aion knows how to use its
+  // memory system even on cold-start sessions where no memories are recalled yet.
+  // Skipped for worker and local-micro invocations (token budget too tight).
+  if (rt !== "worker" && !isLocal) {
+    sections.push(buildMemoryInstructionsSection());
+  }
+
   // State + owner (compact, one line each)
   sections.push(`Operational state: ${ctx.state}`);
   if (ctx.ownerName !== undefined) {
@@ -1082,6 +1186,14 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
       const indexSection = buildKnowledgeIndexSection(ctx.prime.topicIndex);
       if (indexSection.length > 0) {
         sections.push(indexSection);
+      }
+    }
+    // Platform doc topic index — alongside PRIME index so Aion knows what
+    // docs exist without guessing. Always injected when available (s197).
+    if (ctx.docTopicIndex !== undefined) {
+      const docIndexSection = buildDocTopicIndexSection(ctx.docTopicIndex);
+      if (docIndexSection.length > 0) {
+        sections.push(docIndexSection);
       }
     }
   }
@@ -1220,6 +1332,13 @@ export function assembleSystemPromptWithBreakdown(
   }
 
   identitySections.push(ctx.toolsAvailable === false ? buildToolsHintSection(ctx.tools) : buildToolsSection(ctx.tools));
+
+  // Memory behavioral instructions — same rule as the single-prompt path:
+  // always present except for worker and local-micro invocations.
+  if (rt !== "worker" && !isLocal) {
+    identitySections.push(buildMemoryInstructionsSection());
+  }
+
   identitySections.push(`Operational state: ${ctx.state}`);
 
   if (ctx.ownerName !== undefined) {
@@ -1255,6 +1374,12 @@ export function assembleSystemPromptWithBreakdown(
       const indexSection = buildKnowledgeIndexSection(ctx.prime.topicIndex);
       if (indexSection.length > 0) {
         contextSections.push(indexSection);
+      }
+    }
+    if (ctx.docTopicIndex !== undefined) {
+      const docIndexSection = buildDocTopicIndexSection(ctx.docTopicIndex);
+      if (docIndexSection.length > 0) {
+        contextSections.push(docIndexSection);
       }
     }
   }
