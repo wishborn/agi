@@ -112,6 +112,7 @@ function tabIdToCanvasLabel(tabId: string, panels: PluginPanel[]): string {
 
 export function ProjectDetail({
   projects, onUpdate, updating, onDelete, deleting, onRefresh, onOpenChat, theme,
+  projectActivity,
   hostingStatus, onHostingConfigure, onHostingRestart,
   onTunnelEnable, onTunnelDisable, hostingBusy,
   onOpenEditor, onToolExecute, onOpenTerminal, contributingEnabled, onFixFinding,
