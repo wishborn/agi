@@ -53,6 +53,14 @@ ALLOWLIST=(
   # s196 Hearth shell — hand-rolled PAx placeholder; consumed by
   # HearthChatPane (s198). Delete after PAx PR merges upstream.
   "components/Orb.tsx"
+  # s197 Hearth Home — old overview tab components temporarily displaced.
+  # Re-wire when /usage and /impactinomics dedicated routes ship (v0.4.0).
+  "components/ActivityFeed.tsx"
+  "components/TimelineChart.tsx"
+  "components/OverviewCards.tsx"
+  "components/UsageSection.tsx"
+  "components/ComingSoonOverlay.tsx"
+  "components/BreakdownChart.tsx"
 )
 
 is_allowlisted() {
