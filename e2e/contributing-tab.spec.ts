@@ -26,7 +26,7 @@ test.describe("Contributing tab / Dev Mode UI", () => {
 
   test("Contributing badge is present when Dev Mode is on", async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector("[data-testid='app-sidebar']", { timeout: 10_000 });
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10_000 });
 
     // The header renders a "Contributing" badge when dev.enabled is true
     const badge = page.getByText("Contributing", { exact: true });

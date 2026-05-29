@@ -8,6 +8,13 @@ import type {
   BreakdownSlice,
   COAExplorerEntry,
   CommsLogEntry,
+  AmbientLogEntry,
+  AgentEventEntry,
+  ModerationFlag,
+  FlagSeverity,
+  FlagStatus,
+  FlagActionKind,
+  CommsStats,
   DashboardOverview,
   EntityImpactProfile,
   GitAction,
@@ -276,6 +283,92 @@ export async function updateNote(id: string, patch: { title?: string; kind?: Use
 
 export async function deleteNote(id: string): Promise<void> {
   const res = await fetch(`/api/notes/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// s182 Phase E — MApp Scripts API
+// ---------------------------------------------------------------------------
+
+export interface MAppScript {
+  id: string;
+  mappId: string;
+  name: string;
+  description: string | null;
+  language: "starlark";
+  source: string | null;
+  sourceHash: string | null;
+  wasmB64: string | null;
+  wasmHash: string | null;
+  isPacker: boolean;
+  enabled: boolean;
+  timeoutMs: number;
+  maxMemoryPages: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function fetchScripts(mappId: string): Promise<MAppScript[]> {
+  const res = await fetch(`/api/scripts?mappId=${encodeURIComponent(mappId)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { scripts: MAppScript[] };
+  return data.scripts;
+}
+
+export async function createScript(input: {
+  mappId: string; name: string; description?: string | null; source?: string | null; isPacker?: boolean;
+}): Promise<MAppScript> {
+  const res = await fetch("/api/scripts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<MAppScript>;
+}
+
+export async function updateScript(id: string, patch: {
+  name?: string; description?: string | null; source?: string | null; isPacker?: boolean;
+}): Promise<MAppScript> {
+  const res = await fetch(`/api/scripts/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<MAppScript>;
+}
+
+export async function enableScript(id: string): Promise<void> {
+  const res = await fetch(`/api/scripts/${encodeURIComponent(id)}/enable`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function disableScript(id: string): Promise<void> {
+  const res = await fetch(`/api/scripts/${encodeURIComponent(id)}/disable`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function deleteScript(id: string): Promise<void> {
+  const res = await fetch(`/api/scripts/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (!res.ok && res.status !== 204) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -667,6 +760,40 @@ export async function fetchRecentDecisions(limit = 20): Promise<RoutingDecisionR
   if (!res.ok) return [];
   const data = (await res.json()) as { decisions: RoutingDecisionRecord[] };
   return data.decisions;
+}
+
+/** Wire shape of a single cost-ledger record from GET /api/providers/cost/recent.
+ *  Mirrors CostLedgerEntryRecord in cost-ledger-reader.ts. */
+export interface CostLedgerEntryRecord {
+  id: string;
+  ts: string;
+  entityId: string | null;
+  provider: string;
+  model: string;
+  costMode: string;
+  complexity: string;
+  inputTokens: number;
+  outputTokens: number;
+  cpuWattsObserved: number | null;
+  gpuWattsObserved: number | null;
+  dollarCost: number | null;
+  escalated: boolean;
+  turnDurationMs: number;
+  routingReason: string;
+}
+
+/** GET /api/providers/cost/recent — newest-last array of cost ledger records
+ *  for the Mission Control hero narrative enrichment. Never throws; returns
+ *  empty on error (fresh install before any chat turns). */
+export async function fetchRecentCostRecords(limit = 5): Promise<CostLedgerEntryRecord[]> {
+  try {
+    const res = await fetch(`/api/providers/cost/recent?limit=${String(limit)}`);
+    if (!res.ok) return [];
+    const data = (await res.json()) as { records: CostLedgerEntryRecord[] };
+    return Array.isArray(data.records) ? data.records : [];
+  } catch {
+    return [];
+  }
 }
 
 /** PUT /api/providers/active — switch the active Provider (and optionally
@@ -1381,6 +1508,55 @@ export async function fetchDocsTree(): Promise<FileNode[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Memory Browser API — /api/memory/*
+// ---------------------------------------------------------------------------
+
+export interface MemoryEvent {
+  id: string;
+  summary: string;
+  tags: string[];
+  confidence: number;
+  createdAt: string;
+  projectPath: string | null;
+  coaFingerprint: string;
+}
+
+export interface MemoryDocChunk {
+  heading: string | null;
+  content: string;
+  sourcePath: string;
+  scope: string;
+}
+
+export async function fetchMemoryEvents(params?: {
+  q?: string;
+  projectPath?: string | null;
+  entityId?: string;
+  limit?: number;
+}): Promise<MemoryEvent[]> {
+  const url = new URL("/api/memory/events", window.location.origin);
+  if (params?.q) url.searchParams.set("q", params.q);
+  if (params?.projectPath !== undefined) url.searchParams.set("projectPath", params.projectPath ?? "null");
+  if (params?.entityId) url.searchParams.set("entityId", params.entityId);
+  if (params?.limit) url.searchParams.set("limit", String(params.limit));
+  const res = await fetch(url.toString(), { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`Memory events fetch failed: ${res.status}`);
+  const data = await res.json() as { events: MemoryEvent[] };
+  return data.events;
+}
+
+export async function searchMemoryDocs(q: string, scope?: string, limit = 10): Promise<MemoryDocChunk[]> {
+  const url = new URL("/api/memory/search-docs", window.location.origin);
+  url.searchParams.set("q", q);
+  if (scope) url.searchParams.set("scope", scope);
+  url.searchParams.set("limit", String(limit));
+  const res = await fetch(url.toString(), { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`Doc search failed: ${res.status}`);
+  const data = await res.json() as { chunks: MemoryDocChunk[] };
+  return data.chunks;
+}
+
+// ---------------------------------------------------------------------------
 // Project File API — /api/files/project-*
 // ---------------------------------------------------------------------------
 
@@ -1612,12 +1788,15 @@ export async function deleteChatSession(id: string): Promise<{ ok: boolean }> {
 export async function fetchCommsLog(opts?: {
   channel?: string;
   direction?: string;
+  /** YYYY-MM-DD filter — only entries from that calendar day. */
+  date?: string;
   limit?: number;
   offset?: number;
 }): Promise<{ entries: CommsLogEntry[]; total: number }> {
   const url = new URL("/api/comms", window.location.origin);
   if (opts?.channel) url.searchParams.set("channel", opts.channel);
   if (opts?.direction) url.searchParams.set("direction", opts.direction);
+  if (opts?.date) url.searchParams.set("date", opts.date);
   if (opts?.limit !== undefined) url.searchParams.set("limit", String(opts.limit));
   if (opts?.offset !== undefined) url.searchParams.set("offset", String(opts.offset));
   const res = await fetch(url.toString());
@@ -1628,9 +1807,141 @@ export async function fetchCommsLog(opts?: {
   return res.json() as Promise<{ entries: CommsLogEntry[]; total: number }>;
 }
 
+export async function fetchAmbientLog(opts: {
+  channelId: string;
+  date: string;
+  limit?: number;
+}): Promise<{ entries: AmbientLogEntry[] }> {
+  const url = new URL("/api/comms/ambient", window.location.origin);
+  url.searchParams.set("channelId", opts.channelId);
+  url.searchParams.set("date", opts.date);
+  if (opts.limit !== undefined) url.searchParams.set("limit", String(opts.limit));
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ entries: AmbientLogEntry[] }>;
+}
+
+export async function fetchCommsStats(): Promise<CommsStats> {
+  const res = await fetch("/api/comms/stats");
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<CommsStats>;
+}
+
+export async function fetchAgentEvents(opts?: {
+  channel?: string;
+  kind?: string;
+  date?: string;
+  limit?: number;
+}): Promise<{ events: AgentEventEntry[]; total: number }> {
+  const url = new URL("/api/agent/events", window.location.origin);
+  if (opts?.channel) url.searchParams.set("channel", opts.channel);
+  if (opts?.kind) url.searchParams.set("kind", opts.kind);
+  if (opts?.date) url.searchParams.set("date", opts.date);
+  if (opts?.limit !== undefined) url.searchParams.set("limit", String(opts.limit));
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ events: AgentEventEntry[]; total: number }>;
+}
+
+// ---------------------------------------------------------------------------
+// Moderation API — /api/moderation
+// ---------------------------------------------------------------------------
+
+export async function fetchModerationFlags(opts?: {
+  status?: FlagStatus;
+  severity?: FlagSeverity;
+  channel?: string;
+  limit?: number;
+}): Promise<{ flags: ModerationFlag[]; total: number }> {
+  const url = new URL("/api/moderation/flags", window.location.origin);
+  if (opts?.status) url.searchParams.set("status", opts.status);
+  if (opts?.severity) url.searchParams.set("severity", opts.severity);
+  if (opts?.channel) url.searchParams.set("channel", opts.channel);
+  if (opts?.limit !== undefined) url.searchParams.set("limit", String(opts.limit));
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ flags: ModerationFlag[]; total: number }>;
+}
+
+export async function applyModerationAction(
+  id: string,
+  action: { kind: FlagActionKind; note?: string },
+): Promise<ModerationFlag> {
+  const res = await fetch(`/api/moderation/${id}/action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: action.kind, moderatorId: "owner", note: action.note }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<ModerationFlag>;
+}
+
 // ---------------------------------------------------------------------------
 // Channels API — /api/channels
 // ---------------------------------------------------------------------------
+
+export interface ChannelListEntry {
+  id: string;
+  pluginId: string;
+  name: string;
+  version: string;
+  description: string;
+  status: "registered" | "starting" | "running" | "stopping" | "stopped" | "error";
+  enabled: boolean;
+  registeredAt: string | null;
+}
+
+export interface ChannelConfigResponse {
+  enabled: boolean;
+  config: Record<string, unknown>;
+  defaults: Record<string, unknown>;
+}
+
+export async function fetchChannels(): Promise<ChannelListEntry[]> {
+  const res = await fetch("/api/channels");
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<ChannelListEntry[]>;
+}
+
+export async function fetchChannelConfig(id: string): Promise<ChannelConfigResponse> {
+  const res = await fetch(`/api/channels/${encodeURIComponent(id)}/config`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<ChannelConfigResponse>;
+}
+
+export async function updateChannelConfig(id: string, payload: { enabled?: boolean; config?: Record<string, unknown> }): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/channels/${encodeURIComponent(id)}/config`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean }>;
+}
 
 export async function fetchChannelDetail(id: string): Promise<import("./types.js").ChannelDetail> {
   const res = await fetch(`/api/channels/${encodeURIComponent(id)}`);
@@ -1639,6 +1950,36 @@ export async function fetchChannelDetail(id: string): Promise<import("./types.js
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<import("./types.js").ChannelDetail>;
+}
+
+export interface ChannelOpsLogEntry {
+  ts: string;
+  level: "debug" | "info" | "warn" | "error";
+  component: string;
+  msg: string;
+}
+
+export async function fetchChannelState(id: string): Promise<import("./types.js").DiscordChannelState> {
+  const res = await fetch(`/api/channels/${encodeURIComponent(id)}/state`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<import("./types.js").DiscordChannelState>;
+}
+
+export async function fetchChannelOpsLog(
+  id: string,
+  limit = 200,
+): Promise<{ entries: ChannelOpsLogEntry[] }> {
+  const res = await fetch(
+    `/api/channels/${encodeURIComponent(id)}/ops-log?limit=${String(limit)}`,
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ entries: ChannelOpsLogEntry[] }>;
 }
 
 export async function startChannel(id: string): Promise<{ ok: boolean }> {
@@ -3685,4 +4026,257 @@ export async function removeProjectRepo(projectPath: string, name: string): Prom
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
+}
+
+// CHN-D (s165) slice 3a — channel-room binding client helpers.
+// Mirrors the ProjectRepo shape above but for project.json `rooms[]`.
+export interface ProjectRoomBinding {
+  channelId: string;
+  roomId: string;
+  label?: string;
+  kind?: string;
+  privacy?: "public" | "private" | "secret";
+  boundAt: string;
+  meta?: Record<string, unknown>;
+}
+
+export async function fetchProjectRooms(projectPath: string): Promise<ProjectRoomBinding[]> {
+  const url = `/api/projects/rooms?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { rooms: ProjectRoomBinding[] };
+  return data.rooms;
+}
+
+export async function addProjectRoom(
+  projectPath: string,
+  binding: Omit<ProjectRoomBinding, "boundAt"> & { boundAt?: string },
+): Promise<void> {
+  const url = `/api/projects/rooms?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(binding),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function removeProjectRoom(
+  projectPath: string,
+  channelId: string,
+  roomId: string,
+): Promise<void> {
+  const url = `/api/projects/rooms/${encodeURIComponent(channelId)}/${encodeURIComponent(roomId)}?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url, { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
+// CHN-D slice 3b — available rooms picker. The channels-specific
+// endpoint (e.g. /api/channels/discord/rooms) emits a flat list of
+// bindable rooms; the picker dialog shows them grouped + indicates
+// which are already bound.
+export interface AvailableChannelRoom {
+  channelId: string;
+  roomId: string;
+  label: string;
+  kind?: string;
+  privacy?: "public" | "private" | "secret";
+  /** Grouping label (e.g. guild/server name for Discord, workspace for Slack). */
+  group: string;
+  parent?: string;
+}
+
+export async function fetchAvailableChannelRooms(channelId: string): Promise<AvailableChannelRoom[]> {
+  const url = `/api/channels/${encodeURIComponent(channelId)}/rooms`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { rooms: AvailableChannelRoom[] };
+  return data.rooms;
+}
+
+/**
+ * CHN-C slice 3 — resolve a (channelId, roomId) pair to its bound project.
+ * Returns `null` when no project binds the room. Surfaces what the gateway-
+ * side ChannelEventDispatcher returns; channel-agnostic.
+ */
+export async function resolveChannelRoom(
+  channelId: string,
+  roomId: string,
+): Promise<{ projectPath: string; binding: ProjectRoomBinding } | null> {
+  const url = `/api/channels/resolve-room?channelId=${encodeURIComponent(channelId)}&roomId=${encodeURIComponent(roomId)}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { resolved: { projectPath: string; binding: ProjectRoomBinding } | null };
+  return data.resolved;
+}
+
+// CHN-E (s166) slice 3 — pending-approval queue client.
+export interface PendingApproval {
+  id: string;
+  channelId: string;
+  roomId: string;
+  channelUserId: string;
+  displayName: string;
+  projectPath: string;
+  firstMessagePreview: string;
+  createdAt: string;
+  registrationData?: {
+    name?: string;
+    email?: string;
+    birthdate?: string;
+    pronouns?: string;
+    discordHandle?: string;
+  };
+  assignedProjectPaths?: string[];
+}
+
+export async function fetchPendingApprovals(opts: { project?: string } = {}): Promise<PendingApproval[]> {
+  const url = opts.project !== undefined
+    ? `/api/identity/pending?project=${encodeURIComponent(opts.project)}`
+    : "/api/identity/pending";
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { pending: PendingApproval[]; count: number };
+  return data.pending;
+}
+
+export async function approvePendingApproval(id: string, opts?: { projectPaths?: string[] }): Promise<PendingApproval> {
+  const url = `/api/identity/pending/${encodeURIComponent(id)}/approve`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectPaths: opts?.projectPaths ?? [] }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { ok: true; approval: PendingApproval };
+  return data.approval;
+}
+
+export async function rejectPendingApproval(id: string): Promise<PendingApproval> {
+  const url = `/api/identity/pending/${encodeURIComponent(id)}/reject`;
+  const res = await fetch(url, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { ok: true; approval: PendingApproval };
+  return data.approval;
+}
+
+// CHN-F (s167) slice 1 — channel workflow binding client.
+
+export interface ChannelWorkflowBinding {
+  id: string;
+  channelId: string;
+  roomId?: string;
+  roleId?: string;
+  messagePattern?: string;
+  mappId: string;
+  label?: string;
+  createdAt: string;
+}
+
+export async function listWorkflowBindings(channelId?: string): Promise<ChannelWorkflowBinding[]> {
+  const url = channelId
+    ? `/api/channels/workflow-bindings?channel=${encodeURIComponent(channelId)}`
+    : "/api/channels/workflow-bindings";
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json() as { bindings: ChannelWorkflowBinding[] };
+  return data.bindings;
+}
+
+export async function addWorkflowBinding(
+  input: Omit<ChannelWorkflowBinding, "id" | "createdAt">,
+): Promise<ChannelWorkflowBinding> {
+  const res = await fetch("/api/channels/workflow-bindings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { binding: ChannelWorkflowBinding };
+  return data.binding;
+}
+
+export async function deleteWorkflowBinding(id: string): Promise<void> {
+  const res = await fetch(`/api/channels/workflow-bindings/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+// ---------------------------------------------------------------------------
+// Workflow Designer API (s176 — ~/.agi/workflows/)
+// ---------------------------------------------------------------------------
+
+export interface WorkflowSummary {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowRecord extends WorkflowSummary {
+  graph: { nodes: unknown[]; edges: unknown[] };
+}
+
+export async function listWorkflows(): Promise<WorkflowSummary[]> {
+  const res = await fetch("/api/workflows");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json() as { workflows: WorkflowSummary[] };
+  return data.workflows;
+}
+
+export async function getWorkflow(id: string): Promise<WorkflowRecord> {
+  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<WorkflowRecord>;
+}
+
+export async function createWorkflow(name: string): Promise<WorkflowRecord> {
+  const res = await fetch("/api/workflows", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<WorkflowRecord>;
+}
+
+export async function updateWorkflow(id: string, patch: { name?: string; graph?: unknown }): Promise<WorkflowRecord> {
+  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<WorkflowRecord>;
+}
+
+export async function deleteWorkflow(id: string): Promise<void> {
+  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
 }

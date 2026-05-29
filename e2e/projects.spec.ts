@@ -5,7 +5,7 @@ test.describe("Projects", () => {
     await page.goto("/projects");
 
     // Wait for the page to load
-    await page.waitForTimeout(1000);
+    await page.waitForLoadState("networkidle");
 
     // Cards should not have col-span-full (no inline expansion)
     const cards = page.getByTestId("project-card");
@@ -24,7 +24,7 @@ test.describe("Projects", () => {
 
   test("click card navigates to /projects/:slug", async ({ page }) => {
     await page.goto("/projects");
-    await page.waitForTimeout(1000);
+    await page.waitForLoadState("networkidle");
 
     const cards = page.getByTestId("project-card");
     const cardCount = await cards.count();
@@ -37,7 +37,7 @@ test.describe("Projects", () => {
 
   test("project detail page shows back button", async ({ page }) => {
     await page.goto("/projects");
-    await page.waitForTimeout(1000);
+    await page.waitForLoadState("networkidle");
 
     const cards = page.getByTestId("project-card");
     const cardCount = await cards.count();
@@ -53,7 +53,7 @@ test.describe("Projects", () => {
 
   test("back button returns to /projects", async ({ page }) => {
     await page.goto("/projects");
-    await page.waitForTimeout(1000);
+    await page.waitForLoadState("networkidle");
 
     const cards = page.getByTestId("project-card");
     const cardCount = await cards.count();
@@ -68,7 +68,7 @@ test.describe("Projects", () => {
 
   test("project detail page has edit fields", async ({ page }) => {
     await page.goto("/projects");
-    await page.waitForTimeout(1000);
+    await page.waitForLoadState("networkidle");
 
     const cards = page.getByTestId("project-card");
     const cardCount = await cards.count();
@@ -84,7 +84,7 @@ test.describe("Projects", () => {
 
   test("talk about this project button is visible on detail page", async ({ page }) => {
     await page.goto("/projects");
-    await page.waitForTimeout(1000);
+    await page.waitForLoadState("networkidle");
 
     const cards = page.getByTestId("project-card");
     const cardCount = await cards.count();

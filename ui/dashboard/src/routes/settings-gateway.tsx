@@ -1,8 +1,5 @@
 /**
  * Settings > Gateway — tabbed settings page (Owner, Identity, Contributing, Network).
- *
- * Channel settings (Telegram, Discord, etc.) are NOT here — they belong
- * in channel plugin settings pages, not the gateway core.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -16,14 +13,11 @@ import { IdentitySettings } from "@/components/settings/IdentitySettings.js";
 import { DevNote } from "@/components/ui/dev-notes";
 import type { AionimaConfig } from "../types.js";
 
-// s135 — the deprecated Providers tab has been removed. Canonical
-// Providers UX lives at /settings/providers (Mission Control hero,
-// range dial, escalation triggers, provider catalog shelf).
 type Tab = "general" | "identity" | "dev" | "network";
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "general", label: "General" },
-  { id: "identity", label: "Identity" },
+  { id: "identity", label: "Federation" },
   { id: "dev", label: "Contributing" },
   { id: "network", label: "Network" },
 ];
@@ -70,6 +64,11 @@ export default function SettingsGatewayPage() {
         Deprecated Providers tab removed from this page. Canonical Providers UX lives at /settings/providers
         (Mission Control hero, range dial, escalation triggers, provider catalog shelf, Models tab).
       </DevNote>
+      <DevNote heading="Cycle 262 — Channels tab removed" kind="info" scope="settings/gateway">
+        Channels tab removed from this page. Channel config, token entry, status, and workflow bindings
+        live at Settings → Channels (plugin-driven, one tab per installed channel). Gateway settings no
+        longer has a hardcoded Telegram/Discord config surface.
+      </DevNote>
       <DevNote heading="Contributing/Dev Mode gates DevNotes visibility" kind="info" scope="settings/gateway">
         Toggle "Contributing" tab → enable Dev Mode. Notes only render when this is on. Production users
         running the gateway never see DevNotes; you (with Contributing on) see them on every page+tab.
@@ -88,10 +87,12 @@ export default function SettingsGatewayPage() {
       />
 
       {/* Tab bar */}
-      <div className="flex gap-1 mb-6 border-b border-border">
+      <div role="tablist" className="flex gap-1 mb-6 border-b border-border">
         {tabs.map((tab) => (
           <button
             key={tab.id}
+            role="tab"
+            aria-selected={activeTab === tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={cn(
               "px-4 py-2 text-[13px] font-medium border-b-2 transition-colors cursor-pointer bg-transparent",

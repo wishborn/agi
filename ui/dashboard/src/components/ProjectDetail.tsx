@@ -17,6 +17,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, createProjectFile, deleteProjectFile, renameProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes, fetchIterativeWorkStatus, fetchIterativeWorkProgress, fetchNotes, updateProjectRepo } from "../api.js";
 import type { FileNode, IterativeWorkProjectStatus, IterativeWorkProgress } from "../api.js";
 import { DevNotes } from "@/components/ui/dev-notes";
+import { ProjHeader } from "@/components/ProjHeader.js";
+import { StackStrip } from "@/components/StackStrip.js";
 import type { PluginAction, PluginPanel, ProjectActivity, ProjectInfo } from "../types.js";
 import { RepoPanel } from "./RepoPanel.js";
 import { RepoManager } from "./RepoManager.js";
@@ -27,7 +29,8 @@ import { TaskmasterTab } from "./TaskmasterTab.js";
 import { PmLitePanel } from "./PmLitePanel.js";
 import { PmKanbanPanel } from "./PmKanbanPanel.js";
 import { NotesPanel } from "./NotesPanel.js";
-import { IterativeWorkTab } from "./IterativeWorkTab.js";
+import { ChannelsPanel } from "./ChannelsPanel.js";
+import { ScheduledJobsTab } from "./ScheduledJobsTab.js";
 import { MCPTab } from "./MCPTab.js";
 import { ProjectActivityTab } from "./ProjectActivityTab.js";
 import { ProjectManagement } from "./ProjectManagement.js";
@@ -41,6 +44,7 @@ import { isSacredProject } from "@/lib/sacred-projects.js";
 import { SecurityTab } from "./SecurityTab.js";
 import { MagicAppPicker } from "./MagicAppPicker.js";
 import { isDesktopServedType } from "@/lib/project-type-classifier";
+import { AionimaSystemReposPanel } from "./AionimaSystemReposPanel.js";
 
 export interface ProjectDetailProps {
   projects: ProjectInfo[];
@@ -82,7 +86,7 @@ const CANVAS_LABELS: Record<string, string> = {
   repository: "Repository",
   environment: "Environment",
   hosting: "Hosting",
-  "iterative-work": "Iterative Work",
+  "iterative-work": "Scheduled Jobs",
   mcp: "MCP",
   // s150 t637 — "magic-apps" tab dropped; MApps config now lives inside the
   // Hosting tab when type is Desktop-served. Label removed from this map.
@@ -115,13 +119,26 @@ export function ProjectDetail({
 }: ProjectDetailProps) {
   const { slug } = useParams<{ slug: string }>();
   const project = projects.find((p) => projectSlug(p.path) === slug);
-  const isSacred = project ? (isSacredProject(project) || project.projectType?.id === "aionima") : false;
-  const canViewSacred = Boolean(contributingEnabled);
-  // Core fork = provisioned by Dev Mode into the `_aionima/` collection.
-  // These get a drastically reduced UX — only Editor + Repository tabs.
-  // No hosting, no environment, no taskmaster, no plugins — they are
-  // source trees the owner submits PRs from, not deployables.
-  const isCoreFork = project?.coreCollection === "aionima" || project?.projectType?.id === "aionima";
+  // s175 (2026-05-15): include "aionima-system" in the sacred check.
+  // _aionima meta-project has type "aionima-system", not "aionima".
+  const isSacred = project ? (
+    isSacredProject(project) ||
+    project.projectType?.id === "aionima" ||
+    project.projectType?.id === "aionima-system"
+  ) : false;
+  // Owner directive 2026-05-13: _aionima (type "aionima-system") is always
+  // viewable regardless of contributing mode. Contributing mode gates only
+  // fork-population into _aionima/repos/, not card/detail visibility.
+  const canViewSacred = project?.projectType?.id === "aionima-system" || Boolean(contributingEnabled);
+  // Core fork = a fork provisioned by Dev Mode into _aionima/repos/. These
+  // get reduced UX (Editor + Repository only — no hosting, env, plugins).
+  // s175 fix: do NOT catch the _aionima container itself (coreCollection is
+  // "aionima" on the container too, but only actual forks have
+  // projectType "aionima"). Using only the type check avoids the false match.
+  const isCoreFork = project?.projectType?.id === "aionima";
+  // s179: the _aionima meta-project itself (type "aionima-system") gets a
+  // dedicated Repos/Details/Editor tab set — no stack strip, no mode picker.
+  const isAionimaContainer = project?.projectType?.id === "aionima-system";
 
   const [editName, setEditName] = useState<string | null>(null);
   // s140 cycle-169 t591 — Tynn token state removed; token now lives in
@@ -218,6 +235,9 @@ export function ProjectDetail({
     // (the system-aggregate /pm/kanban view) — per-project filtering is a
     // future phase; today the tab shows the same all-tasks view.
     "pm": "coordinate",
+    // s165 CHN-D slice 3a — Channels tab in coordinate mode (project↔room
+    // bindings list; picker dialog lands in slice 3b).
+    "channels": "coordinate",
     "security": "insight",
     "activity": "insight",
   };
@@ -229,12 +249,18 @@ export function ProjectDetail({
     }
     return TAB_MODES[tabId] === currentMode;
   };
+  // s179: default to "repos" tab for the _aionima container project.
+  useEffect(() => {
+    if (isAionimaContainer && activeTab === "details") setActiveTab("repos");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAionimaContainer]);
+
   // Auto-switch activeTab when mode changes if the current tab is no
   // longer in the active mode.
   useEffect(() => {
     if (!tabBelongsToMode(activeTab)) {
       // Find first tab in current mode (prefer the canonical first one)
-      const candidates = ["details", "files", "repository", "environment", "hosting", "iterative-work", "mcp", "taskmaster", "plans", "notes", "security", "activity"];
+      const candidates = ["details", "files", "repository", "environment", "hosting", "iterative-work", "mcp", "taskmaster", "plans", "notes", "channels", "security", "activity"];
       const firstInMode = candidates.find((id) => TAB_MODES[id] === currentMode);
       if (firstInMode) setActiveTab(firstInMode);
     }
@@ -425,6 +451,18 @@ export function ProjectDetail({
         })()}
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
         <DevNotes title="Project workspace — dev notes">
+          <DevNotes.Item kind="info" heading="s199 (2026-05-28) — ProjHeader + StackStrip + mode picker restyle">
+            ProjHeader compact bar (name, category badge, primary repo URL, hosted URL, Chat button) added
+            above mode picker. StackStrip shows Aion's live iterative-work task summary (from projectActivity)
+            between ProjHeader and mode picker — pulses when work is in flight. Mode picker restyled from
+            underline tabs to pill/segment (bg-secondary fill, rounded-md, no border-b-2).
+          </DevNotes.Item>
+          <DevNotes.Item kind="info" heading="s179 (2026-05-15) — Aionima-system container UX">
+            aionima-system project type now gets a dedicated 3-tab view (Repos | Details | Editor)
+            instead of the full mode-picker + all tabs. Stack strip and mode picker hidden.
+            AionimaSystemReposPanel shows all five core forks with ahead/behind badges,
+            a file browser toggle, and a Talk-to-project button.
+          </DevNotes.Item>
           <DevNotes.Item kind="info" heading="Cycles 144-148 — Canvas + Chat split (slice 5c phases 1-3)">
             Mockup B's flyout-shell shape is in: Canvas section header reads `Canvas · {"{tab}"}`,
             tabs sit on the left (flex-1), chat aside sits on the right (280px, lg+ only). The
@@ -455,6 +493,16 @@ export function ProjectDetail({
             individual repos, not to the project. Multi-repo single-container hosting UI extends
             with per-repo {"{config, start, dev, stack-actions}"} surfaces. Migration runs as a
             dry-run report first; no file moves until owner sign-off.
+          </DevNotes.Item>
+          <DevNotes.Item kind="info" heading="Cycle 228 — _aionima Sacred card 404 regression fixed (s175)">
+            Three stale checks caused the Sacred meta-project to render incorrectly: (1) isSacred
+            only checked for type "aionima" but _aionima gets type "aionima-system" — Sacred
+            badge/locks were absent. (2) isCoreFork checked coreCollection === "aionima" which
+            matched the container itself (not just forks inside it), rendering the reduced
+            two-tab UX instead of the full project detail. (3) canViewSacred blocked "aionima-system"
+            projects behind contributing mode. Root cause was the ESM __dirname bug (now fixed at
+            project-config-path.ts:41) which prevented project.json creation → _aionima had no
+            project type on disk → cascade of wrong detections. All three guards tightened.
           </DevNotes.Item>
         </DevNotes>
         {project.category && (
@@ -538,7 +586,7 @@ export function ProjectDetail({
           postgres + redis, so a cache-invalidation step is feasible").
           Skipped for core forks (aionima collection) since they're
           source trees, not deployable services. */}
-      {!isCoreFork && project.projectType?.hasCode && (
+      {!isCoreFork && !isAionimaContainer && project.projectType?.hasCode && (
         <div
           className="flex items-center gap-2 px-3 py-2 mb-3 rounded-md bg-indigo-500/5 border border-indigo-500/20"
           data-testid="project-stack-strip"
@@ -580,6 +628,22 @@ export function ProjectDetail({
         </div>
       )}
 
+      {/* s199 — ProjHeader: compact identity bar (name, category badge,
+          repo URL, hosted URL, Chat action) above the mode picker.
+          Skipped for core forks and aionima containers which have their
+          own restricted view without the mode picker. */}
+      {!isCoreFork && !isAionimaContainer && (
+        <ProjHeader project={project} onOpenChat={onOpenChat} />
+      )}
+
+      {/* s199 — StackStrip: Aion's active iterative-work context bar.
+          Distinct from the docker "project-stack-strip" above which shows
+          attached postgres/redis stacks. This strip shows the live task
+          summary from projectActivity and pulses when work is in flight. */}
+      {!isCoreFork && !isAionimaContainer && project.projectType?.hasCode && (
+        <StackStrip projectPath={project.path} projectActivity={projectActivity} />
+      )}
+
       {/* s134 t517 slice 2 (cycle 112) — 4-mode picker per the
           projects-ux-v2/project-workspace-v2.html mockup. Replaces
           the visual organization of the existing 11 tabs by grouping
@@ -592,22 +656,25 @@ export function ProjectDetail({
           - literature/media (content projects): hide Develop + Operate
             (no code → no editor/hosting tabs)
           - administration: hide Develop (no code)
-          - Otherwise (web/app/monorepo/ops): all 4 modes visible */}
-      {!isCoreFork && (() => {
+          - Otherwise (web/app/monorepo/ops): all 4 modes visible
+
+          s199 — mode picker restyled from underline tabs to pill/segment
+          control (bg-secondary fill on active, rounded-md, no border-b). */}
+      {!isCoreFork && !isAionimaContainer && (() => {
         const cat = project.category ?? project.projectType?.category;
         const visibleModes = computeVisibleModes(cat);
         return (
-          <div className="flex items-center gap-1 mb-3 border-b border-border" data-testid="project-mode-picker">
+          <div className="flex items-center gap-1 mb-3 mt-2" data-testid="project-mode-picker">
             {visibleModes.map((mode) => (
               <button
                 key={mode}
                 type="button"
                 onClick={() => setCurrentMode(mode)}
                 className={cn(
-                  "px-4 py-2 text-[13px] font-medium uppercase tracking-wider transition-colors cursor-pointer border-b-2",
+                  "px-3 py-1.5 rounded-md text-[12px] font-medium uppercase tracking-wider transition-colors cursor-pointer",
                   currentMode === mode
-                    ? "text-foreground border-yellow"
-                    : "text-muted-foreground border-transparent hover:text-foreground",
+                    ? "bg-secondary text-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/60",
                 )}
                 aria-pressed={currentMode === mode}
                 data-testid={`project-mode-${mode}`}
@@ -644,6 +711,13 @@ export function ProjectDetail({
             <TabsTrigger value="files">Editor</TabsTrigger>
             <TabsTrigger value="repository">Repository</TabsTrigger>
           </TabsList>
+        ) : isAionimaContainer ? (
+          // s179: _aionima meta-project — Repos | Details | Editor only
+          <TabsList>
+            <TabsTrigger value="repos" data-testid="project-tab-repos">Repos</TabsTrigger>
+            <TabsTrigger value="details">Details</TabsTrigger>
+            <TabsTrigger value="files">Editor</TabsTrigger>
+          </TabsList>
         ) : (
           <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border flex-wrap" data-testid="project-sub-surface">
             <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold whitespace-nowrap pr-1" data-testid="project-sub-surface-label">{currentMode} ›</span>
@@ -666,7 +740,7 @@ export function ProjectDetail({
               )}
               {tabBelongsToMode("iterative-work")
                 && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
-                <TabsTrigger value="iterative-work" className={SUB_PILL_CLASS} data-testid="project-tab-iterative-work">Iterative Work</TabsTrigger>
+                <TabsTrigger value="iterative-work" className={SUB_PILL_CLASS} data-testid="project-tab-iterative-work">Scheduled Jobs</TabsTrigger>
               )}
               {tabBelongsToMode("plans") && (
                 <TabsTrigger value="plans" className={SUB_PILL_CLASS} data-testid="project-tab-plans">Plans</TabsTrigger>
@@ -676,6 +750,9 @@ export function ProjectDetail({
               )}
               {tabBelongsToMode("notes") && (
                 <TabsTrigger value="notes" className={SUB_PILL_CLASS} data-testid="project-tab-notes">Notes</TabsTrigger>
+              )}
+              {tabBelongsToMode("channels") && (
+                <TabsTrigger value="channels" className={SUB_PILL_CLASS} data-testid="project-tab-channels">Channels</TabsTrigger>
               )}
               {tabBelongsToMode("taskmaster") && (
                 <TabsTrigger value="taskmaster" className={SUB_PILL_CLASS} data-testid="project-tab-taskmaster">TaskMaster</TabsTrigger>
@@ -1240,6 +1317,16 @@ export function ProjectDetail({
           </Card>
         </TabsContent>
 
+        {/* s179: _aionima container — repos overview panel */}
+        <TabsContent value="repos" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          <Card className="p-4">
+            <AionimaSystemReposPanel
+              projectPath={project.path}
+              onOpenChat={() => onOpenChat(project.path)}
+            />
+          </Card>
+        </TabsContent>
+
         <TabsContent value="repository" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <Card className="p-4">
             {isCoreFork && project?.coreForkSlug ? (
@@ -1410,9 +1497,16 @@ export function ProjectDetail({
           <NotesPanel projectPath={project.path} />
         </TabsContent>
 
+        {/* s165 CHN-D slice 3a — Channels tab. Read-only listing of
+            channel-room bindings for this project. Picker dialog lands
+            in slice 3b. */}
+        <TabsContent value="channels" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          <ChannelsPanel projectPath={project.path} />
+        </TabsContent>
+
         {(project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
           <TabsContent value="iterative-work" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-            <IterativeWorkTab project={project} />
+            <ScheduledJobsTab project={project} />
           </TabsContent>
         )}
 

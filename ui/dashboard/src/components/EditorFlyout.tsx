@@ -1,22 +1,22 @@
 /**
- * EditorFlyout — slide-in panel wrapping FileEditor with file load/save lifecycle.
+ * EditorFlyout — slide-in panel wrapping KnowledgeEditor with file load/save lifecycle.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { FlyoutPanel, FlyoutHeader, FlyoutBody, FlyoutFooter } from "@/components/ui/flyout-panel.js";
-import { FileEditor } from "@/components/FileEditor.js";
+import { KnowledgeEditor } from "@/components/KnowledgeEditor.js";
 import { fetchFile, saveFile, fetchProjectFile, saveProjectFile } from "@/api.js";
 import { useIsMobile } from "@/hooks.js";
 
 export interface EditorFlyoutProps {
   filePath: string | null; // null = closed
   onClose: () => void;
-  theme: "light" | "dark";
+  theme?: "light" | "dark";
   position?: "left" | "right";
   docked?: boolean;
 }
 
-export function EditorFlyout({ filePath, onClose, theme, position = "right", docked = false }: EditorFlyoutProps) {
+export function EditorFlyout({ filePath, onClose, position = "right", docked = false }: EditorFlyoutProps) {
   const [content, setContent] = useState("");
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
@@ -164,12 +164,10 @@ export function EditorFlyout({ filePath, onClose, theme, position = "right", doc
           </div>
         )}
         {!loading && !error && filePath && (
-          <FileEditor
+          <KnowledgeEditor
             filePath={filePath}
             content={content}
-            theme={theme}
             onChange={setDraft}
-            onSave={handleSave}
           />
         )}
       </FlyoutBody>

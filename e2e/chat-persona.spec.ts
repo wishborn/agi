@@ -12,7 +12,7 @@ test.describe("Chat flyout — persona verification", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
     // Wait for the main layout to hydrate
-    await page.waitForSelector("[data-testid='app-sidebar']", { timeout: 10_000 });
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10_000 });
   });
 
   test("header chat button is present", async ({ page }) => {

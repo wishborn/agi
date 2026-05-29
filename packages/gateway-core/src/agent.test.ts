@@ -892,45 +892,14 @@ describe("invocation-gate.ts", () => {
       expect(decision.action).toBe("invoke");
     });
 
-    it("LIMBO → action: queue", () => {
+    it("LIMBO → action: invoke (local ops unaffected by federation state)", () => {
       const decision = gateInvocation("LIMBO");
-      expect(decision.action).toBe("queue");
+      expect(decision.action).toBe("invoke");
     });
 
-    it("LIMBO → notifyEntity: true", () => {
-      const decision = gateInvocation("LIMBO");
-      expect(decision.action === "queue" && decision.notifyEntity).toBe(true);
-    });
-
-    it("LIMBO → provides a user-facing message", () => {
-      const decision = gateInvocation("LIMBO");
-      if (decision.action === "queue") {
-        expect(decision.message.length).toBeGreaterThan(0);
-      }
-    });
-
-    it("OFFLINE → action: queue", () => {
+    it("OFFLINE → action: invoke (local ops unaffected by federation state)", () => {
       const decision = gateInvocation("OFFLINE");
-      expect(decision.action).toBe("queue");
-    });
-
-    it("OFFLINE → notifyEntity: true", () => {
-      const decision = gateInvocation("OFFLINE");
-      expect(decision.action === "queue" && decision.notifyEntity).toBe(true);
-    });
-
-    it("OFFLINE → provides a user-facing message", () => {
-      const decision = gateInvocation("OFFLINE");
-      if (decision.action === "queue") {
-        expect(decision.message.length).toBeGreaterThan(0);
-      }
-    });
-
-    it("OFFLINE → reason mentions offline", () => {
-      const decision = gateInvocation("OFFLINE");
-      if (decision.action === "queue") {
-        expect(decision.reason).toContain("offline");
-      }
+      expect(decision.action).toBe("invoke");
     });
 
     it("UNKNOWN → action: log_only", () => {
