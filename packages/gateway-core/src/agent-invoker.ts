@@ -567,10 +567,7 @@ export class AgentInvoker extends EventEmitter {
 
       for (const registered of validSkills) {
         const def = registered.definition;
-        // Filter by gateway state
-        if (def.requiresState !== undefined && def.requiresState.length > 0) {
-          if (!def.requiresState.includes(state)) continue;
-        }
+        // requiresState is audit metadata only — not a skill visibility gate.
         // Check trigger patterns against user message
         for (const regex of def.compiledTriggers) {
           if (regex.test(inputText)) {
