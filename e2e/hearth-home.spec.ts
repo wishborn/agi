@@ -76,15 +76,16 @@ test.describe("HearthHome", () => {
     await expect(page.getByText("Today", { exact: true })).toBeVisible();
   });
 
-  test("NeedsYouDrawer shows all-clear when no findings", async ({ page }) => {
+  test("NeedsYouDrawer shows all-clear or findings after load", async ({ page }) => {
     await page.goto("/");
-    // Wait for the loading spinner to clear before asserting
-    await expect(page.getByText("Checking…")).toHaveCount(0, { timeout: 8000 });
     const drawer = page.locator('[data-testid="hearth-home"]');
-    // Either shows security items or the all-clear placeholder
-    const hasItems = await drawer.getByText(/Security —/).count();
-    const hasClear = await drawer.getByText(/All clear/).count();
-    expect(hasItems + hasClear).toBeGreaterThan(0);
+    // Use toBeVisible() so Playwright retries until the async fetch settles —
+    // count() is a one-shot snapshot that races with React state updates.
+    await expect(
+      drawer.getByText("All clear — nothing needs your attention right now.", { exact: false })
+        .or(drawer.getByText(/Security —/))
+        .first()
+    ).toBeVisible({ timeout: 8000 });
   });
 
   test("HearthTop is still rendered on home page", async ({ page }) => {
