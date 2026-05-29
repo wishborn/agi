@@ -70,6 +70,20 @@
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
   --radius-xl: 1rem;
+
+  /* Hearth shell — brand + agent tokens (constant, not theme-switched) */
+  --color-seed-ink: #b8960c;  /* brand gold/bronze from SeedMark gradient midpoint */
+}
+
+/* Agent highlight tokens — derived from primary so they work across all themes. */
+:root {
+  --agent-tint: color-mix(in srgb, var(--color-primary) 9%, transparent);
+  --agent-line: color-mix(in srgb, var(--color-primary) 22%, transparent);
+}
+
+@keyframes orb-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 25%, transparent); }
+  50%       { box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-primary) 10%, transparent); }
 }
 
 /* ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ import { WhoDBFlyout } from "@/components/WhoDBFlyout.js";
 import { cn, safeArray } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { AppSidebar } from "@/components/AppSidebar.js";
+import { HearthTop } from "@/components/HearthTop.js";
 import { ChatFlyout } from "@/components/ChatFlyout.js";
 import { MagicAppModal } from "@/components/MagicAppModal.js";
 import { MagicAppTray } from "@/components/MagicAppTray.js";
@@ -67,45 +67,6 @@ export interface RootContext {
   onOpenMagicApp?: (appId: string, projectPath: string) => Promise<void>;
 }
 
-/** Map pathname prefix to page title. */
-function getPageTitle(pathname: string): string {
-  if (pathname === "/" || pathname === "") return "Overview";
-  if (pathname === "/coa") return "COA Explorer";
-  if (pathname.startsWith("/entity/")) return "Entity Profile";
-  if (pathname.startsWith("/projects/") && pathname !== "/projects") return "Project Detail";
-  if (pathname === "/projects") return "Projects";
-  // Knowledge
-  if (pathname === "/knowledge") return "Knowledge";
-  // Gateway
-  if (pathname === "/gateway/plugins") return "Plugins";
-  if (pathname === "/gateway/workflows") return "Workflows";
-  if (pathname === "/gateway/logs") return "Logs";
-  if (pathname === "/gateway/marketplace") return "Marketplace";
-  // Settings
-  if (pathname.startsWith("/settings")) return "Settings";
-  // System
-  if (pathname === "/admin") return "Admin Dashboard";
-  if (pathname === "/hf-marketplace") return "HF Models";
-  if (pathname === "/system") return "Resources";
-  if (pathname === "/system/services") return "Services";
-  if (pathname === "/system/admin") return "Admin";
-  if (pathname === "/system/changelog") return "Changelog";
-  if (pathname === "/system/incidents") return "Incidents";
-  if (pathname === "/system/vendors") return "Vendors";
-  if (pathname === "/system/backups") return "Backups";
-  if (pathname === "/settings/security") return "Security Settings";
-  // Communication
-  if (pathname === "/comms") return "Communications";
-  if (pathname === "/comms/telegram") return "Telegram";
-  if (pathname === "/comms/discord") return "Discord";
-  if (pathname === "/comms/gmail") return "Gmail";
-  if (pathname === "/comms/signal") return "Signal";
-  if (pathname === "/comms/whatsapp") return "WhatsApp";
-  // Reports
-  if (pathname === "/reports") return "Reports";
-  if (pathname.startsWith("/reports/")) return "Report Detail";
-  return "Aionima";
-}
 
 export default function RootLayout() {
   const { themeId, setTheme, themes } = useTheme();
@@ -143,7 +104,6 @@ export default function RootLayout() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isMobile = useIsMobile();
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [timelineBucket, setTimelineBucket] = useState<TimeBucket>("day");
   const [liveActivity, setLiveActivity] = useState<ActivityEntry[]>([]);
   const [chatOpen, setChatOpen] = useState(false);
@@ -543,7 +503,6 @@ export default function RootLayout() {
     return null;
   }
 
-  const pageTitle = getPageTitle(location.pathname);
 
   const ctx: RootContext = {
     theme,
@@ -574,36 +533,19 @@ export default function RootLayout() {
   };
 
   return (
-    <div className="h-screen bg-background text-foreground font-sans flex overflow-hidden">
+    <div className="h-screen bg-background text-foreground font-sans flex flex-col overflow-hidden">
       <SafemodeGuard />
-      {/* Sidebar */}
-      <AppSidebar
-        isMobile={isMobile}
-        mobileOpen={mobileNavOpen}
-        onMobileClose={() => setMobileNavOpen(false)}
-        hfEnabled={Boolean((configHook.data as Record<string, unknown> | undefined)?.hf && ((configHook.data as Record<string, unknown>).hf as Record<string, unknown>)?.enabled)}
-      />
-
-      {/* Main column */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Slim top bar */}
-        <header className="flex items-center justify-between px-3 md:px-6 py-2 md:py-3 bg-card border-b border-border sticky top-0 z-[100]">
-          <div className="flex items-center gap-4">
-            {isMobile && (
-              <button
-                onClick={() => setMobileNavOpen(true)}
-                className="p-2 rounded-lg hover:bg-secondary text-foreground min-w-[44px] min-h-[44px] flex items-center justify-center"
-                aria-label="Open navigation"
-              >
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-                </svg>
-              </button>
-            )}
-            <h1 className="text-base md:text-lg font-bold text-foreground">{pageTitle}</h1>
-            {!isMobile && <ConnectionIndicator />}
-          </div>
+      <HearthTop
+        workspaces={[
+          { name: "Home", color: "#10b981" },
+          ...((configHook.data as { organization?: { name?: string } } | undefined)?.organization?.name
+            ? [{ name: (configHook.data as { organization?: { name?: string } }).organization!.name!, color: "#6366f1" }]
+            : []),
+        ]}
+        activeIndex={0}
+        rightContent={
           <div className="flex gap-2 items-center">
+            <ConnectionIndicator />
             {!isMobile && contributingEnabled && (
               <Badge className="text-xs bg-indigo-600 text-white">Contributing</Badge>
             )}
@@ -857,7 +799,11 @@ export default function RootLayout() {
               );
             })()}
           </div>
-        </header>
+        }
+      />
+
+      {/* Content area */}
+      <div className="flex-1 flex flex-col min-w-0">
 
         {/* DNS setup notice */}
         {hostingHook.status?.dnsmasq?.running && (

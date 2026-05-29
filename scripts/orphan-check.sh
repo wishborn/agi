@@ -50,6 +50,9 @@ ALLOWLIST=(
   "components/ui/table.tsx"
   "components/ui/dropdown-menu.tsx"
   "components/ui/panel-trigger.tsx"
+  # s196 Hearth shell — hand-rolled PAx placeholder; consumed by
+  # HearthChatPane (s198). Delete after PAx PR merges upstream.
+  "components/Orb.tsx"
 )
 
 is_allowlisted() {
