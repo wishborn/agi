@@ -1,88 +1,96 @@
 import { test, expect } from "@playwright/test";
 
 /**
- * Sidebar navigation and route redirect e2e tests.
+ * Navigation e2e tests — Hearth shell (WorkspaceChip dropdown).
  *
- * Locator strategy: Sidebar.Item (react-fancy) does NOT forward data-testid
- * to the DOM. All nav-item clicks use sidebar.getByRole("button", { name })
- * scoped to the app-sidebar wrapper. Section labels (Sidebar.Group) render
- * as paragraph elements — checked via getByText within the sidebar scope.
+ * Navigation is through the WorkspaceChip dropdown in HearthTop.
+ * Main nav items are links in the "Main" tab; admin nav items are in
+ * the "Admin" tab. The chip trigger has data-testid="workspace-chip";
+ * the dropdown has data-testid="workspace-chip-dropdown".
+ *
+ * s196 — updated from sidebar-based navigation to WorkspaceChip navigation.
  */
 
-test.describe("Sidebar Navigation", () => {
-  test("sidebar is visible with main-mode sections", async ({ page }) => {
+async function openChip(page: import("@playwright/test").Page) {
+  await page.getByTestId("workspace-chip").click();
+  await expect(page.getByTestId("workspace-chip-dropdown")).toBeVisible();
+}
+
+async function navigateTo(page: import("@playwright/test").Page, label: string) {
+  await openChip(page);
+  await page.getByTestId("workspace-chip-dropdown").getByRole("link", { name: label }).click();
+}
+
+async function navigateToAdmin(page: import("@playwright/test").Page, label: string) {
+  await openChip(page);
+  const dropdown = page.getByTestId("workspace-chip-dropdown");
+  await dropdown.getByRole("button", { name: "Admin" }).click();
+  await dropdown.getByRole("link", { name: label }).click();
+}
+
+test.describe("WorkspaceChip Navigation", () => {
+  test("workspace chip is visible on load", async ({ page }) => {
     await page.goto("/");
-    const sidebar = page.getByTestId("app-sidebar");
-    await expect(sidebar).toBeVisible();
-
-    // Sidebar.Group renders section labels as <p class="...uppercase..."> elements.
-    // Use locator("p.uppercase") to target section headers specifically — avoids
-    // substring collisions where nav items share words with section titles.
-    await expect(sidebar.locator("p.uppercase", { hasText: "Overview" })).toBeVisible();
-    await expect(sidebar.locator("p.uppercase", { hasText: "Projects" })).toBeVisible();
-    await expect(sidebar.locator("p.uppercase", { hasText: "MagicApps" })).toBeVisible();
-    await expect(sidebar.locator("p.uppercase", { hasText: "Communication" })).toBeVisible();
-    await expect(sidebar.locator("p.uppercase", { hasText: "Knowledge" })).toBeVisible();
-
-    // Admin sections must not appear in main mode
-    await expect(sidebar.locator("p.uppercase", { hasText: "Gateway" })).toHaveCount(0);
-    await expect(sidebar.locator("p.uppercase", { hasText: "System" })).toHaveCount(0);
+    await expect(page.getByTestId("workspace-chip")).toBeVisible();
   });
 
-  test("admin mode shows admin sections when at admin URL", async ({ page }) => {
-    await page.goto("/gateway/logs");
-    const sidebar = page.getByTestId("app-sidebar");
-
-    await expect(sidebar.locator("p.uppercase", { hasText: "Marketplace" })).toBeVisible();
-    await expect(sidebar.locator("p.uppercase", { hasText: "Gateway" })).toBeVisible();
-    await expect(sidebar.locator("p.uppercase", { hasText: "System" })).toBeVisible();
-
-    // Main-mode section labels absent in admin mode (MagicApps still appears as
-    // a nav item under Marketplace, but NOT as a section label <p.uppercase>)
-    await expect(sidebar.locator("p.uppercase", { hasText: "Projects" })).toHaveCount(0);
-    await expect(sidebar.locator("p.uppercase", { hasText: "MagicApps" })).toHaveCount(0);
+  test("clicking chip opens dropdown", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("workspace-chip").click();
+    await expect(page.getByTestId("workspace-chip-dropdown")).toBeVisible();
   });
 
-  test("clicking main-mode nav items navigates correctly", async ({ page }) => {
+  test("main tab shows main nav sections", async ({ page }) => {
     await page.goto("/");
-    const sidebar = page.getByTestId("app-sidebar");
+    await openChip(page);
+    const dropdown = page.getByTestId("workspace-chip-dropdown");
+    await expect(dropdown.getByText("Overview", { exact: true })).toBeVisible();
+    await expect(dropdown.getByText("Projects", { exact: true })).toBeVisible();
+    await expect(dropdown.getByText("Communication", { exact: true })).toBeVisible();
+    await expect(dropdown.getByText("Knowledge", { exact: true })).toBeVisible();
+  });
 
-    await sidebar.getByRole("button", { name: "COA Explorer" }).click();
+  test("admin tab shows admin nav sections", async ({ page }) => {
+    await page.goto("/");
+    await openChip(page);
+    const dropdown = page.getByTestId("workspace-chip-dropdown");
+    await dropdown.getByRole("button", { name: "Admin" }).click();
+    await expect(dropdown.getByText("Gateway", { exact: true })).toBeVisible();
+    await expect(dropdown.getByText("System", { exact: true })).toBeVisible();
+    await expect(dropdown.getByText("Marketplace", { exact: true })).toBeVisible();
+  });
+
+  test("clicking main nav item navigates and closes dropdown", async ({ page }) => {
+    await page.goto("/");
+    await navigateTo(page, "COA Explorer");
     await expect(page).toHaveURL("/coa");
-
-    await sidebar.getByRole("button", { name: "All Projects" }).click();
-    await expect(page).toHaveURL("/projects");
-
-    await sidebar.getByRole("button", { name: "All Messages" }).click();
-    await expect(page).toHaveURL("/comms");
-
-    // Dashboard item has exact: true — navigates back to root
-    await sidebar.getByRole("button", { name: "Dashboard" }).click();
-    await expect(page).toHaveURL("/");
+    await expect(page.getByTestId("workspace-chip-dropdown")).toHaveCount(0);
   });
 
-  test("Admin button switches to admin mode and navigates to /admin", async ({ page }) => {
+  test("All Projects navigates to /projects", async ({ page }) => {
     await page.goto("/");
-    const sidebar = page.getByTestId("app-sidebar");
-    await sidebar.getByRole("button", { name: "Admin" }).click();
-    await expect(page).toHaveURL("/admin");
-    await expect(sidebar.getByText("Gateway")).toBeVisible();
-    await expect(sidebar.getByRole("button", { name: "Back", exact: true })).toBeVisible();
+    await navigateTo(page, "All Projects");
+    await expect(page).toHaveURL("/projects");
   });
 
-  test("Back button from admin mode returns to main mode", async ({ page }) => {
-    await page.goto("/admin");
-    const sidebar = page.getByTestId("app-sidebar");
-    await expect(sidebar.getByRole("button", { name: "Back", exact: true })).toBeVisible();
-    await sidebar.getByRole("button", { name: "Back", exact: true }).click();
+  test("All Messages navigates to /comms", async ({ page }) => {
+    await page.goto("/");
+    await navigateTo(page, "All Messages");
+    await expect(page).toHaveURL("/comms");
+  });
+
+  test("Dashboard item navigates to /", async ({ page }) => {
+    await page.goto("/coa");
+    await navigateTo(page, "Dashboard");
     await expect(page).toHaveURL("/");
-    await expect(sidebar.locator("p.uppercase", { hasText: "Projects" })).toBeVisible();
   });
 
-  test("catch-all redirects unknown URLs to home", async ({ page }) => {
-    await page.goto("/nonexistent-page");
-    // PluginPageResolver shows loading then redirects home when no plugin matches
-    await expect(page).toHaveURL("/", { timeout: 5000 });
+  test("backdrop click closes dropdown", async ({ page }) => {
+    await page.goto("/");
+    await openChip(page);
+    // Click on the backdrop div (covers full screen behind dropdown)
+    await page.mouse.click(800, 400);
+    await expect(page.getByTestId("workspace-chip-dropdown")).toHaveCount(0);
   });
 
   test("chat button in header opens ChatFlyout", async ({ page }) => {
@@ -94,16 +102,27 @@ test.describe("Sidebar Navigation", () => {
   });
 });
 
-test.describe("Settings Navigation", () => {
-  test("Settings item in admin sidebar navigates to settings", async ({ page }) => {
-    // Navigate to an admin URL first so sidebar is in admin mode
-    await page.goto("/gateway/logs");
-    const sidebar = page.getByTestId("app-sidebar");
-    // Settings is the last item in System section → /settings → redirects to /settings/gateway
-    await sidebar.getByRole("button", { name: "Settings" }).click();
+test.describe("Admin Navigation", () => {
+  test("admin tab Workflows link navigates to /gateway/workflows", async ({ page }) => {
+    await page.goto("/");
+    await navigateToAdmin(page, "Workflows");
+    await expect(page).toHaveURL("/gateway/workflows");
+  });
+
+  test("admin tab Settings link navigates to /settings", async ({ page }) => {
+    await page.goto("/");
+    await navigateToAdmin(page, "Settings");
     await expect(page).toHaveURL("/settings/gateway");
   });
 
+  test("admin tab Plugins link navigates to /gateway/marketplace", async ({ page }) => {
+    await page.goto("/");
+    await navigateToAdmin(page, "Plugins");
+    await expect(page).toHaveURL("/gateway/marketplace");
+  });
+});
+
+test.describe("Settings Navigation", () => {
   test("/settings redirects to /settings/gateway", async ({ page }) => {
     await page.goto("/settings");
     await expect(page).toHaveURL("/settings/gateway");
@@ -115,49 +134,35 @@ test.describe("Settings Navigation", () => {
   });
 });
 
-test.describe("Gateway Section", () => {
-  test("Plugins link in admin sidebar navigates to marketplace", async ({ page }) => {
-    await page.goto("/gateway/logs");
-    const sidebar = page.getByTestId("app-sidebar");
-    // "Plugins" is the Marketplace section item → /gateway/marketplace (direct, no redirect needed)
-    await sidebar.getByRole("button", { name: "Plugins" }).click();
-    await expect(page).toHaveURL("/gateway/marketplace");
-  });
-
-  test("Marketplace page shows Browse/Installed/Sources tabs", async ({ page }) => {
-    await page.goto("/gateway/marketplace");
-    // role="tablist" + role="tab" added to marketplace.tsx tab bar to scope away from
-    // sidebar "Resources" button (substring "Sources" ⊂ "Resources" without scoping)
-    const tablist = page.getByRole("tablist");
-    await expect(tablist.getByRole("tab", { name: "Browse" })).toBeVisible();
-    await expect(tablist.getByRole("tab", { name: "Installed" })).toBeVisible();
-    await expect(tablist.getByRole("tab", { name: "Sources" })).toBeVisible();
-  });
-});
-
 test.describe("Communication Section", () => {
-  test("Communication section links navigate correctly", async ({ page }) => {
+  test("Pending Identity link navigates to /identity/pending", async ({ page }) => {
     await page.goto("/");
-    const sidebar = page.getByTestId("app-sidebar");
-
-    await sidebar.getByRole("button", { name: "All Messages" }).click();
-    await expect(page).toHaveURL("/comms");
-
-    await sidebar.getByRole("button", { name: "Pending Identity" }).click();
+    await navigateTo(page, "Pending Identity");
     await expect(page).toHaveURL("/identity/pending");
   });
 });
 
 test.describe("Knowledge Section", () => {
-  test("Knowledge section links navigate correctly", async ({ page }) => {
+  test("Browse link navigates to /knowledge", async ({ page }) => {
     await page.goto("/");
-    const sidebar = page.getByTestId("app-sidebar");
-
-    await sidebar.getByRole("button", { name: "Browse" }).click();
+    await navigateTo(page, "Browse");
     await expect(page).toHaveURL("/knowledge");
+  });
 
-    await sidebar.getByRole("button", { name: "Documentation" }).click();
+  test("Documentation link navigates to /docs", async ({ page }) => {
+    await page.goto("/");
+    await navigateTo(page, "Documentation");
     await expect(page).toHaveURL("/docs");
+  });
+});
+
+test.describe("Gateway Section", () => {
+  test("Marketplace page shows Browse/Installed/Sources tabs", async ({ page }) => {
+    await page.goto("/gateway/marketplace");
+    const tablist = page.getByRole("tablist");
+    await expect(tablist.getByRole("tab", { name: "Browse" })).toBeVisible();
+    await expect(tablist.getByRole("tab", { name: "Installed" })).toBeVisible();
+    await expect(tablist.getByRole("tab", { name: "Sources" })).toBeVisible();
   });
 });
 
@@ -180,5 +185,10 @@ test.describe("Old Route Redirects", () => {
   test("/system/comms redirects to /comms", async ({ page }) => {
     await page.goto("/system/comms");
     await expect(page).toHaveURL("/comms");
+  });
+
+  test("catch-all redirects unknown URLs to home", async ({ page }) => {
+    await page.goto("/nonexistent-page");
+    await expect(page).toHaveURL("/", { timeout: 5000 });
   });
 });

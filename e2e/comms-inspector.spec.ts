@@ -36,7 +36,7 @@ test.describe("s199 — 3-panel Communications workspace shell", () => {
       await page.goto(route);
       await page.waitForLoadState("domcontentloaded");
       // Sidebar presence confirms CommsLayout rendered without crash
-      await expect(page.getByTestId("app-sidebar")).toBeVisible();
+      await expect(page.getByTestId("hearth-top")).toBeVisible();
       await expect(page).toHaveURL(route);
     }
 
@@ -47,7 +47,7 @@ test.describe("s199 — 3-panel Communications workspace shell", () => {
     for (const route of COMMS_ROUTES) {
       await page.goto(route);
       await page.waitForLoadState("domcontentloaded");
-      await expect(page.getByTestId("app-sidebar")).toBeVisible();
+      await expect(page.getByTestId("hearth-top")).toBeVisible();
       await expect(page.getByTestId("inspector-panel")).toHaveCount(0);
     }
   });
@@ -55,7 +55,7 @@ test.describe("s199 — 3-panel Communications workspace shell", () => {
   test("clicking a thread card opens Message Detail inspector", async ({ page }) => {
     await page.goto("/comms");
     await page.waitForLoadState("domcontentloaded");
-    await expect(page.getByTestId("app-sidebar")).toBeVisible();
+    await expect(page.getByTestId("hearth-top")).toBeVisible();
 
     const cards = page.getByTestId("thread-card");
     const count = await cards.count();
@@ -73,7 +73,7 @@ test.describe("s199 — 3-panel Communications workspace shell", () => {
   test("close button dismisses inspector and restores layout", async ({ page }) => {
     await page.goto("/comms");
     await page.waitForLoadState("domcontentloaded");
-    await expect(page.getByTestId("app-sidebar")).toBeVisible();
+    await expect(page.getByTestId("hearth-top")).toBeVisible();
 
     const cards = page.getByTestId("thread-card");
     const count = await cards.count();
@@ -92,7 +92,7 @@ test.describe("s199 — 3-panel Communications workspace shell", () => {
   test("clicking a flag row opens Flag Detail inspector", async ({ page }) => {
     await page.goto("/comms/moderation");
     await page.waitForLoadState("domcontentloaded");
-    await expect(page.getByTestId("app-sidebar")).toBeVisible();
+    await expect(page.getByTestId("hearth-top")).toBeVisible();
 
     const rows = page.getByTestId("flag-row");
     const count = await rows.count();
@@ -110,7 +110,7 @@ test.describe("s199 — 3-panel Communications workspace shell", () => {
   test("clicking an activity event opens Event Detail inspector", async ({ page }) => {
     await page.goto("/comms/activity");
     await page.waitForLoadState("domcontentloaded");
-    await expect(page.getByTestId("app-sidebar")).toBeVisible();
+    await expect(page.getByTestId("hearth-top")).toBeVisible();
 
     const rows = page.getByTestId("event-row");
     const count = await rows.count();

@@ -24,7 +24,7 @@ interface HearthTopProps {
 
 export function HearthTop({ workspaces, activeIndex, rightContent }: HearthTopProps) {
   return (
-    <header className="h-12 flex items-center gap-3 px-4 border-b border-border sticky top-0 z-[100] bg-card shrink-0">
+    <header data-testid="hearth-top" className="h-12 flex items-center gap-3 px-4 border-b border-border sticky top-0 z-[100] bg-card shrink-0">
       <SeedMark size={22} />
       <span className="font-semibold text-sm tracking-tight select-none">Aionima</span>
       <WorkspaceChip workspaces={workspaces} activeIndex={activeIndex} />

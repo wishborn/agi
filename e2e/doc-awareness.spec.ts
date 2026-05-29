@@ -59,7 +59,7 @@ test.describe("Doc awareness — search_docs + lookup_doc (s197)", () => {
   test("dashboard renders without JS errors on /", async ({ page }) => {
     await page.goto("/");
     await page.waitForLoadState("domcontentloaded");
-    await expect(page.getByTestId("app-sidebar")).toBeVisible();
+    await expect(page.getByTestId("hearth-top")).toBeVisible();
 
     const jsErrors: string[] = [];
     page.on("console", (msg) => {

@@ -134,6 +134,7 @@ export function WorkspaceChip({ workspaces, activeIndex }: WorkspaceChipProps) {
     <div className="relative">
       <button
         onClick={() => setOpen((p) => !p)}
+        data-testid="workspace-chip"
         className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border bg-card hover:bg-secondary transition-colors text-sm"
         aria-haspopup="true"
         aria-expanded={open}
@@ -153,7 +154,7 @@ export function WorkspaceChip({ workspaces, activeIndex }: WorkspaceChipProps) {
           {/* backdrop */}
           <div className="fixed inset-0 z-[190]" onClick={() => setOpen(false)} />
 
-          <div className="absolute left-0 top-[calc(100%+6px)] z-[200] w-[280px] bg-popover border border-border rounded-xl shadow-lg overflow-hidden">
+          <div data-testid="workspace-chip-dropdown" className="absolute left-0 top-[calc(100%+6px)] z-[200] w-[280px] bg-popover border border-border rounded-xl shadow-lg overflow-hidden">
             {/* workspace switcher */}
             <div className="p-2 border-b border-border">
               <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-1 mb-1.5">Workspace</div>
