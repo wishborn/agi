@@ -17,6 +17,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, createProjectFile, deleteProjectFile, renameProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes, fetchIterativeWorkStatus, fetchIterativeWorkProgress, fetchNotes, updateProjectRepo } from "../api.js";
 import type { FileNode, IterativeWorkProjectStatus, IterativeWorkProgress } from "../api.js";
 import { DevNotes } from "@/components/ui/dev-notes";
+import { ProjHeader } from "@/components/ProjHeader.js";
+import { StackStrip } from "@/components/StackStrip.js";
 import type { PluginAction, PluginPanel, ProjectActivity, ProjectInfo } from "../types.js";
 import { RepoPanel } from "./RepoPanel.js";
 import { RepoManager } from "./RepoManager.js";
@@ -449,6 +451,12 @@ export function ProjectDetail({
         })()}
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
         <DevNotes title="Project workspace — dev notes">
+          <DevNotes.Item kind="info" heading="s199 (2026-05-28) — ProjHeader + StackStrip + mode picker restyle">
+            ProjHeader compact bar (name, category badge, primary repo URL, hosted URL, Chat button) added
+            above mode picker. StackStrip shows Aion's live iterative-work task summary (from projectActivity)
+            between ProjHeader and mode picker — pulses when work is in flight. Mode picker restyled from
+            underline tabs to pill/segment (bg-secondary fill, rounded-md, no border-b-2).
+          </DevNotes.Item>
           <DevNotes.Item kind="info" heading="s179 (2026-05-15) — Aionima-system container UX">
             aionima-system project type now gets a dedicated 3-tab view (Repos | Details | Editor)
             instead of the full mode-picker + all tabs. Stack strip and mode picker hidden.
@@ -620,6 +628,22 @@ export function ProjectDetail({
         </div>
       )}
 
+      {/* s199 — ProjHeader: compact identity bar (name, category badge,
+          repo URL, hosted URL, Chat action) above the mode picker.
+          Skipped for core forks and aionima containers which have their
+          own restricted view without the mode picker. */}
+      {!isCoreFork && !isAionimaContainer && (
+        <ProjHeader project={project} onOpenChat={onOpenChat} />
+      )}
+
+      {/* s199 — StackStrip: Aion's active iterative-work context bar.
+          Distinct from the docker "project-stack-strip" above which shows
+          attached postgres/redis stacks. This strip shows the live task
+          summary from projectActivity and pulses when work is in flight. */}
+      {!isCoreFork && !isAionimaContainer && project.projectType?.hasCode && (
+        <StackStrip projectPath={project.path} projectActivity={projectActivity} />
+      )}
+
       {/* s134 t517 slice 2 (cycle 112) — 4-mode picker per the
           projects-ux-v2/project-workspace-v2.html mockup. Replaces
           the visual organization of the existing 11 tabs by grouping
@@ -632,22 +656,25 @@ export function ProjectDetail({
           - literature/media (content projects): hide Develop + Operate
             (no code → no editor/hosting tabs)
           - administration: hide Develop (no code)
-          - Otherwise (web/app/monorepo/ops): all 4 modes visible */}
+          - Otherwise (web/app/monorepo/ops): all 4 modes visible
+
+          s199 — mode picker restyled from underline tabs to pill/segment
+          control (bg-secondary fill on active, rounded-md, no border-b). */}
       {!isCoreFork && !isAionimaContainer && (() => {
         const cat = project.category ?? project.projectType?.category;
         const visibleModes = computeVisibleModes(cat);
         return (
-          <div className="flex items-center gap-1 mb-3 border-b border-border" data-testid="project-mode-picker">
+          <div className="flex items-center gap-1 mb-3 mt-2" data-testid="project-mode-picker">
             {visibleModes.map((mode) => (
               <button
                 key={mode}
                 type="button"
                 onClick={() => setCurrentMode(mode)}
                 className={cn(
-                  "px-4 py-2 text-[13px] font-medium uppercase tracking-wider transition-colors cursor-pointer border-b-2",
+                  "px-3 py-1.5 rounded-md text-[12px] font-medium uppercase tracking-wider transition-colors cursor-pointer",
                   currentMode === mode
-                    ? "text-foreground border-yellow"
-                    : "text-muted-foreground border-transparent hover:text-foreground",
+                    ? "bg-secondary text-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/60",
                 )}
                 aria-pressed={currentMode === mode}
                 data-testid={`project-mode-${mode}`}
