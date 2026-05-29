@@ -84,7 +84,7 @@ interface ChannelExtConfig {
     user?: boolean;
     thread?: boolean;
   };
-  promptOverride?: string;
+  promptAddendum?: string;
 }
 
 const DISCORD_VISUAL_FIELDS = new Set([
@@ -589,13 +589,13 @@ function ChannelDetailPanel({ channel, mode, extConfig, onModeChange, onExtConfi
         </div>
       </div>
 
-      {/* Prompt override */}
+      {/* Prompt addendum */}
       <div>
-        <div className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Prompt override</div>
+        <div className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Prompt addendum</div>
         <textarea
-          value={extConfig.promptOverride ?? ""}
-          onChange={(e) => onExtConfigChange({ ...extConfig, promptOverride: e.target.value })}
-          placeholder={"Channel-scoped system prompt (optional)…\nAppended to the base system prompt for messages in this channel."}
+          value={extConfig.promptAddendum ?? ""}
+          onChange={(e) => onExtConfigChange({ ...extConfig, promptAddendum: e.target.value })}
+          placeholder={"Channel-specific context appended to Aion's base identity (optional)…\nAion's core is unchanged — this text is added at the end of the system prompt."}
           rows={4}
           className="w-full rounded-lg border border-border bg-input text-[12px] text-foreground placeholder:text-muted-foreground/50 px-3 py-2 font-mono resize-y focus:outline-none focus:ring-1 focus:ring-ring"
         />

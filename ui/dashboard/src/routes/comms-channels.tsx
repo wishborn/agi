@@ -410,7 +410,7 @@ function EscalationCard({ rules, onChange }: { rules: EscalationRule[]; onChange
 }
 
 // ---------------------------------------------------------------------------
-// Prompt override — Textarea from PAx, Input for inline fields
+// Prompt addendum — Textarea from PAx, Input for inline fields
 // ---------------------------------------------------------------------------
 
 function PromptCard({ system, tone, refuse, temp, maxTurn, onChange }: {
@@ -420,7 +420,7 @@ function PromptCard({ system, tone, refuse, temp, maxTurn, onChange }: {
   return (
     <div className="space-y-3">
       <div>
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">System</div>
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Channel addendum</div>
         <Textarea
           value={system}
           onChange={(e) => onChange({ promptSystem: e.target.value })}
@@ -782,7 +782,7 @@ export default function CommsChannelsPage() {
             </ConfigCard>
 
             <ConfigCard
-              title="Prompt override"
+              title="Prompt addendum"
               right={<Badge color="violet" variant="soft" size="sm">channel-scoped</Badge>}
             >
               <PromptCard
