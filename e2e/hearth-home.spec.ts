@@ -67,7 +67,8 @@ test.describe("HearthHome", () => {
 
   test("NeedsYouDrawer renders on root route", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText(/Needs you/i)).toBeVisible();
+    // Use exact match — "/Needs you/i" regex also matches "needs your" in the all-clear body text
+    await expect(page.getByText("Needs you", { exact: true })).toBeVisible();
   });
 
   test("NeedsYouDrawer has Today section", async ({ page }) => {
@@ -77,10 +78,10 @@ test.describe("HearthHome", () => {
 
   test("NeedsYouDrawer shows all-clear when no findings", async ({ page }) => {
     await page.goto("/");
-    // Wait for async fetch to settle (loading → result)
-    await page.waitForTimeout(500);
+    // Wait for the loading spinner to clear before asserting
+    await expect(page.getByText("Checking…")).toHaveCount(0, { timeout: 8000 });
     const drawer = page.locator('[data-testid="hearth-home"]');
-    // Either shows items or the all-clear placeholder
+    // Either shows security items or the all-clear placeholder
     const hasItems = await drawer.getByText(/Security —/).count();
     const hasClear = await drawer.getByText(/All clear/).count();
     expect(hasItems + hasClear).toBeGreaterThan(0);
