@@ -14,6 +14,8 @@ import { cn, safeArray } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { HearthTop } from "@/components/HearthTop.js";
+import { HearthChatPane } from "@/components/HearthChatPane.js";
+import { useFocusedRoute } from "@/hooks/useFocusedRoute.js";
 import { ChatFlyout } from "@/components/ChatFlyout.js";
 import { MagicAppModal } from "@/components/MagicAppModal.js";
 import { MagicAppTray } from "@/components/MagicAppTray.js";
@@ -89,6 +91,26 @@ export default function RootLayout() {
 
   const location = useLocation();
   const navigate = useNavigate();
+  const isFocused = useFocusedRoute();
+
+  // Derive context title/sub for HearthChatPane from the current route
+  const focusedContext = (() => {
+    const projectMatch = location.pathname.match(/^\/projects\/([^/]+)/);
+    if (projectMatch) {
+      const slug = decodeURIComponent(projectMatch[1]);
+      const project = projectsHook.projects.find((p) => p.path === slug);
+      return { title: project?.name ?? slug, sub: project?.category ?? "Project" };
+    }
+    const commsMatch = location.pathname.match(/^\/comms\/([^/]+)/);
+    if (commsMatch) {
+      const channel = commsMatch[1];
+      return { title: channel.charAt(0).toUpperCase() + channel.slice(1), sub: "Channel" };
+    }
+    if (location.pathname.startsWith("/comms")) {
+      return { title: "Messages", sub: "All channels" };
+    }
+    return { title: "", sub: "" };
+  })();
 
   // FIRSTBOOT check — redirect to onboarding if not completed
   useEffect(() => {
@@ -832,6 +854,23 @@ export default function RootLayout() {
               notifications={notifications}
               docked
             />
+          </div>
+        ) : isFocused ? (
+          // Focused canvas mode (s198): 38/62 split — chat pane left, canvas right
+          <div
+            className="flex-1 min-h-0 overflow-hidden grid"
+            style={{ gridTemplateColumns: "38fr 62fr" }}
+            data-testid="hearth-focused-layout"
+          >
+            <HearthChatPane
+              contextTitle={focusedContext.title}
+              contextSub={focusedContext.sub}
+              onSendMessage={(msg) => handleOpenChatWithMessage(focusedContext.title, msg)}
+            />
+            <main className="flex-1 min-h-0 flex flex-col overflow-hidden" data-testid="hearth-canvas">
+              <RouteDevNotes />
+              <Outlet context={ctx} />
+            </main>
           </div>
         ) : (
           // Normal mode: content area with flyout overlays
