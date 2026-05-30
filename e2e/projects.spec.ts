@@ -1,5 +1,34 @@
 import { test, expect } from "@playwright/test";
 
+test.describe("Projects — direct navigation regression (v0.4.864)", () => {
+  // Regression: /projects/:slug crashed with ReferenceError when projectActivity
+  // was in ProjectDetailProps but missing from function destructuring (v0.4.863).
+  // These tests bypass the card-click path and navigate directly to the URL.
+
+  test("direct navigation to /projects/sample-monorepo does not crash", async ({ page }) => {
+    await page.goto("/projects/sample-monorepo", { waitUntil: "domcontentloaded" });
+    await expect(page).toHaveURL(/\/projects\/sample-monorepo(\?|#|$)/, { timeout: 10_000 });
+
+    // ErrorBoundary renders "Something went wrong" on a crash — must NOT appear
+    await expect(page.getByText(/something went wrong/i)).not.toBeVisible({ timeout: 8_000 });
+
+    // ProjectDetail renders — back button is the cheapest structural check
+    await expect(page.getByText("Back to Projects")).toBeVisible({ timeout: 10_000 });
+  });
+
+  test("project detail page renders without JS errors on direct load", async ({ page }) => {
+    const jsErrors: string[] = [];
+    page.on("pageerror", (err) => jsErrors.push(err.message));
+
+    await page.goto("/projects/sample-monorepo", { waitUntil: "networkidle" });
+    await expect(page).toHaveURL(/\/projects\/sample-monorepo(\?|#|$)/);
+
+    // Filter to ReferenceErrors which were the failure mode (projectActivity not defined)
+    const refErrors = jsErrors.filter((m) => /ReferenceError/i.test(m));
+    expect(refErrors).toHaveLength(0);
+  });
+});
+
 test.describe("Projects", () => {
   test("projects grid renders compact cards", async ({ page }) => {
     await page.goto("/projects");
