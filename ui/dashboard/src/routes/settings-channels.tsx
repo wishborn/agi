@@ -96,17 +96,6 @@ function parseIds(v: unknown): string[] {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function statusColor(status: string): string {
-  if (status === "running") return "bg-emerald-500";
-  if (status === "error") return "bg-red-500";
-  if (status === "starting" || status === "stopping") return "bg-amber-400";
-  return "bg-secondary";
-}
-
-function statusLabel(status: string): string {
-  return status.charAt(0).toUpperCase() + status.slice(1);
-}
-
 /** Derive a human label from a camelCase / snake_case config field name. */
 function fieldLabel(key: string): string {
   return key
@@ -945,6 +934,7 @@ interface DiscordSettingsPanelProps {
 function DiscordSettingsPanel({ form, onChange }: DiscordSettingsPanelProps) {
   const hasToken = Boolean(form.botToken?.trim());
   const mentionOnly = form.mentionOnly === "true";
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   return (
     <div className="space-y-4">
@@ -1029,33 +1019,45 @@ function DiscordSettingsPanel({ form, onChange }: DiscordSettingsPanelProps) {
         </p>
       </div>
 
-      {/* Server Members Intent toggle */}
-      <div className="flex items-start justify-between gap-3 pt-1">
-        <div className="flex flex-col gap-0.5">
-          <span className="text-[13px] font-medium text-foreground">Server Members Intent</span>
-          <p className="text-[11px] text-muted-foreground max-w-[340px]">
-            Enable only after turning on <strong>Server Members Intent</strong> in your{" "}
-            Discord Developer Portal → Bot → Privileged Gateway Intents. Required for
-            member sync and role-based access control. Without the portal toggle, enabling
-            this will prevent the bot from connecting (error 4014).
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => onChange({ ...form, enableServerMembersIntent: String(!(form.enableServerMembersIntent === "true")) })}
-          className={`relative shrink-0 w-9 h-5 rounded-full transition-colors ${form.enableServerMembersIntent === "true" ? "bg-primary" : "bg-muted"}`}
-          aria-checked={form.enableServerMembersIntent === "true"}
-          role="switch"
-        >
-          <span
-            className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${form.enableServerMembersIntent === "true" ? "left-[18px] bg-white" : "left-0.5 bg-muted-foreground"}`}
-          />
-        </button>
-      </div>
-
       <p className="text-[11px] text-muted-foreground">
         Channel presence, role permissions, and per-channel modes are managed in the <strong>Server</strong> tab.
       </p>
+
+      {/* Advanced — collapsed by default, rarely needed */}
+      <div className="border-t border-border/40 pt-3">
+        <button
+          type="button"
+          onClick={() => setShowAdvanced((v) => !v)}
+          className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <span className={`transition-transform ${showAdvanced ? "rotate-90" : ""}`}>▶</span>
+          Advanced
+        </button>
+        {showAdvanced && (
+          <div className="mt-3 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[12px] font-medium text-muted-foreground">Server Members Intent</span>
+                <p className="text-[11px] text-muted-foreground max-w-[320px]">
+                  Required for member sync and role-based access. You must first enable{" "}
+                  <strong>Server Members Intent</strong> in the Discord Developer Portal → Bot →
+                  Privileged Gateway Intents — without that, enabling this will prevent the bot
+                  from connecting (error 4014).
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onChange({ ...form, enableServerMembersIntent: String(form.enableServerMembersIntent !== "true") })}
+                className={`relative shrink-0 w-9 h-5 rounded-full transition-colors ${form.enableServerMembersIntent === "true" ? "bg-primary" : "bg-muted"}`}
+                role="switch"
+                aria-checked={form.enableServerMembersIntent === "true"}
+              >
+                <span className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${form.enableServerMembersIntent === "true" ? "left-[18px] bg-white" : "left-0.5 bg-muted-foreground"}`} />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1069,17 +1071,18 @@ interface ChannelTabProps {
   initialEnabled: boolean;
 }
 
-function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
+function ChannelTab({ id, initialEnabled: _initialEnabled }: ChannelTabProps) {
   const [detail, setDetail] = useState<ChannelDetail | null>(null);
   const [cfgResponse, setCfgResponse] = useState<ChannelConfigResponse | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
-  const [enabled, setEnabled] = useState(initialEnabled);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [controlling, setControlling] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [discordNotConnected, setDiscordNotConnected] = useState(false);
+  // Discord-specific: live WS connection state from /api/channels/discord/state
+  const [discordState, setDiscordState] = useState<DiscordStateDescriptor | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const discordPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -1089,7 +1092,6 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
       ]);
       setDetail(det);
       setCfgResponse(cfg);
-      setEnabled(cfg.enabled);
       // Only include scalar (non-object) values in the form — object/array fields
       // (memory, tools, autoMod, etc.) are owned by specialised UIs and must not
       // be coerced to "[object Object]" strings here.
@@ -1125,35 +1127,61 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
     };
   }, [id, loadData]);
 
+  // Discord WS connection state — independent poll at 3s so the indicator
+  // is always current without waiting for the 5s registry poll to tick.
   useEffect(() => {
-    const status = detail?.status ?? "stopped";
-    if (id !== "discord" || status !== "running") {
-      setDiscordNotConnected(false);
-      return;
-    }
-    fetch("/api/channels/discord/state")
-      .then((r) => r.json() as Promise<DiscordStateDescriptor>)
-      .then((data) => { setDiscordNotConnected(!data.connected); })
-      .catch(() => {});
-  }, [id, detail]);
+    if (id !== "discord") return;
+    const poll = () => {
+      fetch("/api/channels/discord/state")
+        .then((r) => r.json() as Promise<DiscordStateDescriptor>)
+        .then(setDiscordState)
+        .catch(() => {});
+    };
+    poll();
+    discordPollRef.current = setInterval(poll, 3_000);
+    return () => {
+      if (discordPollRef.current) clearInterval(discordPollRef.current);
+    };
+  }, [id]);
 
   const handleSave = async () => {
     setSaving(true);
     setSaveMsg(null);
     try {
-      // Start from the full current config so non-scalar fields (owned by other UIs)
-      // are preserved verbatim, then overlay the scalar form values on top.
+      // Preserve non-scalar fields (owned by other UIs), overlay scalar form values on top.
       const config: Record<string, unknown> = { ...cfgResponse?.config };
       for (const [k, v] of Object.entries(form)) {
         config[k] = v;
       }
-      await updateChannelConfig(id, { enabled, config });
-      setSaveMsg("Saved.");
+      // Preserve the existing enabled state — Start/Stop buttons own that flag.
+      await updateChannelConfig(id, { enabled: cfgResponse?.enabled ?? true, config });
+
       if (detail?.status === "running") {
         await restartChannel(id);
-        setSaveMsg("Saved and restarted.");
-        loadData();
+      } else {
+        await startChannel(id);
       }
+
+      if (id === "discord") {
+        setSaveMsg("Connecting...");
+        const deadline = Date.now() + 20_000;
+        let finalMsg = "Saved — check status indicator";
+        while (Date.now() < deadline) {
+          await new Promise<void>((r) => setTimeout(r, 1_500));
+          try {
+            const r = await fetch("/api/channels/discord/state");
+            const state = await (r.json() as Promise<DiscordStateDescriptor>);
+            if (state.connected) { finalMsg = "Saved — bot connected ✓"; break; }
+            const det = await fetchChannelDetail(id);
+            setDetail(det);
+            if (det.status === "error") { finalMsg = `Error: ${det.error ?? "connection failed"}`; break; }
+          } catch { break; }
+        }
+        setSaveMsg(finalMsg);
+      } else {
+        setSaveMsg("Saved and restarted.");
+      }
+      void loadData();
     } catch (err) {
       setSaveMsg(`Error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -1175,10 +1203,33 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
     }
   };
 
-  const currentStatus = detail?.status ?? "stopped";
+  const registryStatus = detail?.status ?? "stopped";
+
+  // For Discord, derive the displayed status from the live WS state poll, not
+  // the registry. "running" in the registry only means login was initiated;
+  // "connected" means the bot received READY and is online in Discord.
+  const isDiscord = id === "discord";
+  const discordConnected = discordState?.connected ?? false;
+  const displayStatus = isDiscord
+    ? registryStatus === "running"
+      ? (discordConnected ? "running" : "starting")
+      : registryStatus
+    : registryStatus;
+
   const fieldKeys = cfgResponse
     ? [...new Set([...Object.keys(cfgResponse.defaults), ...Object.keys(cfgResponse.config)])]
     : [];
+
+  const statusDot =
+    displayStatus === "running" ? "bg-emerald-500" :
+    displayStatus === "starting" || displayStatus === "stopping" ? "bg-amber-400 animate-pulse" :
+    displayStatus === "error" ? "bg-red-500" : "bg-secondary";
+
+  const statusText =
+    displayStatus === "running" ? (isDiscord ? "Connected" : "Running") :
+    displayStatus === "starting" ? (isDiscord ? "Connecting..." : "Starting...") :
+    displayStatus === "stopping" ? "Stopping..." :
+    displayStatus === "error" ? "Error" : "Stopped";
 
   return (
     <div className="space-y-4">
@@ -1186,8 +1237,8 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
       <Card className="p-4">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2">
-            <span className={`w-2.5 h-2.5 rounded-full ${statusColor(currentStatus)}`} />
-            <span className="text-[13px] font-medium">{statusLabel(currentStatus)}</span>
+            <span className={`w-2.5 h-2.5 rounded-full ${statusDot}`} />
+            <span className="text-[13px] font-medium">{statusText}</span>
           </div>
           {detail?.error && (
             <span className="text-[12px] text-destructive truncate max-w-xs">{detail.error}</span>
@@ -1195,29 +1246,24 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
           {error && (
             <span className="text-[12px] text-destructive truncate max-w-xs">{error}</span>
           )}
-          {discordNotConnected && (
-            <span className="text-[11px] text-amber-400 flex items-center gap-1">
-              ⚠ Not connected to Discord — check bot token
-            </span>
-          )}
           <div className="ml-auto flex items-center gap-2">
             <button
               onClick={() => handleControl("start")}
-              disabled={controlling || currentStatus === "running"}
+              disabled={controlling || registryStatus === "running"}
               className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               Start
             </button>
             <button
               onClick={() => handleControl("stop")}
-              disabled={controlling || currentStatus !== "running"}
+              disabled={controlling || registryStatus !== "running"}
               className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-secondary text-foreground hover:bg-secondary/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               Stop
             </button>
             <button
               onClick={() => handleControl("restart")}
-              disabled={controlling || currentStatus !== "running"}
+              disabled={controlling || registryStatus !== "running"}
               className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-secondary text-foreground hover:bg-secondary/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               Restart
@@ -1240,8 +1286,8 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
             <DiscordServerPanel
               channelId={id}
               cfgResponse={cfgResponse}
-              enabled={enabled}
-              channelStatus={currentStatus}
+              enabled={cfgResponse?.enabled ?? true}
+              channelStatus={registryStatus}
               onSaved={loadData}
             />
           </TabsContent>
@@ -1251,23 +1297,7 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
           <div className="space-y-5">
             {/* Config form */}
             <Card className="p-5 space-y-4">
-              <div className="flex items-center justify-between mb-1">
-                <h3 className="text-[13px] font-semibold text-foreground">Configuration</h3>
-                {/* Enabled toggle */}
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <button
-                    type="button"
-                    onClick={() => setEnabled((v) => !v)}
-                    className={`relative w-9 h-5 rounded-full transition-colors ${enabled ? "bg-emerald-500" : "bg-secondary"}`}
-                    aria-label="Toggle channel enabled"
-                  >
-                    <span
-                      className={`absolute top-0.5 ${enabled ? "left-[18px] bg-white" : "left-0.5 bg-muted-foreground"} w-4 h-4 rounded-full transition-all`}
-                    />
-                  </button>
-                  <span className="text-[12px] text-muted-foreground">{enabled ? "Enabled" : "Disabled"}</span>
-                </label>
-              </div>
+              <h3 className="text-[13px] font-semibold text-foreground">Configuration</h3>
 
               {cfgResponse === null ? (
                 <p className="text-[13px] text-muted-foreground">Loading configuration…</p>
@@ -1306,7 +1336,7 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
                     {saveMsg}
                   </span>
                 )}
-                {currentStatus === "running" && !saveMsg && (
+                {registryStatus === "running" && !saveMsg && (
                   <span className="text-[11px] text-muted-foreground">
                     Saving will restart the channel to apply new credentials.
                   </span>
