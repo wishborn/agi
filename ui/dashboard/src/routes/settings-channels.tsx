@@ -1029,6 +1029,30 @@ function DiscordSettingsPanel({ form, onChange }: DiscordSettingsPanelProps) {
         </p>
       </div>
 
+      {/* Server Members Intent toggle */}
+      <div className="flex items-start justify-between gap-3 pt-1">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[13px] font-medium text-foreground">Server Members Intent</span>
+          <p className="text-[11px] text-muted-foreground max-w-[340px]">
+            Enable only after turning on <strong>Server Members Intent</strong> in your{" "}
+            Discord Developer Portal → Bot → Privileged Gateway Intents. Required for
+            member sync and role-based access control. Without the portal toggle, enabling
+            this will prevent the bot from connecting (error 4014).
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => onChange({ ...form, enableServerMembersIntent: String(!(form.enableServerMembersIntent === "true")) })}
+          className={`relative shrink-0 w-9 h-5 rounded-full transition-colors ${form.enableServerMembersIntent === "true" ? "bg-primary" : "bg-muted"}`}
+          aria-checked={form.enableServerMembersIntent === "true"}
+          role="switch"
+        >
+          <span
+            className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${form.enableServerMembersIntent === "true" ? "left-[18px] bg-white" : "left-0.5 bg-muted-foreground"}`}
+          />
+        </button>
+      </div>
+
       <p className="text-[11px] text-muted-foreground">
         Channel presence, role permissions, and per-channel modes are managed in the <strong>Server</strong> tab.
       </p>
@@ -1371,6 +1395,14 @@ export default function SettingsChannelsPage() {
           / mentionOnly (now a toggle) / rateLimitPerMinute, and a status-bar warning when the
           process registry shows Running but the bot WebSocket is not actually connected to Discord.
           Log tab max-height changed from fixed 480px to 60 vh so it doesn&apos;t overflow the viewport.
+        </DevNote.Item>
+        <DevNote.Item kind="fix" heading="Discord GuildMembers intent — opt-in flag (v0.4.870)">
+          GatewayIntentBits.GuildMembers is a privileged Discord intent requiring
+          &quot;Server Members Intent&quot; to be enabled in the developer portal. It was
+          previously hardcoded, causing 4014 Disallowed Intents on bots without the
+          portal toggle → bot never connects. Now controlled by enableServerMembersIntent
+          toggle in Settings (default off). Proactive member sync is also guarded by
+          the same flag.
         </DevNote.Item>
         <DevNote.Item kind="info" heading="Discord reconnect + role access control + member registration">
           Three Discord improvements shipped together: (1) Discord now auto-reconnects after

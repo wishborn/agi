@@ -480,24 +480,23 @@ export function createDiscordPlugin(
     throw new Error("Invalid Discord config: botToken is required");
   }
 
-  // Owner directive 2026-05-13: Aion needs richer Discord context —
-  // user profiles, roles, presence, all messages with time-window search.
-  // GuildMembers + GuildPresences are PRIVILEGED intents — must be
-  // enabled in the Discord developer portal for the bot before this
-  // client can connect with them. If the bot login fails with a
-  // privileged-intent error, the operator needs to toggle them on at
-  // https://discord.com/developers/applications/<applicationId>/bot.
-  const client = new Client({
-    intents: [
-      GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent,
-      GatewayIntentBits.DirectMessages,
-      GatewayIntentBits.GuildMembers,    // roles + member metadata (privileged)
-      // GuildPresences requires Presence Intent enabled in the developer portal.
-      // Disabled until explicitly needed — enable in portal first, then re-add.
-    ],
-  });
+  // GuildMembers and GuildPresences are PRIVILEGED intents — discord.js will
+  // fail to connect (4014 Disallowed Intents) if they're requested without the
+  // matching portal toggle turned ON at:
+  // https://discord.com/developers/applications/<applicationId>/bot
+  //
+  // GuildMembers: controlled by config.enableServerMembersIntent (default off).
+  // GuildPresences: disabled until explicitly needed — enable portal toggle first.
+  const baseIntents = [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.DirectMessages,
+  ];
+  if (config.enableServerMembersIntent) {
+    baseIntents.push(GatewayIntentBits.GuildMembers);
+  }
+  const client = new Client({ intents: baseIntents });
 
   let running = false;
   let messageHandler: ((message: AionimaMessage) => Promise<void>) | null = null;
@@ -772,10 +771,10 @@ export function createDiscordPlugin(
       );
     }
 
-    // Proactive member sync — register all guild members with allowed roles
-    // as pending AGI user accounts so they appear in Settings → Users before
-    // they ever send a message.
-    if (opts?.createUser) {
+    // Proactive member sync — only when Server Members Intent is enabled.
+    // guild.members.fetch() requires GuildMembers intent; without it the call
+    // throws. Skip sync silently when the intent is not configured.
+    if (opts?.createUser && config.enableServerMembersIntent) {
       const createUser = opts.createUser;
       const allowedRoleIds = normalizeDiscordArrayField(config.allowedRoleIds);
       void (async () => {

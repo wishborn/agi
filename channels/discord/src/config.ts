@@ -32,6 +32,19 @@ export interface DiscordConfig {
   mentionOnly?: boolean;
   /** Max messages per user per minute before rate-limiting (default: 20). */
   rateLimitPerMinute?: number;
+  /**
+   * Enable the Server Members privileged intent.
+   *
+   * Required for: guild member sync on bot ready, `discord_list_members` tool,
+   * per-guild role data in `discord_get_user` tool.
+   *
+   * BEFORE enabling this, go to discord.com/developers/applications → your app
+   * → Bot → Privileged Gateway Intents → turn on "Server Members Intent".
+   * Without that portal toggle, discord.js will fail to connect (4014 error).
+   *
+   * Default: false (bot connects without member data).
+   */
+  enableServerMembersIntent?: boolean;
 }
 
 /**
@@ -87,6 +100,9 @@ export function isDiscordConfig(value: unknown): value is DiscordConfig {
   if ("mentionOnly" in obj && typeof obj["mentionOnly"] !== "boolean")
     return false;
 
+  if ("enableServerMembersIntent" in obj && typeof obj["enableServerMembersIntent"] !== "boolean")
+    return false;
+
   if (
     "rateLimitPerMinute" in obj &&
     (typeof obj["rateLimitPerMinute"] !== "number" ||
@@ -110,6 +126,7 @@ export function createConfigAdapter(): ChannelConfigAdapter {
       allowedRoleIds: "",
       mentionOnly: true,
       rateLimitPerMinute: 20,
+      enableServerMembersIntent: false,
     }),
   };
 }
