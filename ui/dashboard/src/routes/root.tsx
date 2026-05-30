@@ -824,8 +824,10 @@ export default function RootLayout() {
         }
       />
 
-      {/* Content area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      {/* Content area — min-h-0 is required so flex-1 is constrained to
+          (100vh - header) rather than growing to content height, which would
+          prevent PageScroll's overflow-y-auto from ever triggering. */}
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
 
         {/* DNS setup notice */}
         {hostingHook.status?.dnsmasq?.running && (

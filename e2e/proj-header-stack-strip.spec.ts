@@ -17,7 +17,7 @@ test.describe("ProjHeader + StackStrip", () => {
     const cards = page.getByTestId("project-card");
     if (await cards.count() === 0) return false;
     await cards.first().click();
-    await expect(page).toHaveURL(/\/projects\/[a-z0-9_\-]+/);
+    await expect(page).toHaveURL(/\/projects\/[a-z0-9_-]+/);
     return true;
   }
 

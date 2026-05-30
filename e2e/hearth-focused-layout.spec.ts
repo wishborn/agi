@@ -22,7 +22,7 @@ test.describe("HearthFocusedLayout", () => {
       return;
     }
     await cards.first().click();
-    await expect(page).toHaveURL(/\/projects\/[a-z0-9_\-]+/);
+    await expect(page).toHaveURL(/\/projects\/[a-z0-9_-]+/);
     await expect(page.getByTestId("hearth-focused-layout")).toBeVisible();
   });
 
