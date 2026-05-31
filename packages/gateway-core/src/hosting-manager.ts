@@ -2530,12 +2530,22 @@ export class HostingManager {
       hosted.status = "running";
       hosted.error = undefined;
 
-      this.log.info(`[${hosted.meta.hostname}] container started: ${containerName} (port ${String(hosted.meta.port)}) [${source}]`);
+      this.log.info(`[${hosted.meta.hostname}] container started: ${containerName} (port ${String(hosted.meta.port)}, internalPort ${String(hosted.meta.internalPort)}) [${source}]`);
       // s143 t568 — record container-start success so any prior breaker
       // state for this project gets cleared. The boot-loop's recordSuccess
       // covers enableProject's success path, but startContainer is fire-
       // and-forget from there, so its outcome lives or dies here.
       this.circuitBreaker?.recordSuccess(`hosting:${hosted.path}`);
+
+      // Persist the stack-resolved internalPort back to disk so it survives
+      // gateway restarts and is available to Caddyfile generation on next boot.
+      // Without this write, a stack-resolved port (e.g. Next.js → 3000) is
+      // only in memory for the duration of this session — the on-disk copy
+      // still shows internalPort:null. Also regenerate Caddyfile immediately
+      // so Caddy routes to the correct containerName:internalPort upstream
+      // rather than the fallback host.containers.internal:<allocatedPort>.
+      this.writeHostingMeta(hosted.path, hosted.meta);
+      this.regenerateCaddyfile();
     } catch (err) {
       hosted.status = "error";
       hosted.error = err instanceof Error ? err.message : String(err);
