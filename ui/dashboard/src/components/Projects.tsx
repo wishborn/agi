@@ -736,11 +736,12 @@ export function Projects({
                   {p.hosting && (
                     <span className={cn(
                       "text-[10px] px-1.5 py-0.5 rounded font-semibold",
-                      p.hosting.status === "running" ? "bg-green/15 text-green" :
-                      p.hosting.status === "error" ? "bg-red/15 text-red" :
+                      p.hosting.status === "running" && (p.hosting.serving ?? false) ? "bg-green/15 text-green" :
+                      p.hosting.status === "running" ? "bg-yellow/15 text-yellow" :
+                      p.hosting.status === "error" || p.hosting.status === "stopped" ? "bg-red/15 text-red" :
                       "bg-muted-foreground/15 text-muted-foreground",
                     )}>
-                      {p.hosting.status}
+                      {p.hosting.status === "running" && !(p.hosting.serving ?? false) ? "starting" : p.hosting.status}
                     </span>
                   )}
                 </div>

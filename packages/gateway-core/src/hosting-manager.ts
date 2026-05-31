@@ -12,6 +12,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
+import { createConnection } from "node:net";
 import { join, resolve as resolvePath, dirname } from "node:path";
 import { homedir } from "node:os";
 import { execSync, execFileSync, spawnSync, spawn, type ChildProcess } from "node:child_process";
@@ -50,6 +51,21 @@ import {
 /** Strip ANSI escape codes from command output for clean dashboard display. */
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?\x07/g;
+
+/**
+ * TCP connect probe — resolves true when something is listening on the port,
+ * false on connection refused or timeout. Does not send any data, so no HTTP
+ * logs appear in the target app. Used by pollContainerHealth() to distinguish
+ * "container running but app not yet serving" from "container running + app ready".
+ */
+function probePort(port: number, timeoutMs = 2_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: "127.0.0.1", port, timeout: timeoutMs });
+    socket.on("connect", () => { socket.destroy(); resolve(true); });
+    socket.on("error", () => resolve(false));
+    socket.on("timeout", () => { socket.destroy(); resolve(false); });
+  });
+}
 
 /** Simple shell argument escaping — wraps in single quotes. Used by
  *  buildMultiRepoContainerArgs to safely pass startCommand strings
@@ -772,6 +788,11 @@ export interface HostedProject {
   error?: string;
   tunnelPid: number | null;
   tunnelUrl: string | null;
+  /** True when the most recent TCP probe to the container's host port succeeded.
+   * Starts false; set to true by pollContainerHealth() once the app is listening.
+   * Reset to false when the container stops. Used to distinguish green (serving)
+   * from yellow (container up but app not yet responding). */
+  serving: boolean;
 }
 
 export interface InfraStatus {
@@ -913,6 +934,7 @@ export class HostingManager {
   private loginProcess: ChildProcess | null = null;
   private onStatusChange: (() => void) | null = null;
   private statusPollTimer: ReturnType<typeof setInterval> | null = null;
+  private healthPollTimer: ReturnType<typeof setInterval> | null = null;
   private eventsProcess: ChildProcess | null = null;
   /** HuggingFace model runtime deps — set via setModelDeps() after Step 5i. */
   private modelDeps: HostingManagerModelDeps | null = null;
@@ -1601,6 +1623,7 @@ export class HostingManager {
       status: "stopped",
       tunnelPid: null,
       tunnelUrl: null,
+      serving: false,
     };
 
     this.projects.set(resolved, hosted);
@@ -2774,6 +2797,35 @@ export class HostingManager {
       () => this.pollContainerStatuses(),
       120_000,
     );
+
+    // Kick off an immediate health probe so running containers get their
+    // serving flag on boot rather than waiting 10s for the first interval.
+    void this.pollContainerHealth();
+    this.startHealthProbing();
+  }
+
+  /** Start the 10-second TCP health probe loop. */
+  private startHealthProbing(): void {
+    if (this.healthPollTimer !== null) return;
+    this.healthPollTimer = setInterval(() => void this.pollContainerHealth(), 10_000);
+  }
+
+  /** Probe each running container's host port and update its `serving` flag. */
+  private async pollContainerHealth(): Promise<void> {
+    const probes: Promise<void>[] = [];
+    for (const hosted of this.projects.values()) {
+      if (hosted.status !== "running" || !hosted.meta.port) continue;
+      const port = hosted.meta.port;
+      probes.push(
+        probePort(port).then((alive) => {
+          if (hosted.serving !== alive) {
+            hosted.serving = alive;
+            this.notifyStatusChange();
+          }
+        }).catch(() => { /* probe errors are non-fatal */ }),
+      );
+    }
+    await Promise.allSettled(probes);
   }
 
   /**
@@ -2852,6 +2904,7 @@ export class HostingManager {
 
       if (hosted.status !== newStatus) {
         hosted.status = newStatus;
+        if (newStatus !== "running") hosted.serving = false;
         this.notifyStatusChange();
       }
       return;
@@ -3051,6 +3104,7 @@ export class HostingManager {
       hostname: string;
       type: string;
       status: "running" | "stopped" | "error" | "unconfigured";
+      serving: boolean;
       port: number | null;
       url: string | null;
       mode: "production" | "development";
@@ -3069,6 +3123,7 @@ export class HostingManager {
         hostname: hosted.meta.hostname,
         type: hosted.meta.type,
         status: hosted.status,
+        serving: hosted.serving,
         port: hosted.meta.port,
         mode: hosted.meta.mode,
         internalPort: hosted.meta.internalPort,
@@ -3109,6 +3164,10 @@ export class HostingManager {
     internalPort: number | null;
     runtimeId?: string | null;
     status: "running" | "stopped" | "error" | "unconfigured";
+    /** True when the most recent TCP probe succeeded — i.e. the app is actively
+     * listening on its port. False when container is running but app not yet
+     * ready (starting up, crashed internally). Only meaningful when status === "running". */
+    serving: boolean;
     tunnelUrl?: string | null;
     containerName?: string;
     image?: string;
@@ -3164,6 +3223,7 @@ export class HostingManager {
         internalPort: hosted.meta.internalPort,
         runtimeId: hosted.meta.runtimeId ?? null,
         status: hosted.status,
+        serving: hosted.serving,
         ...(hosted.tunnelUrl ? { tunnelUrl: hosted.tunnelUrl } : {}),
         ...(hosted.containerName ? { containerName: hosted.containerName } : {}),
         ...(resolvedImage ? { image: resolvedImage } : {}),
@@ -3198,6 +3258,7 @@ export class HostingManager {
         containerKind: this.isDesktopServed(meta) ? "mapp" : "code",
         ...(meta.mapps !== undefined ? { mapps: meta.mapps } : {}),
         status: "unconfigured",
+        serving: false,
         url: null,
       };
     }
@@ -3213,6 +3274,7 @@ export class HostingManager {
       mode: "production",
       internalPort: null,
       status: "unconfigured",
+      serving: false,
       url: null,
     };
   }
@@ -3467,6 +3529,10 @@ export class HostingManager {
     if (this.statusPollTimer !== null) {
       clearInterval(this.statusPollTimer);
       this.statusPollTimer = null;
+    }
+    if (this.healthPollTimer !== null) {
+      clearInterval(this.healthPollTimer);
+      this.healthPollTimer = null;
     }
     if (this.eventsProcess !== null) {
       try { this.eventsProcess.kill(); } catch { /* already dead */ }

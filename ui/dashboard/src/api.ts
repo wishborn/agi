@@ -1109,6 +1109,7 @@ export interface HostingStatus {
     hostname: string;
     type: string;
     status: "running" | "stopped" | "error" | "unconfigured";
+    serving: boolean;
     port: number | null;
     url: string | null;
     mode: "production" | "development";

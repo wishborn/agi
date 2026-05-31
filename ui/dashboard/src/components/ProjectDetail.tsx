@@ -436,7 +436,13 @@ export function ProjectDetail({
           const s = project.hosting?.status;
           const enabled = project.hosting?.enabled;
           if (!enabled) return null;
-          const cls = s === "running" ? "bg-green" : s === "error" ? "bg-red" : "bg-yellow";
+          const serving = project.hosting?.serving ?? false;
+          const cls =
+            s === "running" && serving ? "bg-green"
+            : s === "running" ? "bg-yellow"
+            : s === "error" ? "bg-red"
+            : s === "stopped" ? "bg-red"
+            : "bg-muted-foreground";
           // s140 cycle-172 t594 — aria-label not title. title doesn't show
           // on touch devices and is inconsistently announced by screen
           // readers. aria-label is the durable a11y primitive for an
@@ -452,6 +458,12 @@ export function ProjectDetail({
         })()}
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
         <DevNotes title="Project workspace — dev notes">
+          <DevNotes.Item kind="info" heading="Cycle 2026-05-31 — 3-state status dot + TCP health probe">
+            Status dot is now 3-state: green = container running AND TCP probe reached the port (app serving),
+            yellow = container running but port not yet responding (starting up / internal crash),
+            red = container stopped or error. Backend runs a 10-second TCP probe loop; frontend polls
+            every 10s (was 120s). StackStrip fallback text simplified to "No active tasks".
+          </DevNotes.Item>
           <DevNotes.Item kind="info" heading="s199 (2026-05-28) — ProjHeader + StackStrip + mode picker restyle">
             ProjHeader compact bar (name, category badge, primary repo URL, hosted URL, Chat button) added
             above mode picker. StackStrip shows Aion's live iterative-work task summary (from projectActivity)

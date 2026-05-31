@@ -428,6 +428,10 @@ export interface ProjectHostingInfo {
   internalPort: number | null;
   runtimeId?: string | null;
   status: "running" | "stopped" | "error" | "unconfigured";
+  /** True when the most recent TCP probe to the container's port succeeded.
+   *  Green = running + serving. Yellow = running + !serving (starting/degraded).
+   *  Only meaningful when status === "running"; always false otherwise. */
+  serving?: boolean;
   tunnelUrl?: string | null;
   containerName?: string;
   image?: string;

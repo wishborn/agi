@@ -205,23 +205,27 @@ export function HostingPanel({
   const needsBuild = hosting.status === "error"
     && (stickyError?.startsWith("Build output missing") ?? false);
 
+  // Green = running + TCP probe succeeded.
+  // Yellow = running but app not yet responding (starting up / degraded).
+  // Red = container stopped or error. Grey = not configured.
+  const isServing = hosting.status === "running" && (hosting.serving ?? false);
+  const isDegraded = hosting.status === "running" && !(hosting.serving ?? true);
+
   const statusColor = needsBuild
     ? "text-yellow"
-    : {
-        running: "text-green",
-        stopped: "text-muted-foreground",
-        error: "text-red",
-        unconfigured: "text-muted-foreground",
-      }[hosting.status];
+    : isServing ? "text-green"
+    : isDegraded ? "text-yellow"
+    : hosting.status === "stopped" ? "text-red"
+    : hosting.status === "error" ? "text-red"
+    : "text-muted-foreground";
 
   const statusDot = needsBuild
     ? "bg-yellow"
-    : {
-        running: "bg-green",
-        stopped: "bg-muted-foreground",
-        error: "bg-red",
-        unconfigured: "bg-muted-foreground",
-      }[hosting.status];
+    : isServing ? "bg-green"
+    : isDegraded ? "bg-yellow"
+    : hosting.status === "stopped" ? "bg-red"
+    : hosting.status === "error" ? "bg-red"
+    : "bg-muted-foreground";
 
   const statusLabel = needsBuild ? "needs build" : hosting.status;
 
