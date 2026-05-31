@@ -444,6 +444,10 @@ export interface ProjectHostingInfo {
   containerKind?: "static" | "code" | "mapp";
   /** s145 t585 — installed MApp IDs for the MApp container kind. */
   mapps?: string[];
+  /** When false, the Caddy offline-page error block is omitted — raw app errors pass through. */
+  friendlyErrors?: boolean;
+  /** Custom container image for multi-repo projects (overrides agi-runtime:lamp). */
+  baseImage?: string | null;
   /** Circuit-breaker state for this project's hosting service id, when not closed.
    *  Surfaces "open" / "half-open" so the dashboard can render a distinct chip. */
   breaker?: {

@@ -363,6 +363,9 @@ export interface BuildCaddyfileOptions {
      *  handle_path block. Only repos with both port + externalPath are
      *  routed; default repo serves on `/` via the catch-all reverse_proxy. */
     repos?: Array<{ name: string; port: number; externalPath: string }>;
+    /** When false, omit the Caddy offline-page `handle_errors` block so raw
+     *  upstream errors pass through. Default true. */
+    friendlyErrors?: boolean;
   }>;
   existingCaddyfile: string;
 }
@@ -620,23 +623,28 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
     }
 
     blocks.push(`    reverse_proxy ${projectUpstream}`);
-    // `handle_errors <status_codes...>` (filter form) needs Caddy 2.8+.
-    // Plenty of deployments are still on 2.6.x which rejects that syntax
-    // with "Wrong argument count or unexpected line ending after '502'"
-    // and fails the whole reload. Use the expression-matcher form that
-    // works on 2.6 through 2.8 uniformly — still limits the offline
-    // page to 5xx responses so legitimate 4xx from the backend (403,
-    // 404, etc.) aren't hidden behind a "container not running" page.
-    blocks.push(`    handle_errors {`);
-    blocks.push(`        @5xx expression \`{http.error.status_code} >= 500\``);
-    blocks.push(`        handle @5xx {`);
-    // `respond` defaults to text/plain, which renders the offline HTML
-    // as raw source in browsers (cycle-122 owner-reported bug). Set
-    // Content-Type explicitly so the styled card renders.
-    blocks.push(`            header Content-Type "text/html; charset=utf-8"`);
-    blocks.push(`            respond \`${offlineHtml}\` 503`);
-    blocks.push(`        }`);
-    blocks.push(`    }`);
+    // Friendly-errors block: intercepts 5xx and serves a styled offline card.
+    // Omitted when project.friendlyErrors === false so raw upstream errors
+    // (crash output, debug pages, real 500 bodies) pass through to the browser.
+    if (project.friendlyErrors !== false) {
+      // `handle_errors <status_codes...>` (filter form) needs Caddy 2.8+.
+      // Plenty of deployments are still on 2.6.x which rejects that syntax
+      // with "Wrong argument count or unexpected line ending after '502'"
+      // and fails the whole reload. Use the expression-matcher form that
+      // works on 2.6 through 2.8 uniformly — still limits the offline
+      // page to 5xx responses so legitimate 4xx from the backend (403,
+      // 404, etc.) aren't hidden behind a "container not running" page.
+      blocks.push(`    handle_errors {`);
+      blocks.push(`        @5xx expression \`{http.error.status_code} >= 500\``);
+      blocks.push(`        handle @5xx {`);
+      // `respond` defaults to text/plain, which renders the offline HTML
+      // as raw source in browsers (cycle-122 owner-reported bug). Set
+      // Content-Type explicitly so the styled card renders.
+      blocks.push(`            header Content-Type "text/html; charset=utf-8"`);
+      blocks.push(`            respond \`${offlineHtml}\` 503`);
+      blocks.push(`        }`);
+      blocks.push(`    }`);
+    }
     blocks.push(`}\n`);
   }
 
@@ -777,6 +785,19 @@ export interface ProjectHostingMeta {
   containerKind?: "static" | "code" | "mapp";
   /** s145 t584 — Installed MApp IDs for the Desktop-served container shape. */
   mapps?: string[];
+  /**
+   * When false, the Caddy `handle_errors` offline-page block is omitted so raw
+   * upstream errors pass through to the browser. Default true (friendly page).
+   * Set to false for development projects where you want to see real crash output.
+   */
+  friendlyErrors?: boolean;
+  /**
+   * Custom container image for multi-repo projects. Overrides the default
+   * `agi-runtime:lamp`. Use for mixed-language monorepos (e.g. a Python sim
+   * engine + Node.js frontend) where you need a fat image with multiple runtimes.
+   * Leave empty to use the default lamp image.
+   */
+  baseImage?: string | null;
 }
 
 export interface HostedProject {
@@ -1755,6 +1776,8 @@ export class HostingManager {
     // break, but dispatch reads only `type` via isDesktopServed.
     if (updates.containerKind !== undefined) hosted.meta.containerKind = updates.containerKind;
     if (updates.mapps !== undefined) hosted.meta.mapps = updates.mapps;
+    if (updates.friendlyErrors !== undefined) hosted.meta.friendlyErrors = updates.friendlyErrors;
+    if (updates.baseImage !== undefined) hosted.meta.baseImage = updates.baseImage;
 
     // s145 t586 / s150 t634 — when the project is Desktop-served, stamp
     // internalPort=80 here (synchronously, before startContainer fires async)
@@ -2365,6 +2388,7 @@ export class HostingManager {
       aiBindingArgs,
       tunnelOrigin: this.computeTunnelOrigin(hosted),
       networkName: projectNetworkName(hosted.meta.hostname),
+      ...(hosted.meta.baseImage ? { image: hosted.meta.baseImage } : {}),
     });
     if (!result) return null;
     // Set internalPort to the default repo's port so the Caddyfile
@@ -3037,6 +3061,7 @@ export class HostingManager {
             port: p.meta.port,
             containerName: p.containerName ?? (p.meta.hostname ? `agi-${p.meta.hostname}` : null),
             internalPort: p.meta.internalPort,
+            friendlyErrors: p.meta.friendlyErrors,
             ...(repos ? { repos } : {}),
           };
         }),
@@ -3187,6 +3212,10 @@ export class HostingManager {
     /** s145 t585 — surface containerKind + mapps to dashboard. */
     containerKind?: "static" | "code" | "mapp";
     mapps?: string[];
+    /** When false, the Caddy offline-page error block is omitted for this project. */
+    friendlyErrors?: boolean;
+    /** Custom container image override for multi-repo projects. */
+    baseImage?: string | null;
     /** Circuit-breaker state for this project's hosting service id, when not closed.
      * Surfaces "open" / "half-open" so the dashboard can render a distinct chip
      * instead of leaving the project looking simply "stopped" with no context. */
@@ -3243,6 +3272,8 @@ export class HostingManager {
         // dashboards. Removed entirely once t636 lands the HostingPanel UI cleanup.
         containerKind: this.isDesktopServed(hosted.meta) ? "mapp" : "code",
         ...(hosted.meta.mapps !== undefined ? { mapps: hosted.meta.mapps } : {}),
+        ...(hosted.meta.friendlyErrors !== undefined ? { friendlyErrors: hosted.meta.friendlyErrors } : {}),
+        ...(hosted.meta.baseImage ? { baseImage: hosted.meta.baseImage } : {}),
         ...(breaker ? { breaker } : {}),
         url: hosted.status === "running"
           ? `https://${hosted.meta.hostname}.${this.config.baseDomain}`
