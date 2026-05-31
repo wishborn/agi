@@ -14,7 +14,6 @@ import { cn, safeArray } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { HearthTop } from "@/components/HearthTop.js";
-import { HearthChatPane } from "@/components/HearthChatPane.js";
 import { useFocusedRoute } from "@/hooks/useFocusedRoute.js";
 import { ChatFlyout } from "@/components/ChatFlyout.js";
 import { MagicAppModal } from "@/components/MagicAppModal.js";
@@ -93,24 +92,6 @@ export default function RootLayout() {
   const navigate = useNavigate();
   const isFocused = useFocusedRoute();
 
-  // Derive context title/sub for HearthChatPane from the current route
-  const focusedContext = (() => {
-    const projectMatch = location.pathname.match(/^\/projects\/([^/]+)/);
-    if (projectMatch) {
-      const slug = decodeURIComponent(projectMatch[1]);
-      const project = projectsHook.projects.find((p) => p.path === slug);
-      return { title: project?.name ?? slug, sub: project?.category ?? "Project" };
-    }
-    const commsMatch = location.pathname.match(/^\/comms\/([^/]+)/);
-    if (commsMatch) {
-      const channel = commsMatch[1];
-      return { title: channel.charAt(0).toUpperCase() + channel.slice(1), sub: "Channel" };
-    }
-    if (location.pathname.startsWith("/comms")) {
-      return { title: "Messages", sub: "All channels" };
-    }
-    return { title: "", sub: "" };
-  })();
 
   // FIRSTBOOT check — redirect to onboarding if not completed
   useEffect(() => {
@@ -298,6 +279,19 @@ export default function RootLayout() {
     setChatContext(context);
     setChatOpen(true);
   }, []);
+
+  // Auto-open chat with project context when entering focused mode on a project page.
+  // Without this, the docked ChatFlyout renders with no context until the user
+  // explicitly clicks "Open chat". The effect resets when leaving the page.
+  useEffect(() => {
+    if (!isFocused) return;
+    const m = location.pathname.match(/^\/projects\/([^/]+)/);
+    if (m) {
+      const slug = decodeURIComponent(m[1]);
+      setChatContext(slug);
+      setChatOpen(true);
+    }
+  }, [isFocused, location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOpenChatWithMessage = useCallback((context: string, message: string) => {
     setChatContext(context);
@@ -858,16 +852,23 @@ export default function RootLayout() {
             />
           </div>
         ) : isFocused ? (
-          // Focused canvas mode (s198): 38/62 split — chat pane left, canvas right
+          // Focused canvas mode (s198): 38/62 split — chat pane left, canvas right.
+          // HearthChatPane stub replaced with real docked ChatFlyout (same as
+          // workspace mode). Context is auto-set from the project path on mount.
           <div
-            className="flex-1 min-h-0 overflow-hidden grid"
-            style={{ gridTemplateColumns: "38fr 62fr" }}
+            className="flex-1 min-h-0 overflow-hidden flex"
             data-testid="hearth-focused-layout"
           >
-            <HearthChatPane
-              contextTitle={focusedContext.title}
-              contextSub={focusedContext.sub}
-              onSendMessage={(msg) => handleOpenChatWithMessage(focusedContext.title, msg)}
+            <ChatFlyout
+              open={chatOpen}
+              onClose={() => { setChatOpen(false); setChatContext(null); setChatInitialMessage(null); setChatRequestId(null); }}
+              theme={theme}
+              projects={projectsHook.projects}
+              openWithContext={chatContext}
+              openWithMessage={chatInitialMessage}
+              openRequestId={chatRequestId}
+              notifications={notifications}
+              docked
             />
             <main className="flex-1 min-h-0 flex flex-col overflow-hidden" data-testid="hearth-canvas">
               <RouteDevNotes />

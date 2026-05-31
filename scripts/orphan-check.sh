@@ -51,6 +51,10 @@ ALLOWLIST=(
   "components/ui/dropdown-menu.tsx"
   "components/ui/panel-trigger.tsx"
   # (Orb.tsx removed from allowlist — now consumed by StackStrip.tsx s199)
+  # s198 focused-canvas stub replaced by docked ChatFlyout (2026-05-31).
+  # File kept in case the per-context pane design revives it; delete
+  # once the focused-canvas layout is confirmed final.
+  "components/HearthChatPane.tsx"
   # s197 Hearth Home — old overview tab components temporarily displaced.
   # Re-wire when /usage and /impactinomics dedicated routes ship (v0.4.0).
   "components/ActivityFeed.tsx"
