@@ -97,20 +97,74 @@ export function isDiscordConfig(value: unknown): value is DiscordConfig {
     }
   }
 
-  if ("mentionOnly" in obj && typeof obj["mentionOnly"] !== "boolean")
-    return false;
+  // Accept boolean OR "true"/"false" string — the dashboard form serialises
+  // all config values as strings; coerceDiscordConfig() normalises them before
+  // the plugin consumes them.
+  if ("mentionOnly" in obj) {
+    const v = obj["mentionOnly"];
+    if (v !== undefined && typeof v !== "boolean" && v !== "true" && v !== "false")
+      return false;
+  }
 
-  if ("enableServerMembersIntent" in obj && typeof obj["enableServerMembersIntent"] !== "boolean")
-    return false;
+  if ("enableServerMembersIntent" in obj) {
+    const v = obj["enableServerMembersIntent"];
+    if (v !== undefined && typeof v !== "boolean" && v !== "true" && v !== "false")
+      return false;
+  }
 
-  if (
-    "rateLimitPerMinute" in obj &&
-    (typeof obj["rateLimitPerMinute"] !== "number" ||
-      obj["rateLimitPerMinute"] <= 0)
-  )
-    return false;
+  if ("rateLimitPerMinute" in obj) {
+    const v = obj["rateLimitPerMinute"];
+    if (v !== undefined) {
+      if (typeof v === "number") {
+        if (v <= 0) return false;
+      } else if (typeof v === "string") {
+        const n = Number(v);
+        if (Number.isNaN(n) || n <= 0) return false;
+      } else {
+        return false;
+      }
+    }
+  }
 
   return true;
+}
+
+/**
+ * Coerce a validated-but-stringified Discord config object to proper types.
+ *
+ * The dashboard settings form stores ALL values as `Record<string, string>`.
+ * This means boolean fields arrive as `"true"/"false"` and numeric fields as
+ * numeric strings. Call this after `isDiscordConfig()` returns true to
+ * guarantee `createDiscordPlugin()` always receives correctly-typed values.
+ */
+export function coerceDiscordConfig(raw: Record<string, unknown>): DiscordConfig {
+  const parseBool = (v: unknown, def: boolean): boolean =>
+    v === true || v === "true" ? true : v === false || v === "false" ? false : def;
+  const posNum = (v: unknown, def: number): number => {
+    const n = typeof v === "number" ? v : Number(v);
+    return Number.isFinite(n) && n > 0 ? n : def;
+  };
+  return {
+    botToken: String(raw["botToken"] ?? ""),
+    ...(raw["applicationId"] !== undefined
+      ? { applicationId: String(raw["applicationId"]) }
+      : {}),
+    ...(raw["allowedGuildIds"] !== undefined
+      ? { allowedGuildIds: raw["allowedGuildIds"] as DiscordConfig["allowedGuildIds"] }
+      : {}),
+    ...(raw["allowedChannelIds"] !== undefined
+      ? { allowedChannelIds: raw["allowedChannelIds"] as DiscordConfig["allowedChannelIds"] }
+      : {}),
+    ...(raw["allowedRoleIds"] !== undefined
+      ? { allowedRoleIds: raw["allowedRoleIds"] as DiscordConfig["allowedRoleIds"] }
+      : {}),
+    ...(raw["presenceChannelIds"] !== undefined
+      ? { presenceChannelIds: raw["presenceChannelIds"] as DiscordConfig["presenceChannelIds"] }
+      : {}),
+    mentionOnly: parseBool(raw["mentionOnly"], true),
+    rateLimitPerMinute: posNum(raw["rateLimitPerMinute"], 20),
+    enableServerMembersIntent: parseBool(raw["enableServerMembersIntent"], false),
+  };
 }
 
 /** ChannelConfigAdapter for the Discord channel. */

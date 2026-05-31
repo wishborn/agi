@@ -27,6 +27,7 @@ import type {
 import {
   type DiscordConfig,
   isDiscordConfig,
+  coerceDiscordConfig,
   createConfigAdapter,
   normalizeDiscordArrayField,
 } from "./config.js";
@@ -48,7 +49,7 @@ import { getDiscordState, getDiscordAvailableRooms } from "./state.js";
 
 // Re-exports for consumer convenience
 export type { DiscordConfig } from "./config.js";
-export { isDiscordConfig } from "./config.js";
+export { isDiscordConfig, coerceDiscordConfig } from "./config.js";
 export {
   normalizeMessage,
   buildDisplayName,
@@ -926,6 +927,10 @@ export default {
       return;
     }
 
+    // Coerce string-serialized booleans/numbers from the dashboard form
+    // (form state is Record<string,string> so mentionOnly:"true", rateLimitPerMinute:"20" etc.)
+    const discordConfig = coerceDiscordConfig(channelConfig.config as Record<string, unknown>);
+
     const createUser = api.getOrCreateChannelUser?.bind(api);
     const logMessage = api.logAmbientMessage?.bind(api);
     const getContext = api.getAmbientContext?.bind(api);
@@ -935,7 +940,7 @@ export default {
     const deleteRegistrationSession = api.deleteRegistrationSession?.bind(api);
     const capturePendingApproval = api.capturePendingApproval?.bind(api);
     const plugin = createDiscordPlugin(
-      channelConfig.config as unknown as DiscordConfig,
+      discordConfig,
       {
         ...(createUser ? { createUser } : {}),
         ...(logMessage ? { logMessage } : {}),
