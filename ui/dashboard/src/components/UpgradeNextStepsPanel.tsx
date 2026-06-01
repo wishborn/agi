@@ -74,8 +74,9 @@ export function UpgradeNextStepsPanel({ open, toVersion, fromVersion, onClose }:
     setWorking(null);
   }, [hasRequired]);
 
+  // Superseded steps are invisible — a later migration cancelled them before the user saw them
   const pendingSteps = steps.filter((s) => s.status === "pending");
-  const doneOrDismissed = steps.filter((s) => s.status !== "pending");
+  const doneOrDismissed = steps.filter((s) => s.status === "done" || s.status === "dismissed");
   const canClose = !hasRequired;
 
   if (!open) return null;

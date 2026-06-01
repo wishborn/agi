@@ -120,7 +120,8 @@ export interface UpgradeNextStep {
   title: string;
   description: string;
   required: boolean;
-  status: "pending" | "done" | "dismissed";
+  /** pending = actionable. done/dismissed = resolved. superseded = cancelled by a later migration. */
+  status: "pending" | "done" | "dismissed" | "superseded";
   addedAt: string;
   fromVersion: string;
   action?: {
@@ -128,6 +129,8 @@ export interface UpgradeNextStep {
     kind: "navigate" | "external-url" | "chat";
     target: string;
   };
+  /** IDs of earlier steps this step supersedes. */
+  cancels?: string[];
 }
 
 /** Hosting infrastructure status from WebSocket. */

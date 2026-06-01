@@ -20,7 +20,7 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export type UpgradeNextStepStatus = "pending" | "done" | "dismissed";
+export type UpgradeNextStepStatus = "pending" | "done" | "dismissed" | "superseded";
 export type UpgradeNextStepActionKind = "navigate" | "external-url" | "chat";
 
 export interface UpgradeNextStepAction {
@@ -44,6 +44,18 @@ export interface UpgradeNextStep {
   fromVersion: string;
   /** Optional dashboard action the user can take from the panel. */
   action?: UpgradeNextStepAction;
+  /**
+   * IDs of previously-stacked steps this step supersedes. When this step is
+   * stacked, every listed step is atomically marked "superseded" so users who
+   * skipped several upgrades only see the current guidance, not outdated steps
+   * from intermediate versions.
+   *
+   * Example: v0.4.872 auto-fixed the Discord config issue that v0.4.860 asked
+   * the user to fix manually. v0.4.872's migration sets
+   * `cancels: ["discord-config-manual-v0.4.860"]` so the old required step
+   * disappears when the user upgrades.
+   */
+  cancels?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -57,6 +69,10 @@ const PENDING_PATH = join(AGI_DIR, "upgrade-next-steps-pending.ndjson");
 export const DEPLOYED_VERSION_PATH = join(AGI_DIR, "deployed-version.txt");
 /** Last version the gateway acknowledged (emitted system:upgraded for). */
 export const SEEN_VERSION_PATH = join(AGI_DIR, "seen-version.txt");
+/** Tracks which migration IDs have already run — idempotency guard. */
+const MIGRATION_LOG_PATH = join(AGI_DIR, "migration-run-log.json");
+/** Records the highest version whose migrations have been applied. */
+export const LAST_MIGRATED_VERSION_PATH = join(AGI_DIR, "last-migrated-version.txt");
 
 function ensureDir(): void {
   if (!existsSync(AGI_DIR)) mkdirSync(AGI_DIR, { recursive: true });
@@ -84,12 +100,35 @@ function writeSteps(steps: UpgradeNextStep[]): void {
 // Public API
 // ---------------------------------------------------------------------------
 
-/** Stack a new step. Idempotent by ID — existing step with same ID is kept unchanged. */
+/**
+ * Stack a new step. Idempotent by ID — existing step with same ID is kept unchanged.
+ * If the new step declares `cancels: [...]`, those existing steps are atomically
+ * marked "superseded" so the user only sees the current guidance.
+ */
 export function stackUpgradeNextStep(step: Omit<UpgradeNextStep, "status" | "addedAt"> & { addedAt?: string }): void {
   const steps = readSteps();
   if (steps.some((s) => s.id === step.id)) return;
+  // Supersede any steps this one cancels
+  if (step.cancels && step.cancels.length > 0) {
+    const cancelSet = new Set(step.cancels);
+    for (const s of steps) {
+      if (cancelSet.has(s.id) && s.status === "pending") {
+        s.status = "superseded";
+      }
+    }
+  }
   steps.push({ ...step, status: "pending", addedAt: step.addedAt ?? new Date().toISOString() });
   writeSteps(steps);
+}
+
+/** Directly supersede a step by ID (used by migration runner for programmatic cancellation). */
+export function supersedeUpgradeNextStep(id: string): void {
+  const steps = readSteps();
+  const step = steps.find((s) => s.id === id);
+  if (step && step.status === "pending") {
+    step.status = "superseded";
+    writeSteps(steps);
+  }
 }
 
 /** List all steps. Pass `filter="pending"` to get only actionable ones. */
@@ -122,6 +161,7 @@ export function dismissUpgradeNextStep(id: string): boolean | "required" {
 
 /** True when any pending step is marked required (blocks acknowledgement). */
 export function hasPendingRequiredSteps(): boolean {
+  // "superseded" is treated as resolved — it never blocks
   return readSteps().some((s) => s.status === "pending" && s.required);
 }
 
@@ -179,4 +219,45 @@ export function readSeenVersion(): string | null {
 export function writeSeenVersion(version: string): void {
   ensureDir();
   writeFileSync(SEEN_VERSION_PATH, version);
+}
+
+export function readLastMigratedVersion(): string | null {
+  if (!existsSync(LAST_MIGRATED_VERSION_PATH)) return null;
+  return readFileSync(LAST_MIGRATED_VERSION_PATH, "utf-8").trim() || null;
+}
+
+export function writeLastMigratedVersion(version: string): void {
+  ensureDir();
+  writeFileSync(LAST_MIGRATED_VERSION_PATH, version);
+}
+
+// ---------------------------------------------------------------------------
+// Migration run-log — idempotency guard
+// ---------------------------------------------------------------------------
+
+function readMigrationLog(): Set<string> {
+  if (!existsSync(MIGRATION_LOG_PATH)) return new Set();
+  try {
+    const ids = JSON.parse(readFileSync(MIGRATION_LOG_PATH, "utf-8")) as string[];
+    return new Set(Array.isArray(ids) ? ids : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeMigrationLog(log: Set<string>): void {
+  ensureDir();
+  writeFileSync(MIGRATION_LOG_PATH, JSON.stringify([...log], null, 2));
+}
+
+/** Returns true if this migration ID has already been applied. */
+export function hasMigrationRun(migrationId: string): boolean {
+  return readMigrationLog().has(migrationId);
+}
+
+/** Record that a migration has been applied. Idempotent. */
+export function recordMigrationRun(migrationId: string): void {
+  const log = readMigrationLog();
+  log.add(migrationId);
+  writeMigrationLog(log);
 }

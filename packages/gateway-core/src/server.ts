@@ -188,9 +188,11 @@ import {
   readDeployedVersion,
   readSeenVersion,
   writeSeenVersion,
+  readLastMigratedVersion,
   hasPendingRequiredSteps,
   listUpgradeNextSteps,
 } from "./upgrade-next-steps.js";
+import { runPendingMigrations } from "./migration-runner.js";
 import { EventEmitter } from "node:events";
 import { HardwareProfiler } from "./machine/hardware-profiler.js";
 import {
@@ -3750,9 +3752,18 @@ export async function startGatewayServer(
     }
   }
 
-  // UpgradeNextSteps: import pending steps written by upgrade.sh and record version.
+  // UpgradeNextSteps boot sequence:
+  // 1. Import pending steps written by upgrade.sh (bash→gateway handoff)
+  // 2. Run all TypeScript migrations between last-migrated and current version
   // The actual system:upgraded broadcast happens in Step 8 once the WS broadcaster is ready.
   importPendingSteps();
+  const _currentVersion: string = (() => {
+    try { return (require(join(selfRepoPath ?? process.cwd(), "package.json")) as { version: string }).version; } catch { return "0.0.0"; }
+  })();
+  const _lastMigrated = readLastMigratedVersion();
+  void runPendingMigrations(_lastMigrated, _currentVersion).catch((err: unknown) => {
+    log.warn(`migration-runner: boot-time error: ${err instanceof Error ? err.message : String(err)}`);
+  });
 
   // -------------------------------------------------------------------------
   // Step 6b: Log streaming — push log entries to subscribed dashboard clients
@@ -5076,12 +5087,7 @@ export async function startGatewayServer(
   // importPendingSteps() was called earlier (boot sequence); broadcaster is now ready.
   try {
     const deployed = readDeployedVersion();
-    const currentVersion: string = (() => {
-      try {
-        return (require(join(selfRepoPath ?? process.cwd(), "package.json")) as { version: string }).version;
-      } catch { return "unknown"; }
-    })();
-    const toVersion = deployed ?? currentVersion;
+    const toVersion = deployed ?? _currentVersion;
     const seen = readSeenVersion();
     if (toVersion !== seen) {
       writeSeenVersion(toVersion);
