@@ -9,6 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { EditorFlyout } from "@/components/EditorFlyout.js";
 import { TerminalFlyout } from "@/components/TerminalFlyout.js";
 import { WhoDBFlyout } from "@/components/WhoDBFlyout.js";
+import { UpgradeNextStepsPanel } from "@/components/UpgradeNextStepsPanel.js";
 
 import { cn, safeArray } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -118,6 +119,8 @@ export default function RootLayout() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
+  const [upgradedEvent, setUpgradedEvent] = useState<import("../types.js").SystemUpgradedEvent | null>(null);
+  const [showUpgradePanel, setShowUpgradePanel] = useState(false);
   const [providerBalances, setProviderBalances] = useState<ProviderBalance[]>([]);
   const [balanceHistories, setBalanceHistories] = useState<Record<string, number[]>>({});
   const [upgradePhase, setUpgradePhase] = useState<string | null>(null);
@@ -412,6 +415,10 @@ export default function RootLayout() {
     }
     if (event.type === "system:update_available") {
       setUpdateCheck(event.data);
+    }
+    if (event.type === "system:upgraded") {
+      setUpgradedEvent(event.data);
+      setShowUpgradePanel(true);
     }
     if (event.type === "notification:new") {
       setNotifications((prev) => {
@@ -890,6 +897,15 @@ export default function RootLayout() {
       />
 
       <WhoDBFlyout open={whodbOpen} onClose={() => setWhodbOpen(false)} />
+
+      {upgradedEvent && (
+        <UpgradeNextStepsPanel
+          open={showUpgradePanel}
+          toVersion={upgradedEvent.toVersion}
+          fromVersion={upgradedEvent.fromVersion}
+          onClose={() => setShowUpgradePanel(false)}
+        />
+      )}
 
       {/* MagicApp floating/docked modals */}
       {magicAppInstances

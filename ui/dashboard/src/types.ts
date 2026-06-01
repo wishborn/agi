@@ -106,6 +106,30 @@ export interface SystemUpgradeEvent {
   status?: string;
 }
 
+/** Emitted once on gateway boot when a new version is detected. */
+export interface SystemUpgradedEvent {
+  toVersion: string;
+  fromVersion: string | null;
+  pendingSteps: number;
+  hasRequired: boolean;
+}
+
+/** A single post-upgrade action item (required or optional). */
+export interface UpgradeNextStep {
+  id: string;
+  title: string;
+  description: string;
+  required: boolean;
+  status: "pending" | "done" | "dismissed";
+  addedAt: string;
+  fromVersion: string;
+  action?: {
+    label: string;
+    kind: "navigate" | "external-url" | "chat";
+    target: string;
+  };
+}
+
 /** Hosting infrastructure status from WebSocket. */
 export interface HostingStatusData {
   ready: boolean;
@@ -397,6 +421,7 @@ export type DashboardEvent =
   | { type: "overview:updated"; data: DashboardOverview }
   | { type: "project:activity"; data: ProjectActivity }
   | { type: "system:upgrade"; data: SystemUpgradeEvent }
+  | { type: "system:upgraded"; data: SystemUpgradedEvent }
   | { type: "system:update_available"; data: UpdateCheck }
   | { type: "hosting:status"; data: HostingStatusData }
   | { type: "project:config_changed"; data: ProjectConfigChangedData }

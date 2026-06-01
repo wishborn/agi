@@ -75,6 +75,12 @@ import type { COAChainLogger } from "@agi/coa-chain";
 import type { DashboardSession } from "./dashboard-user-store.js";
 import type { FederationRouter as FedRouter } from "./federation-router.js";
 import { appendUpgradeLog, clearUpgradeLog, getUpgradeLog } from "./upgrade-log.js";
+import {
+  listUpgradeNextSteps,
+  completeUpgradeNextStep,
+  dismissUpgradeNextStep,
+  hasPendingRequiredSteps,
+} from "./upgrade-next-steps.js";
 import { projectConfigPath } from "./project-config-path.js";
 import {
   buildCandidatePayload,
@@ -5511,6 +5517,40 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "System API only allowed from private network" });
     }
     return reply.send(getUpgradeLog());
+  });
+
+  // ---------------------------------------------------------------------------
+  // UpgradeNextSteps — post-upgrade interactive task queue
+  // ---------------------------------------------------------------------------
+
+  fastify.get("/api/system/upgrade-next-steps", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "System API only allowed from private network" });
+    }
+    const query = request.query as Record<string, string>;
+    const filter = query.filter === "pending" ? "pending" : "all";
+    return reply.send({
+      steps: listUpgradeNextSteps(filter),
+      hasRequired: hasPendingRequiredSteps(),
+    });
+  });
+
+  fastify.post("/api/system/upgrade-next-steps/:id/done", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Forbidden" });
+    const { id } = request.params as { id: string };
+    const ok = completeUpgradeNextStep(id);
+    return reply.send({ ok, hasRequired: hasPendingRequiredSteps() });
+  });
+
+  fastify.post("/api/system/upgrade-next-steps/:id/dismiss", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Forbidden" });
+    const { id } = request.params as { id: string };
+    const result = dismissUpgradeNextStep(id);
+    if (result === "required") return reply.code(409).send({ error: "Cannot dismiss a required step" });
+    return reply.send({ ok: result, hasRequired: hasPendingRequiredSteps() });
   });
 
   // GET /api/system/changelog — git commit history for the deployed repo

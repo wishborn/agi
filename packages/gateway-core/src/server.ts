@@ -183,6 +183,14 @@ import { registerReportsApi } from "./reports-api.js";
 import { registerWorkerApi } from "./worker-api.js";
 import { registerUsageRoutes } from "./usage-api.js";
 import { appendUpgradeLog } from "./upgrade-log.js";
+import {
+  importPendingSteps,
+  readDeployedVersion,
+  readSeenVersion,
+  writeSeenVersion,
+  hasPendingRequiredSteps,
+  listUpgradeNextSteps,
+} from "./upgrade-next-steps.js";
 import { EventEmitter } from "node:events";
 import { HardwareProfiler } from "./machine/hardware-profiler.js";
 import {
@@ -3728,6 +3736,7 @@ export async function startGatewayServer(
 
   // -------------------------------------------------------------------------
   // Post-upgrade boot detection — if upgrade.sh restarted the service, finalize the upgrade log
+  // and emit a system:upgraded WS event so the dashboard can show the post-upgrade panel.
   // -------------------------------------------------------------------------
   const selfRepoPath = config.workspace?.selfRepo;
   if (selfRepoPath) {
@@ -3740,6 +3749,10 @@ export async function startGatewayServer(
       log.info("upgrade: post-restart cleanup complete");
     }
   }
+
+  // UpgradeNextSteps: import pending steps written by upgrade.sh and record version.
+  // The actual system:upgraded broadcast happens in Step 8 once the WS broadcaster is ready.
+  importPendingSteps();
 
   // -------------------------------------------------------------------------
   // Step 6b: Log streaming — push log entries to subscribed dashboard clients
@@ -5058,6 +5071,32 @@ export async function startGatewayServer(
 
   // Populate the late-bound ref so the chat:send handler can emit project activity.
   dashboardBroadcasterRef = dashboardBroadcaster;
+
+  // Emit system:upgraded if this boot follows a new version deploy.
+  // importPendingSteps() was called earlier (boot sequence); broadcaster is now ready.
+  try {
+    const deployed = readDeployedVersion();
+    const currentVersion: string = (() => {
+      try {
+        return (require(join(selfRepoPath ?? process.cwd(), "package.json")) as { version: string }).version;
+      } catch { return "unknown"; }
+    })();
+    const toVersion = deployed ?? currentVersion;
+    const seen = readSeenVersion();
+    if (toVersion !== seen) {
+      writeSeenVersion(toVersion);
+      const pending = listUpgradeNextSteps("pending");
+      dashboardBroadcaster?.emitSystemUpgraded({
+        toVersion,
+        fromVersion: seen,
+        pendingSteps: pending.length,
+        hasRequired: hasPendingRequiredSteps(),
+      });
+      log.info(`upgrade: system:upgraded — ${seen ?? "initial"} → ${toVersion}, ${String(pending.length)} pending steps`);
+    }
+  } catch (err) {
+    log.warn(`upgrade: system:upgraded broadcast failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   /**
    * Autonomous Aion turn triggered by a TaskMaster completion/handoff event

@@ -464,6 +464,67 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 7d. PAx upstream sync — merge upstream changes into owner forks
+#
+# Each Particle-Academy package fork lives at $HOME/_projects/_aionima/repos/<slug>/.
+# This step fetches upstream/main for every cloned PAx repo, attempts a
+# fast-forward merge, and pushes to origin. Conflicts are noted as optional
+# UpgradeNextSteps (never blocks restart). Uncloned repos are silently skipped.
+# ---------------------------------------------------------------------------
+PAX_BASE="$HOME/_projects/_aionima/repos"
+PAX_SLUGS=(
+  react-fancy fancy-code fancy-sheets fancy-echarts fancy-3d fancy-screens
+  fancy-whiteboard agent-integrations fancy-artboard fancy-slides fancy-flow
+)
+PAX_ANY_SYNCED=0
+emit "pax-sync" "start" "Syncing PAx forks from Particle-Academy upstream"
+for pax_slug in "${PAX_SLUGS[@]}"; do
+  pax_path="$PAX_BASE/$pax_slug"
+  if [ ! -d "$pax_path/.git" ]; then
+    emit "pax-sync" "skip" "$pax_slug not cloned — skipping"
+    continue
+  fi
+  (
+    cd "$pax_path" || exit 0
+    # Ensure upstream remote points to Particle-Academy
+    if ! git remote get-url upstream &>/dev/null; then
+      git remote add upstream "https://github.com/Particle-Academy/$pax_slug.git" 2>/dev/null || true
+    fi
+    git fetch upstream main --quiet 2>&1 || { emit "pax-sync" "warn" "$pax_slug: fetch failed"; exit 0; }
+    behind=$(git rev-list HEAD..upstream/main 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$behind" = "0" ]; then
+      emit "pax-sync" "skip" "$pax_slug already up to date"
+      exit 0
+    fi
+    current_branch=$(git branch --show-current 2>/dev/null || echo "dev")
+    merge_output=$(git merge upstream/main --no-edit 2>&1)
+    merge_exit=$?
+    if [ "$merge_exit" -eq 0 ]; then
+      git push origin "$current_branch" --quiet 2>/dev/null || true
+      emit "pax-sync" "done" "$pax_slug: merged $behind commits from upstream, pushed to origin/$current_branch"
+      PAX_ANY_SYNCED=$((PAX_ANY_SYNCED + 1))
+    else
+      git merge --abort 2>/dev/null || true
+      # Stack an optional UpgradeNextStep so the owner knows about the conflict
+      node -e "
+        const { appendPendingStep } = require('$DEPLOY_DIR/packages/gateway-core/src/upgrade-next-steps.js');
+        const version = require('$DEPLOY_DIR/package.json').version;
+        appendPendingStep({
+          id: 'pax-conflict-$pax_slug-' + version,
+          title: 'Merge conflict in $pax_slug',
+          description: 'upstream/main had conflicts with your local changes in $pax_path. Merge manually: cd $pax_path && git merge upstream/main',
+          required: false,
+          fromVersion: version,
+          action: { label: 'Open terminal', kind: 'navigate', target: '/projects/_aionima' }
+        });
+      " 2>/dev/null || true
+      emit "pax-sync" "warn" "$pax_slug: merge conflict — manual merge required (see post-upgrade steps)"
+    fi
+  )
+done
+emit "pax-sync" "done" "PAx sync complete"
+
+# ---------------------------------------------------------------------------
 # 7e. Migrate project configs to current schema
 # ---------------------------------------------------------------------------
 emit "migrate" "start"
@@ -536,6 +597,9 @@ git rev-parse HEAD > "$DEPLOY_DIR/.deployed-commit"
 # 12. Restart if version changed
 # ---------------------------------------------------------------------------
 version_after="$(cd "$DEPLOY_DIR" && node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")"
+
+# Write deployed version so the gateway can detect a new boot and emit system:upgraded.
+echo "$version_after" > "$HOME/.agi/deployed-version.txt"
 
 if [ "$version_before" != "$version_after" ]; then
   emit "restart" "start" "Version changed: $version_before → $version_after"

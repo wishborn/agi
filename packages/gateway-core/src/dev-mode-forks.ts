@@ -47,7 +47,10 @@ export interface CoreRepoSpec {
     | "fancy-3d"
     | "fancy-screens"
     | "fancy-whiteboard"
-    | "agent-integrations";
+    | "agent-integrations"
+    | "fancy-artboard"
+    | "fancy-slides"
+    | "fancy-flow";
   /** Repo name on GitHub (NOT the slug — sometimes diverges, e.g. prime
    *  → aionima, id → agi-local-id). */
   upstream: string;
@@ -70,7 +73,10 @@ export interface CoreRepoSpec {
     | "fancy3dRepo"
     | "fancyScreensRepo"
     | "fancyWhiteboardRepo"
-    | "agentIntegrationsRepo";
+    | "agentIntegrationsRepo"
+    | "fancyArtboardRepo"
+    | "fancySlidesRepo"
+    | "fancyFlowRepo";
 }
 
 export const CORE_REPOS: readonly CoreRepoSpec[] = Object.freeze([
@@ -112,6 +118,10 @@ export const CORE_REPOS: readonly CoreRepoSpec[] = Object.freeze([
   // the same channels other collaborators use (panel + on-canvas cursor).
   { slug: "fancy-whiteboard",   upstream: "fancy-whiteboard",   upstreamOrg: "Particle-Academy", displayName: "fancy-whiteboard",   configKey: "fancyWhiteboardRepo" },
   { slug: "agent-integrations", upstream: "agent-integrations", upstreamOrg: "Particle-Academy", displayName: "agent-integrations", configKey: "agentIntegrationsRepo" },
+  // s200 — additional PAx packages registered in the Fancy UI MCP registry.
+  { slug: "fancy-artboard",     upstream: "fancy-artboard",     upstreamOrg: "Particle-Academy", displayName: "fancy-artboard",     configKey: "fancyArtboardRepo" },
+  { slug: "fancy-slides",       upstream: "fancy-slides",       upstreamOrg: "Particle-Academy", displayName: "fancy-slides",       configKey: "fancySlidesRepo" },
+  { slug: "fancy-flow",         upstream: "fancy-flow",         upstreamOrg: "Particle-Academy", displayName: "fancy-flow",         configKey: "fancyFlowRepo" },
 ] as const);
 
 export interface ForkResolveResult {
