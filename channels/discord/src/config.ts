@@ -97,24 +97,24 @@ export function isDiscordConfig(value: unknown): value is DiscordConfig {
     }
   }
 
-  // Accept boolean OR "true"/"false" string — the dashboard form serialises
-  // all config values as strings; coerceDiscordConfig() normalises them before
-  // the plugin consumes them.
+  // Accept boolean, "true"/"false" string, OR empty string (field cleared in UI = use default).
+  // coerceDiscordConfig() normalises these before the plugin consumes them.
   if ("mentionOnly" in obj) {
     const v = obj["mentionOnly"];
-    if (v !== undefined && typeof v !== "boolean" && v !== "true" && v !== "false")
+    if (v !== undefined && v !== "" && typeof v !== "boolean" && v !== "true" && v !== "false")
       return false;
   }
 
   if ("enableServerMembersIntent" in obj) {
     const v = obj["enableServerMembersIntent"];
-    if (v !== undefined && typeof v !== "boolean" && v !== "true" && v !== "false")
+    if (v !== undefined && v !== "" && typeof v !== "boolean" && v !== "true" && v !== "false")
       return false;
   }
 
   if ("rateLimitPerMinute" in obj) {
     const v = obj["rateLimitPerMinute"];
-    if (v !== undefined) {
+    // Empty string = field cleared, treat as "not set" (coerce will use default)
+    if (v !== undefined && v !== "") {
       if (typeof v === "number") {
         if (v <= 0) return false;
       } else if (typeof v === "string") {
@@ -138,9 +138,11 @@ export function isDiscordConfig(value: unknown): value is DiscordConfig {
  * guarantee `createDiscordPlugin()` always receives correctly-typed values.
  */
 export function coerceDiscordConfig(raw: Record<string, unknown>): DiscordConfig {
+  // Empty string = field cleared in UI; treat as not-set and use the default.
   const parseBool = (v: unknown, def: boolean): boolean =>
     v === true || v === "true" ? true : v === false || v === "false" ? false : def;
   const posNum = (v: unknown, def: number): number => {
+    if (v === "" || v === null || v === undefined) return def;
     const n = typeof v === "number" ? v : Number(v);
     return Number.isFinite(n) && n > 0 ? n : def;
   };
