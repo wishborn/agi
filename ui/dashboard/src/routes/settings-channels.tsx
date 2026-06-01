@@ -956,7 +956,7 @@ function DiscordSettingsPanel({ form, onChange }: DiscordSettingsPanelProps) {
       )}
 
       <div className="flex flex-col gap-1">
-        <label className="text-[12px] font-medium text-muted-foreground">Bot Token</label>
+        <label data-testid="discord-bot-token-label" className="text-[12px] font-medium text-muted-foreground">Bot Token</label>
         <input
           type="password"
           value={form.botToken ?? ""}

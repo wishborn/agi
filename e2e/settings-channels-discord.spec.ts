@@ -55,7 +55,8 @@ test.describe("Settings → Channels — Discord settings panel (v0.4.865)", () 
     await openDiscordSettingsTab(page);
 
     // DiscordSettingsPanel renders "Bot Token" as the label (not camelCase "botToken")
-    await expect(page.getByText("Bot Token")).toBeVisible({ timeout: 10_000 });
+    // Use testid to avoid matching the setup guide's <strong>Bot Token</strong> snippet
+    await expect(page.getByTestId("discord-bot-token-label")).toBeVisible({ timeout: 10_000 });
 
     // The input for botToken must be type=password
     const botTokenInput = page.locator("input[type='password']").first();
@@ -104,8 +105,9 @@ test.describe("Settings → Channels — Discord settings panel (v0.4.865)", () 
     await openDiscordSettingsTab(page);
 
     // Status card is above the inner tabs — controls always present
-    await expect(page.getByRole("button", { name: "Start" })).toBeVisible({ timeout: 8_000 });
-    await expect(page.getByRole("button", { name: "Stop" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Restart" })).toBeVisible();
+    // exact: true avoids Playwright matching "Restart" when name: "Start" is used (substring match)
+    await expect(page.getByRole("button", { name: "Start", exact: true })).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Restart", exact: true })).toBeVisible();
   });
 });
