@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DevNotes } from "@/components/ui/dev-notes";
-import { SACRED_PROJECTS, PAX_SACRED_PROJECTS, isSacredProject, isPaxProject, matchSacredProject } from "@/lib/sacred-projects.js";
+import { SACRED_PROJECTS, PAX_SACRED_PROJECTS, isSacredProject, isPaxProject } from "@/lib/sacred-projects.js";
 import { Table } from "@particle-academy/react-fancy";
 import { fetchProjectActivitySummary, type ProjectActivitySummary } from "../api.js";
 import {
@@ -59,7 +59,7 @@ export interface ProjectsProps {
 
 export function Projects({
   projects, loading, error, creating, onCreate, onRefresh,
-  projectActivity, hostingStatus, contributingEnabled,
+  projectActivity, hostingStatus, contributingEnabled: _contributingEnabled,
 }: ProjectsProps) {
   const [showModal, setShowModal] = useState(false);
   const [showSetupTerminal, setShowSetupTerminal] = useState(false);
@@ -73,17 +73,6 @@ export function Projects({
   // the table render; a project without a summary just shows a flat line.
   const [activitySummaries, setActivitySummaries] = useState<Record<string, ProjectActivitySummary>>({});
   const navigate = useNavigate();
-  const isContributing = Boolean(contributingEnabled);
-
-  // Owner directive 2026-05-13: `_aionima` is the Sacred project and must be
-  // present + visible regardless of dev/contributing mode. Dev mode now only
-  // gates fork-population into `_aionima/repos/`, not card visibility.
-  // sacredEntries enumerated unconditionally; counts in the card description
-  // reflect what's actually cloned (0 when contributing-mode off + no forks).
-  const sacredEntries = SACRED_PROJECTS.map((sacred) => ({
-    sacred,
-    project: matchSacredProject(projects, sacred.id),
-  }));
 
   // Owner directive 2026-05-13: `_aionima/` is the meta-project and must
   // never appear in the regular projects list — only as the Sacred card.
@@ -147,6 +136,24 @@ export function Projects({
       })
       .join("");
   };
+
+  // Derive activity-based project health per the Hearth mockup:
+  // green = Aion active or has recent 30d activity, rose = hosting error, amber = idle
+  const deriveHealth = (p: ProjectInfo): "green" | "amber" | "rose" => {
+    if (p.hosting?.status === "error") return "rose";
+    if (projectActivity?.[p.path]) return "green";
+    const summary = activitySummaries[p.path];
+    if (summary && summary.total > 0) return "green";
+    return "amber";
+  };
+
+  // Sort: green → amber → rose (problems surface naturally)
+  const sortedProjects = [...visibleProjects].sort((a, b) => {
+    const order = { green: 0, amber: 1, rose: 2 } as const;
+    return order[deriveHealth(a)] - order[deriveHealth(b)];
+  });
+
+  const aionActiveCount = visibleProjects.filter((p) => projectActivity?.[p.path]).length;
 
   return (
     <div>
@@ -277,6 +284,70 @@ export function Projects({
           inline panel land in subsequent slices. */}
       {viewMode === "list" && (
         <div data-testid="projects-list">
+          {/* Platform hero — Aionima is the gateway itself, always present, always first */}
+          <div
+            className="mb-4 rounded-xl border border-yellow/30 bg-gradient-to-r from-yellow/5 to-transparent p-4 flex items-start gap-4 cursor-pointer hover:border-yellow/50 transition-colors"
+            onClick={() => void navigate("/projects/_aionima")}
+            data-testid="project-card-aionima"
+          >
+            <div className="shrink-0 w-10 h-10 rounded-lg bg-yellow/10 border border-yellow/30 flex items-center justify-center">
+              <Star className="h-5 w-5 text-yellow" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap mb-1">
+                <span className="text-[15px] font-bold text-foreground">Aionima</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-bold uppercase tracking-wide">Platform</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-400 font-semibold flex items-center gap-1">
+                  ⛨ sacred
+                </span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface1 text-muted-foreground font-mono">
+                  ⌗{SACRED_PROJECTS.length + PAX_SACRED_PROJECTS.length} repos
+                </span>
+              </div>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                The gateway itself — Aion's own source, the project suite, channels, and admin.
+                Present in every install · cannot be deleted or archived · Aion edits under guardrails.
+              </p>
+            </div>
+            <div className="shrink-0 flex items-center gap-3 text-[11px] text-muted-foreground">
+              <div className="text-center">
+                <div className="text-[12px] font-semibold text-green flex items-center gap-1">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-green animate-[pulse-green_2s_ease-in-out_infinite]" />
+                  Running
+                </div>
+                <div className="text-[10px]">Aion lives here</div>
+              </div>
+              <div className="text-center">
+                <div className="text-[12px] font-semibold text-foreground">self-edit</div>
+                <div className="text-[10px]">source access</div>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); void navigate("/projects/_aionima"); }}
+                className="ml-2 text-[11px] px-3 py-1.5 rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 font-medium"
+              >
+                Open platform →
+              </button>
+            </div>
+          </div>
+
+          {/* Filter chips + sort indicator */}
+          <div className="flex items-center gap-2 mb-3 text-[11px]">
+            <span className="px-2.5 py-1 rounded-full bg-secondary text-secondary-foreground font-medium">
+              All {sortedProjects.length}
+            </span>
+            <span className="px-2.5 py-1 rounded-full border border-yellow/40 text-yellow font-medium">
+              Amber {sortedProjects.filter((p) => deriveHealth(p) === "amber").length}
+            </span>
+            {aionActiveCount > 0 && (
+              <span className="px-2.5 py-1 rounded-full border border-green/40 text-green font-medium flex items-center gap-1">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-green animate-[pulse-green_2s_ease-in-out_infinite]" />
+                Aion active {aionActiveCount}
+              </span>
+            )}
+            <span className="ml-auto text-muted-foreground">sorted by health</span>
+          </div>
+
           <Table>
             <Table.Head>
               <Table.Column label="" />
@@ -291,41 +362,8 @@ export function Projects({
               <Table.Column label="Health" />
             </Table.Head>
             <Table.Body>
-              {/* Aionima — sacred row pinned at top of list */}
-              <Table.Row
-                onClick={() => void navigate("/projects/_aionima")}
-                className={cn(
-                  "cursor-pointer",
-                  "bg-indigo-50/70 dark:bg-indigo-950/40",
-                  "hover:bg-indigo-100/80 dark:hover:bg-indigo-900/50",
-                )}
-                data-testid="project-card-aionima"
-              >
-                <Table.Cell>
-                  <Star className="h-3 w-3 text-yellow" />
-                </Table.Cell>
-                <Table.Cell>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[13px] font-semibold text-card-foreground">Aionima</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">platform</span>
-                  </div>
-                </Table.Cell>
-                <Table.Cell>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-400 font-medium">sacred</span>
-                </Table.Cell>
-                <Table.Cell>
-                  <span className="text-[11px] font-mono text-indigo-400 font-semibold" title={`${String(SACRED_PROJECTS.length)} Civicognita + ${String(PAX_SACRED_PROJECTS.length)} PAx`}>
-                    ⌗{SACRED_PROJECTS.length + PAX_SACRED_PROJECTS.length}
-                  </span>
-                </Table.Cell>
-                <Table.Cell><span className="text-[11px] text-muted-foreground/40">—</span></Table.Cell>
-                <Table.Cell><span className="text-[11px] text-muted-foreground/40">—</span></Table.Cell>
-                <Table.Cell><span className="text-[11px] text-muted-foreground/40">—</span></Table.Cell>
-                <Table.Cell><span className="text-[11px] text-muted-foreground/40">—</span></Table.Cell>
-                <Table.Cell><span className="text-[11px] text-muted-foreground/40">—</span></Table.Cell>
-                <Table.Cell><span className="text-[11px] text-muted-foreground/40">—</span></Table.Cell>
-              </Table.Row>
-              {visibleProjects.map((p) => {
+              {sortedProjects.map((p) => {
+                const health = deriveHealth(p);
                 const slug = projectSlug(p.path);
                 const cat = p.category ?? p.projectType?.category;
                 const isOps = cat === "ops" || cat === "administration";
@@ -463,15 +501,23 @@ export function Projects({
                   <Table.Row
                     key={p.path}
                     onClick={() => void navigate(`/projects/${slug}`)}
-                    className="cursor-pointer hover:bg-secondary/30"
+                    className={cn(
+                      "cursor-pointer hover:bg-secondary/30",
+                      health === "green" && "border-l-[3px] border-green",
+                      health === "amber" && "border-l-[3px] border-yellow",
+                      health === "rose" && "border-l-[3px] border-red",
+                    )}
                     tray={tray}
                     trayTriggerPosition="end"
                   >
                     <Table.Cell>
                       {projectActivity?.[p.path] ? (
-                        <span className="inline-block w-2 h-2 rounded-full bg-green animate-[pulse-green_2s_ease-in-out_infinite]" />
+                        <span className="inline-block w-2 h-2 rounded-full bg-green animate-[pulse-green_2s_ease-in-out_infinite]" title="Aion active" />
                       ) : (
-                        <span className="inline-block w-2 h-2 rounded-full bg-muted-foreground/20" />
+                        <span className={cn(
+                          "inline-block w-2 h-2 rounded-full",
+                          health === "green" ? "bg-green/30" : health === "rose" ? "bg-red/30" : "bg-muted-foreground/20",
+                        )} />
                       )}
                     </Table.Cell>
                     <Table.Cell>
@@ -662,40 +708,39 @@ export function Projects({
       {/* Project grid — original compact card layout, opt-in via viewMode toggle */}
       {viewMode === "grid" && (
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
-        {/* Aionima — sacred card pinned at top of grid */}
+        {/* Aionima platform hero — spans full grid width */}
         <div
           onClick={() => { void navigate("/projects/_aionima"); }}
-          className={cn(
-            "rounded-xl border transition-colors duration-150 cursor-pointer hover:border-yellow",
-            "bg-indigo-50/70 border-indigo-200/80",
-            "dark:bg-indigo-950/40 dark:border-indigo-700/60",
-          )}
+          className="col-span-full rounded-xl border border-yellow/30 bg-gradient-to-r from-yellow/5 to-transparent p-4 flex items-center gap-4 cursor-pointer hover:border-yellow/50 transition-colors"
           data-testid="project-card-aionima"
         >
-          <div className="p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Star className="h-4 w-4 text-yellow" />
-              <span className="text-[15px] font-semibold text-card-foreground">Aionima</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">platform</span>
-            </div>
-            <div className="text-[11px] text-muted-foreground">
-              Platform contribution portal — upstream alignment, PR submission, MINT impact ($WORK / $K / $RES).{" "}
-              {isContributing
-                ? <>Wraps the {sacredEntries.filter((e) => e.project !== null).length} core forks + {PAX_SACRED_PROJECTS.length} PAx primitives (`_aionima/repos/`).</>
-                : <>Enable contributing mode in Settings to clone the {SACRED_PROJECTS.length} core forks + {PAX_SACRED_PROJECTS.length} PAx primitives.</>}
-            </div>
-            <div className="text-[11px] text-yellow mt-2 font-medium">Open Aionima →</div>
+          <div className="shrink-0 w-10 h-10 rounded-lg bg-yellow/10 border border-yellow/30 flex items-center justify-center">
+            <Star className="h-5 w-5 text-yellow" />
           </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap mb-0.5">
+              <span className="text-[14px] font-bold text-foreground">Aionima</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-bold uppercase tracking-wide">Platform</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-400 font-semibold">⛨ sacred</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface1 text-muted-foreground font-mono">⌗{SACRED_PROJECTS.length + PAX_SACRED_PROJECTS.length} repos</span>
+              <span className="flex items-center gap-1 text-[10px] text-green"><span className="inline-block w-1.5 h-1.5 rounded-full bg-green animate-[pulse-green_2s_ease-in-out_infinite]" />Aion lives here</span>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              The gateway itself · cannot be deleted or archived · Aion edits under guardrails
+            </p>
+          </div>
+          <span className="shrink-0 text-[11px] text-yellow font-medium">Open platform →</span>
         </div>
-        {visibleProjects.map((p) => {
+        {sortedProjects.map((p) => {
           const slug = projectSlug(p.path);
+          const health = deriveHealth(p);
           return (
             <div
               key={p.path}
               onClick={() => void navigate(`/projects/${slug}`)}
               className={cn(
-                "rounded-xl bg-card border border-border transition-colors duration-150 cursor-pointer",
-                "hover:border-blue",
+                "rounded-xl bg-card border transition-colors duration-150 cursor-pointer hover:border-blue",
+                health === "green" ? "border-l-[3px] border-l-green border-border" : health === "rose" ? "border-l-[3px] border-l-red border-border" : "border-l-[3px] border-l-yellow border-border",
               )}
               data-testid="project-card"
             >

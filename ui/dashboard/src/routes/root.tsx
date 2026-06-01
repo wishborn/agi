@@ -14,7 +14,6 @@ import { cn, safeArray } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { HearthTop } from "@/components/HearthTop.js";
-import { useFocusedRoute } from "@/hooks/useFocusedRoute.js";
 import { ChatFlyout } from "@/components/ChatFlyout.js";
 import { MagicAppModal } from "@/components/MagicAppModal.js";
 import { MagicAppTray } from "@/components/MagicAppTray.js";
@@ -90,7 +89,6 @@ export default function RootLayout() {
 
   const location = useLocation();
   const navigate = useNavigate();
-  const isFocused = useFocusedRoute();
 
 
   // FIRSTBOOT check — redirect to onboarding if not completed
@@ -109,7 +107,7 @@ export default function RootLayout() {
   const isMobile = useIsMobile();
   const [timelineBucket, setTimelineBucket] = useState<TimeBucket>("day");
   const [liveActivity, setLiveActivity] = useState<ActivityEntry[]>([]);
-  const [chatOpen, setChatOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(true);
   const [editorFilePath, setEditorFilePath] = useState<string | null>(null);
   const [workspaceMode, setWorkspaceMode] = useState(false);
   const [projectActivity, setProjectActivity] = useState<Record<string, ProjectActivity | null>>({});
@@ -280,18 +278,18 @@ export default function RootLayout() {
     setChatOpen(true);
   }, []);
 
-  // Auto-open chat with project context when entering focused mode on a project page.
-  // Without this, the docked ChatFlyout renders with no context until the user
-  // explicitly clicks "Open chat". The effect resets when leaving the page.
+  // Context-aware chat: set project context when navigating into a project,
+  // clear to workspace chat when navigating away. Chat stays open (chatOpen=true)
+  // at all times — it's the primary UX surface.
   useEffect(() => {
-    if (!isFocused) return;
     const m = location.pathname.match(/^\/projects\/([^/]+)/);
     if (m) {
       const slug = decodeURIComponent(m[1]);
       setChatContext(slug);
-      setChatOpen(true);
+    } else {
+      setChatContext(null);
     }
-  }, [isFocused, location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOpenChatWithMessage = useCallback((context: string, message: string) => {
     setChatContext(context);
@@ -851,17 +849,14 @@ export default function RootLayout() {
               docked
             />
           </div>
-        ) : isFocused ? (
-          // Focused canvas mode (s198): 38/62 split — chat pane left, canvas right.
-          // HearthChatPane stub replaced with real docked ChatFlyout (same as
-          // workspace mode). Context is auto-set from the project path on mount.
-          <div
-            className="flex-1 min-h-0 overflow-hidden flex"
-            data-testid="hearth-focused-layout"
-          >
+        ) : (
+          // Hearth layout — chat always docked on the left, content on the right.
+          // Chat is the primary UX surface: always visible, context-aware.
+          // On /projects/:path → project chat. Everywhere else → workspace chat.
+          <div className="flex-1 min-h-0 overflow-hidden flex" data-testid="hearth-layout">
             <ChatFlyout
               open={chatOpen}
-              onClose={() => { setChatOpen(false); setChatContext(null); setChatInitialMessage(null); setChatRequestId(null); }}
+              onClose={() => { setChatOpen(false); setChatInitialMessage(null); setChatRequestId(null); }}
               theme={theme}
               projects={projectsHook.projects}
               openWithContext={chatContext}
@@ -872,43 +867,17 @@ export default function RootLayout() {
             />
             <main className="flex-1 min-h-0 flex flex-col overflow-hidden" data-testid="hearth-canvas">
               <RouteDevNotes />
+              {editorFilePath && (
+                <EditorFlyout
+                  filePath={editorFilePath}
+                  onClose={handleCloseEditor}
+                  theme={theme}
+                  position="left"
+                />
+              )}
               <Outlet context={ctx} />
             </main>
           </div>
-        ) : (
-          // Normal mode: content area with flyout overlays
-          <>
-            <main className="max-w-[1200px] w-full mx-auto flex-1 min-h-0 flex flex-col overflow-hidden">
-              {/* Route-default DevNote — registers a per-route default note
-                  to the global modal. Page components can embed inline
-                  <DevNote> instances for additional context; both stack into
-                  the same modal accessible from the header icon. */}
-              <RouteDevNotes />
-              <Outlet context={ctx} />
-            </main>
-
-            {/* Editor flyout (left side, overlay) */}
-            {editorFilePath && (
-              <EditorFlyout
-                filePath={editorFilePath}
-                onClose={handleCloseEditor}
-                theme={theme}
-                position="left"
-              />
-            )}
-
-            {/* Chat flyout (right side, overlay) */}
-            <ChatFlyout
-              open={chatOpen}
-              onClose={() => { setChatOpen(false); setChatContext(null); setChatInitialMessage(null); setChatRequestId(null); }}
-              theme={theme}
-              projects={projectsHook.projects}
-              openWithContext={chatContext}
-              openWithMessage={chatInitialMessage}
-              openRequestId={chatRequestId}
-              notifications={notifications}
-            />
-          </>
         )}
       </div>
 
