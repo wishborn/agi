@@ -199,6 +199,9 @@ export interface ChatFlyoutProps {
   openRequestId?: string | null;
   /** When true, renders as an inline flex child instead of a fixed overlay. */
   docked?: boolean;
+  /** When true (implies docked=true), renders without the outer width div so
+   *  the AccordionPanel shell section owns the container sizing. */
+  inShell?: boolean;
   /** s124 cycle 86 rework — global notification list. ChatFlyout filters
    *  to iterative-work entries matching the active session's project path
    *  and renders the latest as an inline IterativeWorkArtifactCard at the
@@ -293,7 +296,7 @@ function TokenBreakdownModal({
 // Component
 // ---------------------------------------------------------------------------
 
-export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithContext, openWithMessage, openRequestId, docked = false, notifications: notificationsProp }: ChatFlyoutProps) {
+export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithContext, openWithMessage, openRequestId, docked = false, inShell = false, notifications: notificationsProp }: ChatFlyoutProps) {
   // State
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const sessionsRef = useRef(sessions);
@@ -1266,12 +1269,13 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
 
   if (!open && !docked) return null;
 
-  // Shared header for docked and overlay modes
+  // Shared header — overlay mode shows Expand + X; docked/shell mode shows neither
+  // (the AccordionPanel rail trigger handles panel collapse instead of an X button).
   const panelHeader = (
     <div className="flex items-center justify-between px-4 py-[10px] bg-card border-b border-border shrink-0">
       <span className="font-bold text-sm text-foreground">Chat</span>
-      <div className="flex gap-1.5">
-        {!docked && (
+      {!docked && (
+        <div className="flex gap-1.5">
           <Button
             variant="outline"
             size="xs"
@@ -1279,15 +1283,15 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
           >
             {isFullscreen ? "Restore" : "Expand"}
           </Button>
-        )}
-        <Button
-          variant="outline"
-          size="xs"
-          onClick={onClose}
-        >
-          X
-        </Button>
-      </div>
+          <Button
+            variant="outline"
+            size="xs"
+            onClick={onClose}
+          >
+            X
+          </Button>
+        </div>
+      )}
     </div>
   );
 
@@ -1893,23 +1897,27 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     />
   );
 
-  // Docked mode: inline flex child (no overlay, no backdrop). The
-  // AccordionFlyout owns the chat-vs-canvas split internally — this branch
-  // just sizes the outer container.
+  // Docked / shell mode: inline flex child (no overlay, no backdrop).
   if (docked) {
+    const flyout = (
+      <AccordionFlyout
+        chat={chatSlot}
+        canvas={canvasSlot}
+        isMobile={isMobile}
+      />
+    );
     return (
       <>
         <div
           data-testid="chat-flyout"
           data-chat-context={openWithContext ?? undefined}
-          className="flex h-full border-l border-border bg-background"
-          style={{ width: "50%" }}
+          className={inShell
+            ? "flex h-full bg-background w-full"
+            : "flex h-full border-l border-border bg-background"
+          }
+          style={inShell ? undefined : { width: "50%" }}
         >
-          <AccordionFlyout
-            chat={chatSlot}
-            canvas={canvasSlot}
-            isMobile={isMobile}
-          />
+          {flyout}
         </div>
         <TokenBreakdownModal
           open={tokenBreakdownMsg !== null}

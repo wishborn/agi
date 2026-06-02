@@ -9,15 +9,14 @@
 
 import { ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import type { Project } from "@/types.js";
 
 interface ProjHeaderProps {
   project: Project;
-  onOpenChat: (path: string) => void;
+  onOpenChat?: (path: string) => void;
 }
 
-export function ProjHeader({ project, onOpenChat }: ProjHeaderProps) {
+export function ProjHeader({ project }: ProjHeaderProps) {
   const primaryRepo = project.repos?.[0];
   const shortRepoUrl = primaryRepo?.url
     ? primaryRepo.url.replace(/^https?:\/\/(www\.)?/, "").replace(/\.git$/, "")
@@ -65,17 +64,6 @@ export function ProjHeader({ project, onOpenChat }: ProjHeaderProps) {
           {hostedUrl}
         </a>
       )}
-      <div className="ml-auto shrink-0">
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 text-xs"
-          onClick={() => onOpenChat(project.path)}
-          data-testid="proj-header-chat-button"
-        >
-          Chat
-        </Button>
-      </div>
     </div>
   );
 }

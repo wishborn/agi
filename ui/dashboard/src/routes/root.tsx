@@ -34,7 +34,7 @@ import { ProfileCard } from "@/components/ProfileCard.js";
 import { ProfileManager } from "@/components/ProfileManager.js";
 import { useConfig, useDashboardWS, useHosting, useIsMobile, useLogStream, useOverview, useProjectConfigWS, useProjects } from "@/hooks.js";
 import { useTheme } from "@/lib/theme-provider";
-import { Chart, Icon } from "@particle-academy/react-fancy";
+import { Chart, Icon, AccordionPanel, type SectionRenderState } from "@particle-academy/react-fancy";
 import { checkForUpdates, startUpgrade, fetchUpgradeLog, fetchNotifications, markNotificationsRead, markAllNotificationsRead, executeProjectTool, fetchOnboardingState, fetchAuthStatus, fetchCurrentUser, fetchProviderBalances, fetchBalanceHistory } from "@/api.js";
 import type { ProviderBalance } from "@/api.js";
 import { LoginPage } from "@/components/LoginPage.js";
@@ -42,6 +42,40 @@ import type { ActivityEntry, DashboardEvent, Notification, ProjectActivity, Time
 import { resolveHelpContext } from "@/lib/help-context.js";
 
 export type View = "overview" | "entity" | "coa" | "settings" | "logs" | "projects" | "system";
+
+// ---------------------------------------------------------------------------
+// Shell panel layout
+// ---------------------------------------------------------------------------
+
+type ShellPanelId = "canvas" | "chat" | "workspace";
+const SHELL_PANELS: ShellPanelId[] = ["canvas", "chat", "workspace"];
+const SHELL_ORDER_KEY = "aionima-shell-panel-order";
+const DEFAULT_SHELL_ORDER: ShellPanelId[] = ["canvas", "chat", "workspace"];
+
+function ShellRailTrigger({ label, state }: { label: string; state: SectionRenderState }) {
+  const { open, toggle } = state;
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-label={open ? `Collapse ${label}` : `Expand ${label}`}
+      aria-expanded={open}
+      className={cn(
+        "h-full flex items-center justify-center cursor-pointer select-none",
+        "transition-colors border-x border-border/50",
+        open ? "w-3 bg-background hover:bg-secondary/50" : "w-8 bg-secondary/30 hover:bg-secondary/60",
+      )}
+      data-testid={`shell-rail-${label.toLowerCase()}`}
+    >
+      <span className={cn(
+        "text-[10px] tracking-[0.2em] uppercase font-semibold text-muted-foreground/60",
+        "[writing-mode:vertical-rl] [transform:rotate(180deg)]",
+      )}>
+        {label}
+      </span>
+    </button>
+  );
+}
 
 /** Context shared with child routes via useOutletContext(). */
 export interface RootContext {
@@ -58,10 +92,8 @@ export interface RootContext {
   onOpenChat: (context: string) => void;
   onOpenChatWithMessage: (context: string, message: string) => void;
   editorFilePath: string | null;
-  workspaceMode: boolean;
   onOpenEditor: (path: string) => void;
   onCloseEditor: () => void;
-  onToggleWorkspace: () => void;
   onToolExecute: (projectPath: string, toolId: string) => Promise<{ ok: boolean; output?: string; error?: string }>;
   onOpenTerminal: (projectPath: string) => void;
   onRefreshMagicApps?: () => void;
@@ -108,10 +140,23 @@ export default function RootLayout() {
   const isMobile = useIsMobile();
   const [timelineBucket, setTimelineBucket] = useState<TimeBucket>("day");
   const [liveActivity, setLiveActivity] = useState<ActivityEntry[]>([]);
-  const [chatOpen, setChatOpen] = useState(true);
   const [editorFilePath, setEditorFilePath] = useState<string | null>(null);
-  const [workspaceMode, setWorkspaceMode] = useState(false);
   const [projectActivity, setProjectActivity] = useState<Record<string, ProjectActivity | null>>({});
+
+  // Shell panel layout state
+  const [panelOrder] = useState<ShellPanelId[]>(() => {
+    try {
+      const stored = localStorage.getItem(SHELL_ORDER_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as unknown[];
+        if (Array.isArray(parsed) && parsed.length === 3 && parsed.every((x) => SHELL_PANELS.includes(x as ShellPanelId))) {
+          return parsed as ShellPanelId[];
+        }
+      }
+    } catch { /* ignore */ }
+    return DEFAULT_SHELL_ORDER;
+  });
+  const [shellOpen, setShellOpen] = useState<ShellPanelId[]>(["canvas", "chat"]);
   const [chatContext, setChatContext] = useState<string | null>(null);
   const [chatInitialMessage, setChatInitialMessage] = useState<string | null>(null);
   const [chatRequestId, setChatRequestId] = useState<string | null>(null);
@@ -278,7 +323,7 @@ export default function RootLayout() {
 
   const handleOpenChat = useCallback((context: string) => {
     setChatContext(context);
-    setChatOpen(true);
+    // Chat is always visible in the shell — just update context
   }, []);
 
   // Context-aware chat: set project context when navigating into a project,
@@ -298,7 +343,6 @@ export default function RootLayout() {
     setChatContext(context);
     setChatInitialMessage(message);
     setChatRequestId(crypto.randomUUID());
-    setChatOpen(true);
   }, []);
 
   // s124 cycle 86 rework — handleOpenChatForIterativeWork removed. The
@@ -313,13 +357,16 @@ export default function RootLayout() {
 
   const handleCloseEditor = useCallback(() => {
     setEditorFilePath(null);
-    setWorkspaceMode(false);
   }, []);
 
-  const handleToggleWorkspace = useCallback(() => {
-    setWorkspaceMode((p) => !p);
-    setChatOpen(true);
-  }, []);
+  // Open/close workspace shell panel as editor file changes
+  useEffect(() => {
+    setShellOpen((prev) => {
+      if (editorFilePath && !prev.includes("workspace")) return [...prev, "workspace"];
+      if (!editorFilePath && prev.includes("workspace")) return prev.filter((id) => id !== "workspace");
+      return prev;
+    });
+  }, [editorFilePath]);
 
   const handleToolExecute = useCallback(async (projectPath: string, toolId: string) => {
     return executeProjectTool(projectPath, toolId);
@@ -539,10 +586,8 @@ export default function RootLayout() {
     onOpenChat: handleOpenChat,
     onOpenChatWithMessage: handleOpenChatWithMessage,
     editorFilePath,
-    workspaceMode,
     onOpenEditor: handleOpenEditor,
     onCloseEditor: handleCloseEditor,
-    onToggleWorkspace: handleToggleWorkspace,
     onToolExecute: handleToolExecute,
     onOpenTerminal: handleOpenTerminal,
     onRefreshMagicApps: () => { void instanceMgr.refresh(); },
@@ -731,12 +776,7 @@ export default function RootLayout() {
                 as the agent can read it. */}
             <button
               onClick={() => {
-                // s137 t530 — resolve route → human-readable help context
-                // string instead of the raw pathname. The help agent gets
-                // a stable description (e.g. "providers + models
-                // management") regardless of dynamic segments in the URL.
                 setChatContext(`help:${resolveHelpContext(location.pathname)}`);
-                setChatOpen(true);
               }}
               className="p-2 rounded-lg transition-colors text-subtext0 hover:bg-surface0 hover:text-text"
               title="Get help with this page"
@@ -751,23 +791,6 @@ export default function RootLayout() {
                 </svg>
               </Icon>
             </button>
-            <button
-              onClick={() => setChatOpen((p) => !p)}
-              className={cn(
-                "p-2 rounded-lg transition-colors",
-                chatOpen
-                  ? "bg-primary text-primary-foreground"
-                  : "text-subtext0 hover:bg-surface0 hover:text-text",
-              )}
-              title="Chat"
-              data-testid="header-chat-button"
-            >
-              <Icon size="md">
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
-              </Icon>
-            </button>
             {!isMobile && <ActivityDot active={systemActive} />}
             <NotificationBell
               notifications={notifications}
@@ -775,11 +798,6 @@ export default function RootLayout() {
               onMarkRead={handleMarkRead}
               onMarkAllRead={handleMarkAllRead}
             />
-            {!isMobile && editorFilePath && (
-              <Button variant="outline" size="sm" onClick={handleToggleWorkspace}>
-                {workspaceMode ? "Exit Workspace" : "Edit | Chat"}
-              </Button>
-            )}
             {!isMobile && (
               <Button variant="outline" size="sm" onClick={toggle}>
                 {theme === "dark" ? "Light" : "Dark"}
@@ -823,9 +841,7 @@ export default function RootLayout() {
         }
       />
 
-      {/* Content area — min-h-0 is required so flex-1 is constrained to
-          (100vh - header) rather than growing to content height, which would
-          prevent PageScroll's overflow-y-auto from ever triggering. */}
+      {/* Content area — min-h-0 required so flex-1 is constrained to (100vh - header). */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
 
         {/* DNS setup notice */}
@@ -835,57 +851,95 @@ export default function RootLayout() {
           </div>
         )}
 
-        {workspaceMode && editorFilePath ? (
-          // Workspace mode: editor + chat side by side, sticky below header
-          <div className="flex flex-1 min-h-0">
-            <EditorFlyout
-              filePath={editorFilePath}
-              onClose={handleCloseEditor}
-              theme={theme}
-              docked
-            />
-            <ChatFlyout
-              open={chatOpen}
-              onClose={() => { setChatOpen(false); setChatContext(null); setChatInitialMessage(null); setChatRequestId(null); }}
-              theme={theme}
-              projects={projectsHook.projects}
-              openWithContext={chatContext}
-              openWithMessage={chatInitialMessage}
-              openRequestId={chatRequestId}
-              notifications={notifications}
-              docked
-            />
-          </div>
-        ) : (
-          // Hearth layout — chat always docked on the left, content on the right.
-          // Chat is the primary UX surface: always visible, context-aware.
-          // On /projects/:path → project chat. Everywhere else → workspace chat.
-          <div className="flex-1 min-h-0 overflow-hidden flex" data-testid="hearth-layout">
-            <ChatFlyout
-              open={chatOpen}
-              onClose={() => { setChatOpen(false); setChatInitialMessage(null); setChatRequestId(null); }}
-              theme={theme}
-              projects={projectsHook.projects}
-              openWithContext={chatContext}
-              openWithMessage={chatInitialMessage}
-              openRequestId={chatRequestId}
-              notifications={notifications}
-              docked
-            />
-            <main className="flex-1 min-h-0 flex flex-col overflow-hidden" data-testid="hearth-canvas">
-              <RouteDevNotes />
-              {editorFilePath && (
-                <EditorFlyout
-                  filePath={editorFilePath}
-                  onClose={handleCloseEditor}
-                  theme={theme}
-                  position="left"
-                />
-              )}
-              <Outlet context={ctx} />
-            </main>
-          </div>
-        )}
+        {/* 3-panel shell: Canvas | Chat | Workspace.
+            User-configurable order stored in localStorage under SHELL_ORDER_KEY.
+            Canvas = route content; Chat = always-on conversation; Workspace = editor.
+            Workspace panel auto-opens when a file is being edited. */}
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-row" data-testid="hearth-layout">
+          <AccordionPanel
+            orientation={isMobile ? "vertical" : "horizontal"}
+            value={shellOpen}
+            onValueChange={(next) => {
+              const typed = (next as string[]).filter(
+                (id): id is ShellPanelId => SHELL_PANELS.includes(id as ShellPanelId),
+              );
+              // Closing the workspace rail = close the editor file
+              if (shellOpen.includes("workspace") && !typed.includes("workspace")) {
+                handleCloseEditor();
+              }
+              setShellOpen(typed);
+            }}
+            className={cn("flex flex-1 w-full min-h-0", isMobile ? "flex-col" : "flex-row")}
+          >
+            {panelOrder.map((panelId) => {
+              const isOpen = shellOpen.includes(panelId);
+              const sectionClass = cn(
+                "min-w-0 min-h-0 flex flex-row",
+                isOpen ? "flex-1" : "w-8",
+              );
+
+              if (panelId === "canvas") {
+                return (
+                  <AccordionPanel.Section key="canvas" id="canvas" unstyled className={sectionClass}>
+                    <AccordionPanel.Content unstyled className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
+                      <main className="flex-1 min-h-0 flex flex-col overflow-hidden" data-testid="hearth-canvas">
+                        <RouteDevNotes />
+                        <Outlet context={ctx} />
+                      </main>
+                    </AccordionPanel.Content>
+                    <AccordionPanel.Trigger>
+                      {(state) => <ShellRailTrigger label="Canvas" state={state} />}
+                    </AccordionPanel.Trigger>
+                  </AccordionPanel.Section>
+                );
+              }
+
+              if (panelId === "chat") {
+                return (
+                  <AccordionPanel.Section key="chat" id="chat" unstyled className={sectionClass}>
+                    <AccordionPanel.Content unstyled className="flex-1 min-h-0 min-w-0">
+                      <ChatFlyout
+                        open
+                        onClose={() => { setChatInitialMessage(null); setChatRequestId(null); }}
+                        theme={theme}
+                        projects={projectsHook.projects}
+                        openWithContext={chatContext}
+                        openWithMessage={chatInitialMessage}
+                        openRequestId={chatRequestId}
+                        notifications={notifications}
+                        docked
+                        inShell
+                      />
+                    </AccordionPanel.Content>
+                    <AccordionPanel.Trigger>
+                      {(state) => <ShellRailTrigger label="Chat" state={state} />}
+                    </AccordionPanel.Trigger>
+                  </AccordionPanel.Section>
+                );
+              }
+
+              if (panelId === "workspace") {
+                return (
+                  <AccordionPanel.Section key="workspace" id="workspace" unstyled className={sectionClass}>
+                    <AccordionPanel.Content unstyled className="flex-1 min-h-0 min-w-0">
+                      <EditorFlyout
+                        filePath={editorFilePath}
+                        onClose={handleCloseEditor}
+                        theme={theme}
+                        panel
+                      />
+                    </AccordionPanel.Content>
+                    <AccordionPanel.Trigger>
+                      {(state) => <ShellRailTrigger label="Workspace" state={state} />}
+                    </AccordionPanel.Trigger>
+                  </AccordionPanel.Section>
+                );
+              }
+
+              return null;
+            })}
+          </AccordionPanel>
+        </div>
       </div>
 
       {/* Terminal flyout (bottom, overlay) */}
