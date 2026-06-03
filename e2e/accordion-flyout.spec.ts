@@ -73,20 +73,20 @@ test.describe("AccordionFlyout chrome", () => {
     await expect(chatEmptyState).toBeVisible();
   });
 
-  test("shell chat rail trigger collapses and re-expands chat panel", async ({ page }) => {
-    // The shell's CHAT rail trigger handles panel collapse — no header button.
-    const chatRail = page.getByTestId("shell-rail-chat");
+  test("shell chat panel header collapses and re-expands chat panel", async ({ page }) => {
+    // The shell chat panel header's collapse button handles panel collapse.
+    const toggleBtn = page.getByTestId("shell-panel-toggle-chat");
     const flyout = page.getByTestId("chat-flyout");
 
     await expect(flyout).toBeVisible();
-    await expect(chatRail).toBeVisible();
+    await expect(toggleBtn).toBeVisible();
 
-    // Collapse via the shell rail.
-    await chatRail.click();
+    // Collapse via the header collapse button.
+    await toggleBtn.click();
     await expect(flyout).not.toBeVisible({ timeout: 3_000 });
 
-    // Re-expand.
-    await chatRail.click();
+    // Re-expand by clicking the collapsed header strip.
+    await page.getByTestId("shell-panel-header-chat").click();
     await expect(flyout).toBeVisible({ timeout: 3_000 });
   });
 

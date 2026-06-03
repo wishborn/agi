@@ -21,9 +21,9 @@ test.describe("Shell — chat panel", () => {
     await expect(page.getByTestId("header-chat-button")).toHaveCount(0);
   });
 
-  test("shell rail triggers are present (canvas / chat)", async ({ page }) => {
+  test("shell panel headers are present (workspace / chat)", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByTestId("shell-rail-workspace")).toBeVisible({ timeout: 8_000 });
-    await expect(page.getByTestId("shell-rail-chat")).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByTestId("shell-panel-header-workspace")).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByTestId("shell-panel-header-chat")).toBeVisible({ timeout: 8_000 });
   });
 });

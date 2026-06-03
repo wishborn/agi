@@ -56,28 +56,88 @@ const SHELL_PANELS: ShellPanelId[] = ["workspace", "chat", "canvas"];
 const SHELL_ORDER_KEY = "aionima-shell-panel-order";
 const DEFAULT_SHELL_ORDER: ShellPanelId[] = ["workspace", "chat", "canvas"];
 
-function ShellRailTrigger({ label, state }: { label: string; state: SectionRenderState }) {
+interface ShellPanelHeaderProps {
+  label: string;
+  state: SectionRenderState;
+  dragging: boolean;
+  dragOver: boolean;
+  onDragStart: () => void;
+  onDragOver: () => void;
+  onDragLeave: () => void;
+  onDrop: () => void;
+  onDragEnd: () => void;
+}
+
+function ShellPanelHeader({ label, state, dragging, dragOver, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd }: ShellPanelHeaderProps) {
   const { open, toggle } = state;
+
+  // Collapsed state: full-height narrow strip with rotated label (also draggable)
+  if (!open) {
+    return (
+      <button
+        type="button"
+        draggable
+        onClick={toggle}
+        onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; onDragStart(); }}
+        onDragEnd={onDragEnd}
+        aria-label={`Expand ${label}`}
+        aria-expanded={false}
+        className={cn(
+          "w-10 h-full flex items-center justify-center select-none",
+          "bg-surface0/40 hover:bg-secondary/30 transition-colors",
+          "cursor-grab active:cursor-grabbing",
+          dragging && "opacity-50",
+        )}
+        data-testid={`shell-panel-header-${label.toLowerCase()}`}
+      >
+        <span className="text-[10px] tracking-[0.2em] uppercase font-semibold text-muted-foreground/50 [writing-mode:vertical-rl] [transform:rotate(180deg)]">
+          {label}
+        </span>
+      </button>
+    );
+  }
+
+  // Open state: horizontal header bar with grip + label + collapse button
   return (
-    <button
-      type="button"
-      onClick={toggle}
-      aria-label={open ? `Collapse ${label}` : `Expand ${label}`}
-      aria-expanded={open}
+    <div
+      draggable
+      onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; onDragStart(); }}
+      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; onDragOver(); }}
+      onDragLeave={onDragLeave}
+      onDrop={(e) => { e.preventDefault(); onDrop(); }}
+      onDragEnd={onDragEnd}
       className={cn(
-        "h-full flex items-center justify-center cursor-pointer select-none",
-        "transition-colors border-x border-border/50",
-        open ? "w-3 bg-background hover:bg-secondary/50" : "w-8 bg-secondary/30 hover:bg-secondary/60",
+        "flex items-center gap-2 px-3 h-9 shrink-0 select-none",
+        "border-b border-border bg-surface0/40 transition-colors",
+        "cursor-grab active:cursor-grabbing",
+        dragOver && "bg-primary/15 border-primary/40",
+        dragging && "opacity-50",
       )}
-      data-testid={`shell-rail-${label.toLowerCase()}`}
+      data-testid={`shell-panel-header-${label.toLowerCase()}`}
     >
-      <span className={cn(
-        "text-[10px] tracking-[0.2em] uppercase font-semibold text-muted-foreground/60",
-        "[writing-mode:vertical-rl] [transform:rotate(180deg)]",
-      )}>
+      {/* 4-dot grip */}
+      <svg className="w-3 h-3 shrink-0 text-muted-foreground/35 pointer-events-none" viewBox="0 0 8 8" fill="currentColor">
+        <circle cx="2" cy="2" r="1" />
+        <circle cx="6" cy="2" r="1" />
+        <circle cx="2" cy="6" r="1" />
+        <circle cx="6" cy="6" r="1" />
+      </svg>
+      <span className="flex-1 text-[10px] uppercase tracking-widest font-semibold text-muted-foreground/70 pointer-events-none">
         {label}
       </span>
-    </button>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); toggle(); }}
+        aria-label={`Collapse ${label}`}
+        aria-expanded={true}
+        className="p-1 rounded text-muted-foreground/40 hover:text-muted-foreground hover:bg-secondary/30 transition-colors cursor-pointer"
+        data-testid={`shell-panel-toggle-${label.toLowerCase()}`}
+      >
+        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="18 15 12 9 6 15" />
+        </svg>
+      </button>
+    </div>
   );
 }
 
@@ -148,7 +208,7 @@ export default function RootLayout() {
   const [projectActivity, setProjectActivity] = useState<Record<string, ProjectActivity | null>>({});
 
   // Shell panel layout state
-  const [panelOrder] = useState<ShellPanelId[]>(() => {
+  const [panelOrder, setPanelOrder] = useState<ShellPanelId[]>(() => {
     try {
       const stored = localStorage.getItem(SHELL_ORDER_KEY);
       if (stored) {
@@ -165,6 +225,25 @@ export default function RootLayout() {
   // Canvas section mount point — ChatFlyout portals AgentCanvas here
   const [canvasMountEl, setCanvasMountEl] = useState<Element | null>(null);
   const canvasMountRef = useCallback((el: Element | null) => { setCanvasMountEl(el); }, []);
+  // Panel drag-to-reorder state
+  const [draggingPanel, setDraggingPanel] = useState<ShellPanelId | null>(null);
+  const [dragOverPanel, setDragOverPanel] = useState<ShellPanelId | null>(null);
+
+  const handlePanelDrop = useCallback((targetId: ShellPanelId) => {
+    setDragOverPanel(null);
+    setDraggingPanel(null);
+    if (!draggingPanel || draggingPanel === targetId) return;
+    setPanelOrder((prev) => {
+      const result = [...prev];
+      const fromIdx = result.indexOf(draggingPanel);
+      const toIdx = result.indexOf(targetId);
+      if (fromIdx === -1 || toIdx === -1) return prev;
+      result.splice(fromIdx, 1);
+      result.splice(toIdx, 0, draggingPanel);
+      try { localStorage.setItem(SHELL_ORDER_KEY, JSON.stringify(result)); } catch { /* ignore */ }
+      return result;
+    });
+  }, [draggingPanel]);
   const [chatContext, setChatContext] = useState<string | null>(null);
   const [chatInitialMessage, setChatInitialMessage] = useState<string | null>(null);
   const [chatRequestId, setChatRequestId] = useState<string | null>(null);
@@ -873,14 +952,28 @@ export default function RootLayout() {
           >
             {panelOrder.map((panelId) => {
               const isOpen = shellOpen.includes(panelId);
+              // Open: flex-col (header on top, content below); closed: narrow strip
               const sectionClass = cn(
-                "min-w-0 min-h-0 flex flex-row",
-                isOpen ? "flex-1" : "w-8",
+                "min-h-0 flex flex-col",
+                isOpen ? "flex-1 min-w-0" : "w-10 shrink-0",
               );
+              const label = panelId === "workspace" ? "Workspace" : panelId === "chat" ? "Chat" : "Canvas";
+              const headerProps = {
+                dragging: draggingPanel === panelId,
+                dragOver: dragOverPanel === panelId,
+                onDragStart: () => setDraggingPanel(panelId),
+                onDragOver: () => setDragOverPanel(panelId),
+                onDragLeave: () => setDragOverPanel(null),
+                onDrop: () => handlePanelDrop(panelId),
+                onDragEnd: () => { setDraggingPanel(null); setDragOverPanel(null); },
+              };
 
               if (panelId === "workspace") {
                 return (
                   <AccordionPanel.Section key="workspace" id="workspace" unstyled className={sectionClass}>
+                    <AccordionPanel.Trigger>
+                      {(state) => <ShellPanelHeader label={label} state={state} {...headerProps} />}
+                    </AccordionPanel.Trigger>
                     <AccordionPanel.Content unstyled className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
                       <main className="flex-1 min-h-0 flex flex-col overflow-hidden" data-testid="hearth-canvas">
                         <RouteDevNotes />
@@ -895,9 +988,6 @@ export default function RootLayout() {
                         <Outlet context={ctx} />
                       </main>
                     </AccordionPanel.Content>
-                    <AccordionPanel.Trigger>
-                      {(state) => <ShellRailTrigger label="Workspace" state={state} />}
-                    </AccordionPanel.Trigger>
                   </AccordionPanel.Section>
                 );
               }
@@ -905,6 +995,9 @@ export default function RootLayout() {
               if (panelId === "chat") {
                 return (
                   <AccordionPanel.Section key="chat" id="chat" unstyled className={sectionClass}>
+                    <AccordionPanel.Trigger>
+                      {(state) => <ShellPanelHeader label={label} state={state} {...headerProps} />}
+                    </AccordionPanel.Trigger>
                     <AccordionPanel.Content unstyled className="flex-1 min-h-0 min-w-0">
                       <ChatFlyout
                         open
@@ -920,9 +1013,6 @@ export default function RootLayout() {
                         canvasPortalTarget={canvasMountEl}
                       />
                     </AccordionPanel.Content>
-                    <AccordionPanel.Trigger>
-                      {(state) => <ShellRailTrigger label="Chat" state={state} />}
-                    </AccordionPanel.Trigger>
                   </AccordionPanel.Section>
                 );
               }
@@ -930,13 +1020,13 @@ export default function RootLayout() {
               if (panelId === "canvas") {
                 return (
                   <AccordionPanel.Section key="canvas" id="canvas" unstyled className={sectionClass}>
+                    <AccordionPanel.Trigger>
+                      {(state) => <ShellPanelHeader label={label} state={state} {...headerProps} />}
+                    </AccordionPanel.Trigger>
                     <AccordionPanel.Content unstyled className="flex-1 min-h-0 min-w-0">
-                      {/* AgentCanvas is portalled here by ChatFlyout when canvasMountEl is set */}
+                      {/* AgentCanvas portalled here from ChatFlyout's React tree */}
                       <div ref={canvasMountRef} className="h-full w-full" />
                     </AccordionPanel.Content>
-                    <AccordionPanel.Trigger>
-                      {(state) => <ShellRailTrigger label="Canvas" state={state} />}
-                    </AccordionPanel.Trigger>
                   </AccordionPanel.Section>
                 );
               }
