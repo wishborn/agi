@@ -47,10 +47,14 @@ export type View = "overview" | "entity" | "coa" | "settings" | "logs" | "projec
 // Shell panel layout
 // ---------------------------------------------------------------------------
 
-type ShellPanelId = "canvas" | "chat" | "workspace";
-const SHELL_PANELS: ShellPanelId[] = ["canvas", "chat", "workspace"];
+// Shell panel semantics:
+//   workspace = current AGI page (projects, settings, whatever the user is doing)
+//   chat      = conversation with Aion
+//   canvas    = Agent Canvas — where the agent works (plans, artifacts, iteration output)
+type ShellPanelId = "workspace" | "chat" | "canvas";
+const SHELL_PANELS: ShellPanelId[] = ["workspace", "chat", "canvas"];
 const SHELL_ORDER_KEY = "aionima-shell-panel-order";
-const DEFAULT_SHELL_ORDER: ShellPanelId[] = ["canvas", "chat", "workspace"];
+const DEFAULT_SHELL_ORDER: ShellPanelId[] = ["workspace", "chat", "canvas"];
 
 function ShellRailTrigger({ label, state }: { label: string; state: SectionRenderState }) {
   const { open, toggle } = state;
@@ -156,7 +160,11 @@ export default function RootLayout() {
     } catch { /* ignore */ }
     return DEFAULT_SHELL_ORDER;
   });
-  const [shellOpen, setShellOpen] = useState<ShellPanelId[]>(["canvas", "chat"]);
+  // workspace + chat open by default; canvas starts collapsed (expands when agent produces something)
+  const [shellOpen, setShellOpen] = useState<ShellPanelId[]>(["workspace", "chat"]);
+  // Canvas section mount point — ChatFlyout portals AgentCanvas here
+  const [canvasMountEl, setCanvasMountEl] = useState<Element | null>(null);
+  const canvasMountRef = useCallback((el: Element | null) => { setCanvasMountEl(el); }, []);
   const [chatContext, setChatContext] = useState<string | null>(null);
   const [chatInitialMessage, setChatInitialMessage] = useState<string | null>(null);
   const [chatRequestId, setChatRequestId] = useState<string | null>(null);
@@ -359,14 +367,6 @@ export default function RootLayout() {
     setEditorFilePath(null);
   }, []);
 
-  // Open/close workspace shell panel as editor file changes
-  useEffect(() => {
-    setShellOpen((prev) => {
-      if (editorFilePath && !prev.includes("workspace")) return [...prev, "workspace"];
-      if (!editorFilePath && prev.includes("workspace")) return prev.filter((id) => id !== "workspace");
-      return prev;
-    });
-  }, [editorFilePath]);
 
   const handleToolExecute = useCallback(async (projectPath: string, toolId: string) => {
     return executeProjectTool(projectPath, toolId);
@@ -851,10 +851,14 @@ export default function RootLayout() {
           </div>
         )}
 
-        {/* 3-panel shell: Canvas | Chat | Workspace.
-            User-configurable order stored in localStorage under SHELL_ORDER_KEY.
-            Canvas = route content; Chat = always-on conversation; Workspace = editor.
-            Workspace panel auto-opens when a file is being edited. */}
+        {/* 3-panel shell: Workspace | Chat | Canvas.
+            Workspace = current AGI page (projects, settings, whatever the user is doing).
+            Chat      = conversation with Aion.
+            Canvas    = Agent Canvas — where the agent works (plans, artifacts).
+            AgentCanvas renders inside the Canvas section via a React portal from
+            ChatFlyout so its state/WS events stay local to ChatFlyout's tree.
+            Panel order is user-configurable (localStorage SHELL_ORDER_KEY).
+            Canvas starts collapsed; workspace + chat open by default. */}
         <div className="flex-1 min-h-0 overflow-hidden flex flex-row" data-testid="hearth-layout">
           <AccordionPanel
             orientation={isMobile ? "vertical" : "horizontal"}
@@ -863,10 +867,6 @@ export default function RootLayout() {
               const typed = (next as string[]).filter(
                 (id): id is ShellPanelId => SHELL_PANELS.includes(id as ShellPanelId),
               );
-              // Closing the workspace rail = close the editor file
-              if (shellOpen.includes("workspace") && !typed.includes("workspace")) {
-                handleCloseEditor();
-              }
               setShellOpen(typed);
             }}
             className={cn("flex flex-1 w-full min-h-0", isMobile ? "flex-col" : "flex-row")}
@@ -878,17 +878,25 @@ export default function RootLayout() {
                 isOpen ? "flex-1" : "w-8",
               );
 
-              if (panelId === "canvas") {
+              if (panelId === "workspace") {
                 return (
-                  <AccordionPanel.Section key="canvas" id="canvas" unstyled className={sectionClass}>
+                  <AccordionPanel.Section key="workspace" id="workspace" unstyled className={sectionClass}>
                     <AccordionPanel.Content unstyled className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
                       <main className="flex-1 min-h-0 flex flex-col overflow-hidden" data-testid="hearth-canvas">
                         <RouteDevNotes />
+                        {editorFilePath && (
+                          <EditorFlyout
+                            filePath={editorFilePath}
+                            onClose={handleCloseEditor}
+                            theme={theme}
+                            position="left"
+                          />
+                        )}
                         <Outlet context={ctx} />
                       </main>
                     </AccordionPanel.Content>
                     <AccordionPanel.Trigger>
-                      {(state) => <ShellRailTrigger label="Canvas" state={state} />}
+                      {(state) => <ShellRailTrigger label="Workspace" state={state} />}
                     </AccordionPanel.Trigger>
                   </AccordionPanel.Section>
                 );
@@ -909,6 +917,7 @@ export default function RootLayout() {
                         notifications={notifications}
                         docked
                         inShell
+                        canvasPortalTarget={canvasMountEl}
                       />
                     </AccordionPanel.Content>
                     <AccordionPanel.Trigger>
@@ -918,19 +927,15 @@ export default function RootLayout() {
                 );
               }
 
-              if (panelId === "workspace") {
+              if (panelId === "canvas") {
                 return (
-                  <AccordionPanel.Section key="workspace" id="workspace" unstyled className={sectionClass}>
+                  <AccordionPanel.Section key="canvas" id="canvas" unstyled className={sectionClass}>
                     <AccordionPanel.Content unstyled className="flex-1 min-h-0 min-w-0">
-                      <EditorFlyout
-                        filePath={editorFilePath}
-                        onClose={handleCloseEditor}
-                        theme={theme}
-                        panel
-                      />
+                      {/* AgentCanvas is portalled here by ChatFlyout when canvasMountEl is set */}
+                      <div ref={canvasMountRef} className="h-full w-full" />
                     </AccordionPanel.Content>
                     <AccordionPanel.Trigger>
-                      {(state) => <ShellRailTrigger label="Workspace" state={state} />}
+                      {(state) => <ShellRailTrigger label="Canvas" state={state} />}
                     </AccordionPanel.Trigger>
                   </AccordionPanel.Section>
                 );

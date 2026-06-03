@@ -23,7 +23,7 @@ test.describe("Shell — chat panel", () => {
 
   test("shell rail triggers are present (canvas / chat)", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByTestId("shell-rail-canvas")).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByTestId("shell-rail-workspace")).toBeVisible({ timeout: 8_000 });
     await expect(page.getByTestId("shell-rail-chat")).toBeVisible({ timeout: 8_000 });
   });
 });

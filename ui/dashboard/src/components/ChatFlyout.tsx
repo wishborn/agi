@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 // Chat content now renders via react-fancy's ContentRenderer (see imports
 // below). The legacy ReactMarkdown + markdownComponents path was retired
 // in favor of ContentRenderer + registered extensions (thinking, question,
@@ -202,6 +203,10 @@ export interface ChatFlyoutProps {
   /** When true (implies docked=true), renders without the outer width div so
    *  the AccordionPanel shell section owns the container sizing. */
   inShell?: boolean;
+  /** When provided (inShell=true), the AgentCanvas (canvasSlot) is portalled
+   *  into this element so it renders inside the shell's Canvas section while
+   *  remaining in ChatFlyout's React tree (state + WS events stay local). */
+  canvasPortalTarget?: Element | null;
   /** s124 cycle 86 rework — global notification list. ChatFlyout filters
    *  to iterative-work entries matching the active session's project path
    *  and renders the latest as an inline IterativeWorkArtifactCard at the
@@ -296,7 +301,7 @@ function TokenBreakdownModal({
 // Component
 // ---------------------------------------------------------------------------
 
-export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithContext, openWithMessage, openRequestId, docked = false, inShell = false, notifications: notificationsProp }: ChatFlyoutProps) {
+export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithContext, openWithMessage, openRequestId, docked = false, inShell = false, canvasPortalTarget, notifications: notificationsProp }: ChatFlyoutProps) {
   // State
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const sessionsRef = useRef(sessions);
@@ -1899,11 +1904,18 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
 
   // Docked / shell mode: inline flex child (no overlay, no backdrop).
   if (docked) {
-    // In shell mode, render the chat body directly — no nested AccordionFlyout.
-    // The outer shell's AccordionPanel already provides the canvas/chat/workspace
-    // split; nesting AccordionFlyout would produce 4 duplicate rail triggers.
+    // In shell mode, render chat directly (no nested AccordionFlyout — that
+    // would add 2 extra rail triggers inside the outer shell's 3 sections).
+    // The AgentCanvas is portalled into the shell's dedicated Canvas section
+    // via canvasPortalTarget so it stays in this React tree (state/WS events)
+    // but appears visually in the correct panel.
     const inner = inShell
-      ? chatSlot
+      ? (
+        <>
+          {chatSlot}
+          {canvasPortalTarget && createPortal(canvasSlot, canvasPortalTarget)}
+        </>
+      )
       : <AccordionFlyout chat={chatSlot} canvas={canvasSlot} isMobile={isMobile} />;
     return (
       <>
