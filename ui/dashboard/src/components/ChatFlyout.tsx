@@ -1899,13 +1899,12 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
 
   // Docked / shell mode: inline flex child (no overlay, no backdrop).
   if (docked) {
-    const flyout = (
-      <AccordionFlyout
-        chat={chatSlot}
-        canvas={canvasSlot}
-        isMobile={isMobile}
-      />
-    );
+    // In shell mode, render the chat body directly — no nested AccordionFlyout.
+    // The outer shell's AccordionPanel already provides the canvas/chat/workspace
+    // split; nesting AccordionFlyout would produce 4 duplicate rail triggers.
+    const inner = inShell
+      ? chatSlot
+      : <AccordionFlyout chat={chatSlot} canvas={canvasSlot} isMobile={isMobile} />;
     return (
       <>
         <div
@@ -1917,7 +1916,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
           }
           style={inShell ? undefined : { width: "50%" }}
         >
-          {flyout}
+          {inner}
         </div>
         <TokenBreakdownModal
           open={tokenBreakdownMsg !== null}
