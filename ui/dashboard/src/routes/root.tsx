@@ -9,13 +9,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { EditorFlyout } from "@/components/EditorFlyout.js";
 import { TerminalFlyout } from "@/components/TerminalFlyout.js";
 import { WhoDBFlyout } from "@/components/WhoDBFlyout.js";
+import { UpgradeNextStepsPanel } from "@/components/UpgradeNextStepsPanel.js";
 
 import { cn, safeArray } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { HearthTop } from "@/components/HearthTop.js";
-import { HearthChatPane } from "@/components/HearthChatPane.js";
-import { useFocusedRoute } from "@/hooks/useFocusedRoute.js";
 import { ChatFlyout } from "@/components/ChatFlyout.js";
 import { MagicAppModal } from "@/components/MagicAppModal.js";
 import { MagicAppTray } from "@/components/MagicAppTray.js";
@@ -35,7 +34,7 @@ import { ProfileCard } from "@/components/ProfileCard.js";
 import { ProfileManager } from "@/components/ProfileManager.js";
 import { useConfig, useDashboardWS, useHosting, useIsMobile, useLogStream, useOverview, useProjectConfigWS, useProjects } from "@/hooks.js";
 import { useTheme } from "@/lib/theme-provider";
-import { Chart, Icon } from "@particle-academy/react-fancy";
+import { Chart, Icon, AccordionPanel, type SectionRenderState } from "@particle-academy/react-fancy";
 import { checkForUpdates, startUpgrade, fetchUpgradeLog, fetchNotifications, markNotificationsRead, markAllNotificationsRead, executeProjectTool, fetchOnboardingState, fetchAuthStatus, fetchCurrentUser, fetchProviderBalances, fetchBalanceHistory } from "@/api.js";
 import type { ProviderBalance } from "@/api.js";
 import { LoginPage } from "@/components/LoginPage.js";
@@ -43,6 +42,104 @@ import type { ActivityEntry, DashboardEvent, Notification, ProjectActivity, Time
 import { resolveHelpContext } from "@/lib/help-context.js";
 
 export type View = "overview" | "entity" | "coa" | "settings" | "logs" | "projects" | "system";
+
+// ---------------------------------------------------------------------------
+// Shell panel layout
+// ---------------------------------------------------------------------------
+
+// Shell panel semantics:
+//   workspace = current AGI page (projects, settings, whatever the user is doing)
+//   chat      = conversation with Aion
+//   canvas    = Agent Canvas — where the agent works (plans, artifacts, iteration output)
+type ShellPanelId = "workspace" | "chat" | "canvas";
+const SHELL_PANELS: ShellPanelId[] = ["workspace", "chat", "canvas"];
+const SHELL_ORDER_KEY = "aionima-shell-panel-order";
+const DEFAULT_SHELL_ORDER: ShellPanelId[] = ["workspace", "chat", "canvas"];
+
+interface ShellPanelHeaderProps {
+  label: string;
+  state: SectionRenderState;
+  dragging: boolean;
+  dragOver: boolean;
+  onDragStart: () => void;
+  onDragOver: () => void;
+  onDragLeave: () => void;
+  onDrop: () => void;
+  onDragEnd: () => void;
+}
+
+function ShellPanelHeader({ label, state, dragging, dragOver, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd }: ShellPanelHeaderProps) {
+  const { open, toggle } = state;
+
+  // Collapsed state: full-height narrow strip with rotated label (also draggable)
+  if (!open) {
+    return (
+      <button
+        type="button"
+        draggable
+        onClick={toggle}
+        onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; onDragStart(); }}
+        onDragEnd={onDragEnd}
+        aria-label={`Expand ${label}`}
+        aria-expanded={false}
+        className={cn(
+          "w-10 h-full flex items-center justify-center select-none",
+          "bg-surface0/40 hover:bg-secondary/30 transition-colors",
+          "cursor-grab active:cursor-grabbing",
+          dragging && "opacity-50",
+        )}
+        data-testid={`shell-panel-header-${label.toLowerCase()}`}
+      >
+        <span className="text-[10px] tracking-[0.2em] uppercase font-semibold text-muted-foreground/50 [writing-mode:vertical-rl] [transform:rotate(180deg)]">
+          {label}
+        </span>
+      </button>
+    );
+  }
+
+  // Open state: horizontal header bar with grip + label + collapse button
+  return (
+    <div
+      draggable
+      onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; onDragStart(); }}
+      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; onDragOver(); }}
+      onDragLeave={onDragLeave}
+      onDrop={(e) => { e.preventDefault(); onDrop(); }}
+      onDragEnd={onDragEnd}
+      className={cn(
+        "flex items-center gap-2 px-3 h-9 shrink-0 select-none",
+        "border-b border-border bg-surface0/40 transition-colors",
+        "cursor-grab active:cursor-grabbing",
+        dragOver && "bg-primary/15 border-primary/40",
+        dragging && "opacity-50",
+      )}
+      data-testid={`shell-panel-header-${label.toLowerCase()}`}
+    >
+      {/* 4-dot grip */}
+      <svg className="w-3 h-3 shrink-0 text-muted-foreground/35 pointer-events-none" viewBox="0 0 8 8" fill="currentColor">
+        <circle cx="2" cy="2" r="1" />
+        <circle cx="6" cy="2" r="1" />
+        <circle cx="2" cy="6" r="1" />
+        <circle cx="6" cy="6" r="1" />
+      </svg>
+      <span className="flex-1 text-[10px] uppercase tracking-widest font-semibold text-muted-foreground/70 pointer-events-none">
+        {label}
+      </span>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); toggle(); }}
+        aria-label={`Collapse ${label}`}
+        aria-expanded={true}
+        className="p-1 rounded text-muted-foreground/40 hover:text-muted-foreground hover:bg-secondary/30 transition-colors cursor-pointer"
+        data-testid={`shell-panel-toggle-${label.toLowerCase()}`}
+      >
+        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="18 15 12 9 6 15" />
+        </svg>
+      </button>
+    </div>
+  );
+}
 
 /** Context shared with child routes via useOutletContext(). */
 export interface RootContext {
@@ -59,10 +156,8 @@ export interface RootContext {
   onOpenChat: (context: string) => void;
   onOpenChatWithMessage: (context: string, message: string) => void;
   editorFilePath: string | null;
-  workspaceMode: boolean;
   onOpenEditor: (path: string) => void;
   onCloseEditor: () => void;
-  onToggleWorkspace: () => void;
   onToolExecute: (projectPath: string, toolId: string) => Promise<{ ok: boolean; output?: string; error?: string }>;
   onOpenTerminal: (projectPath: string) => void;
   onRefreshMagicApps?: () => void;
@@ -91,26 +186,7 @@ export default function RootLayout() {
 
   const location = useLocation();
   const navigate = useNavigate();
-  const isFocused = useFocusedRoute();
 
-  // Derive context title/sub for HearthChatPane from the current route
-  const focusedContext = (() => {
-    const projectMatch = location.pathname.match(/^\/projects\/([^/]+)/);
-    if (projectMatch) {
-      const slug = decodeURIComponent(projectMatch[1]);
-      const project = projectsHook.projects.find((p) => p.path === slug);
-      return { title: project?.name ?? slug, sub: project?.category ?? "Project" };
-    }
-    const commsMatch = location.pathname.match(/^\/comms\/([^/]+)/);
-    if (commsMatch) {
-      const channel = commsMatch[1];
-      return { title: channel.charAt(0).toUpperCase() + channel.slice(1), sub: "Channel" };
-    }
-    if (location.pathname.startsWith("/comms")) {
-      return { title: "Messages", sub: "All channels" };
-    }
-    return { title: "", sub: "" };
-  })();
 
   // FIRSTBOOT check — redirect to onboarding if not completed
   useEffect(() => {
@@ -128,10 +204,46 @@ export default function RootLayout() {
   const isMobile = useIsMobile();
   const [timelineBucket, setTimelineBucket] = useState<TimeBucket>("day");
   const [liveActivity, setLiveActivity] = useState<ActivityEntry[]>([]);
-  const [chatOpen, setChatOpen] = useState(false);
   const [editorFilePath, setEditorFilePath] = useState<string | null>(null);
-  const [workspaceMode, setWorkspaceMode] = useState(false);
   const [projectActivity, setProjectActivity] = useState<Record<string, ProjectActivity | null>>({});
+
+  // Shell panel layout state
+  const [panelOrder, setPanelOrder] = useState<ShellPanelId[]>(() => {
+    try {
+      const stored = localStorage.getItem(SHELL_ORDER_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as unknown[];
+        if (Array.isArray(parsed) && parsed.length === 3 && parsed.every((x) => SHELL_PANELS.includes(x as ShellPanelId))) {
+          return parsed as ShellPanelId[];
+        }
+      }
+    } catch { /* ignore */ }
+    return DEFAULT_SHELL_ORDER;
+  });
+  // workspace + chat open by default; canvas starts collapsed (expands when agent produces something)
+  const [shellOpen, setShellOpen] = useState<ShellPanelId[]>(["workspace", "chat"]);
+  // Canvas section mount point — ChatFlyout portals AgentCanvas here
+  const [canvasMountEl, setCanvasMountEl] = useState<Element | null>(null);
+  const canvasMountRef = useCallback((el: Element | null) => { setCanvasMountEl(el); }, []);
+  // Panel drag-to-reorder state
+  const [draggingPanel, setDraggingPanel] = useState<ShellPanelId | null>(null);
+  const [dragOverPanel, setDragOverPanel] = useState<ShellPanelId | null>(null);
+
+  const handlePanelDrop = useCallback((targetId: ShellPanelId) => {
+    setDragOverPanel(null);
+    setDraggingPanel(null);
+    if (!draggingPanel || draggingPanel === targetId) return;
+    setPanelOrder((prev) => {
+      const result = [...prev];
+      const fromIdx = result.indexOf(draggingPanel);
+      const toIdx = result.indexOf(targetId);
+      if (fromIdx === -1 || toIdx === -1) return prev;
+      result.splice(fromIdx, 1);
+      result.splice(toIdx, 0, draggingPanel);
+      try { localStorage.setItem(SHELL_ORDER_KEY, JSON.stringify(result)); } catch { /* ignore */ }
+      return result;
+    });
+  }, [draggingPanel]);
   const [chatContext, setChatContext] = useState<string | null>(null);
   const [chatInitialMessage, setChatInitialMessage] = useState<string | null>(null);
   const [chatRequestId, setChatRequestId] = useState<string | null>(null);
@@ -139,6 +251,8 @@ export default function RootLayout() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
+  const [upgradedEvent, setUpgradedEvent] = useState<import("../types.js").SystemUpgradedEvent | null>(null);
+  const [showUpgradePanel, setShowUpgradePanel] = useState(false);
   const [providerBalances, setProviderBalances] = useState<ProviderBalance[]>([]);
   const [balanceHistories, setBalanceHistories] = useState<Record<string, number[]>>({});
   const [upgradePhase, setUpgradePhase] = useState<string | null>(null);
@@ -296,14 +410,26 @@ export default function RootLayout() {
 
   const handleOpenChat = useCallback((context: string) => {
     setChatContext(context);
-    setChatOpen(true);
+    // Chat is always visible in the shell — just update context
   }, []);
+
+  // Context-aware chat: set project context when navigating into a project,
+  // clear to workspace chat when navigating away. Chat stays open (chatOpen=true)
+  // at all times — it's the primary UX surface.
+  useEffect(() => {
+    const m = location.pathname.match(/^\/projects\/([^/]+)/);
+    if (m) {
+      const slug = decodeURIComponent(m[1]);
+      setChatContext(slug);
+    } else {
+      setChatContext(null);
+    }
+  }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOpenChatWithMessage = useCallback((context: string, message: string) => {
     setChatContext(context);
     setChatInitialMessage(message);
     setChatRequestId(crypto.randomUUID());
-    setChatOpen(true);
   }, []);
 
   // s124 cycle 86 rework — handleOpenChatForIterativeWork removed. The
@@ -318,13 +444,8 @@ export default function RootLayout() {
 
   const handleCloseEditor = useCallback(() => {
     setEditorFilePath(null);
-    setWorkspaceMode(false);
   }, []);
 
-  const handleToggleWorkspace = useCallback(() => {
-    setWorkspaceMode((p) => !p);
-    setChatOpen(true);
-  }, []);
 
   const handleToolExecute = useCallback(async (projectPath: string, toolId: string) => {
     return executeProjectTool(projectPath, toolId);
@@ -420,6 +541,10 @@ export default function RootLayout() {
     }
     if (event.type === "system:update_available") {
       setUpdateCheck(event.data);
+    }
+    if (event.type === "system:upgraded") {
+      setUpgradedEvent(event.data);
+      setShowUpgradePanel(true);
     }
     if (event.type === "notification:new") {
       setNotifications((prev) => {
@@ -540,10 +665,8 @@ export default function RootLayout() {
     onOpenChat: handleOpenChat,
     onOpenChatWithMessage: handleOpenChatWithMessage,
     editorFilePath,
-    workspaceMode,
     onOpenEditor: handleOpenEditor,
     onCloseEditor: handleCloseEditor,
-    onToggleWorkspace: handleToggleWorkspace,
     onToolExecute: handleToolExecute,
     onOpenTerminal: handleOpenTerminal,
     onRefreshMagicApps: () => { void instanceMgr.refresh(); },
@@ -732,12 +855,7 @@ export default function RootLayout() {
                 as the agent can read it. */}
             <button
               onClick={() => {
-                // s137 t530 — resolve route → human-readable help context
-                // string instead of the raw pathname. The help agent gets
-                // a stable description (e.g. "providers + models
-                // management") regardless of dynamic segments in the URL.
                 setChatContext(`help:${resolveHelpContext(location.pathname)}`);
-                setChatOpen(true);
               }}
               className="p-2 rounded-lg transition-colors text-subtext0 hover:bg-surface0 hover:text-text"
               title="Get help with this page"
@@ -752,23 +870,6 @@ export default function RootLayout() {
                 </svg>
               </Icon>
             </button>
-            <button
-              onClick={() => setChatOpen((p) => !p)}
-              className={cn(
-                "p-2 rounded-lg transition-colors",
-                chatOpen
-                  ? "bg-primary text-primary-foreground"
-                  : "text-subtext0 hover:bg-surface0 hover:text-text",
-              )}
-              title="Chat"
-              data-testid="header-chat-button"
-            >
-              <Icon size="md">
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
-              </Icon>
-            </button>
             {!isMobile && <ActivityDot active={systemActive} />}
             <NotificationBell
               notifications={notifications}
@@ -776,11 +877,6 @@ export default function RootLayout() {
               onMarkRead={handleMarkRead}
               onMarkAllRead={handleMarkAllRead}
             />
-            {!isMobile && editorFilePath && (
-              <Button variant="outline" size="sm" onClick={handleToggleWorkspace}>
-                {workspaceMode ? "Exit Workspace" : "Edit | Chat"}
-              </Button>
-            )}
             {!isMobile && (
               <Button variant="outline" size="sm" onClick={toggle}>
                 {theme === "dark" ? "Light" : "Dark"}
@@ -824,8 +920,8 @@ export default function RootLayout() {
         }
       />
 
-      {/* Content area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      {/* Content area — min-h-0 required so flex-1 is constrained to (100vh - header). */}
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
 
         {/* DNS setup notice */}
         {hostingHook.status?.dnsmasq?.running && (
@@ -834,79 +930,111 @@ export default function RootLayout() {
           </div>
         )}
 
-        {workspaceMode && editorFilePath ? (
-          // Workspace mode: editor + chat side by side, sticky below header
-          <div className="flex flex-1 min-h-0">
-            <EditorFlyout
-              filePath={editorFilePath}
-              onClose={handleCloseEditor}
-              theme={theme}
-              docked
-            />
-            <ChatFlyout
-              open={chatOpen}
-              onClose={() => { setChatOpen(false); setChatContext(null); setChatInitialMessage(null); setChatRequestId(null); }}
-              theme={theme}
-              projects={projectsHook.projects}
-              openWithContext={chatContext}
-              openWithMessage={chatInitialMessage}
-              openRequestId={chatRequestId}
-              notifications={notifications}
-              docked
-            />
-          </div>
-        ) : isFocused ? (
-          // Focused canvas mode (s198): 38/62 split — chat pane left, canvas right
-          <div
-            className="flex-1 min-h-0 overflow-hidden grid"
-            style={{ gridTemplateColumns: "38fr 62fr" }}
-            data-testid="hearth-focused-layout"
+        {/* 3-panel shell: Workspace | Chat | Canvas.
+            Workspace = current AGI page (projects, settings, whatever the user is doing).
+            Chat      = conversation with Aion.
+            Canvas    = Agent Canvas — where the agent works (plans, artifacts).
+            AgentCanvas renders inside the Canvas section via a React portal from
+            ChatFlyout so its state/WS events stay local to ChatFlyout's tree.
+            Panel order is user-configurable (localStorage SHELL_ORDER_KEY).
+            Canvas starts collapsed; workspace + chat open by default. */}
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-row" data-testid="hearth-layout">
+          <AccordionPanel
+            orientation={isMobile ? "vertical" : "horizontal"}
+            value={shellOpen}
+            onValueChange={(next) => {
+              const typed = (next as string[]).filter(
+                (id): id is ShellPanelId => SHELL_PANELS.includes(id as ShellPanelId),
+              );
+              setShellOpen(typed);
+            }}
+            className={cn("flex flex-1 w-full min-h-0", isMobile ? "flex-col" : "flex-row")}
           >
-            <HearthChatPane
-              contextTitle={focusedContext.title}
-              contextSub={focusedContext.sub}
-              onSendMessage={(msg) => handleOpenChatWithMessage(focusedContext.title, msg)}
-            />
-            <main className="flex-1 min-h-0 flex flex-col overflow-hidden" data-testid="hearth-canvas">
-              <RouteDevNotes />
-              <Outlet context={ctx} />
-            </main>
-          </div>
-        ) : (
-          // Normal mode: content area with flyout overlays
-          <>
-            <main className="max-w-[1200px] w-full mx-auto flex-1 min-h-0 flex flex-col overflow-hidden">
-              {/* Route-default DevNote — registers a per-route default note
-                  to the global modal. Page components can embed inline
-                  <DevNote> instances for additional context; both stack into
-                  the same modal accessible from the header icon. */}
-              <RouteDevNotes />
-              <Outlet context={ctx} />
-            </main>
+            {panelOrder.map((panelId) => {
+              const isOpen = shellOpen.includes(panelId);
+              // Open: flex-col (header on top, content below); closed: narrow strip
+              const sectionClass = cn(
+                "min-h-0 flex flex-col",
+                isOpen ? "flex-1 min-w-0" : "w-10 shrink-0",
+              );
+              const label = panelId === "workspace" ? "Workspace" : panelId === "chat" ? "Chat" : "Canvas";
+              const headerProps = {
+                dragging: draggingPanel === panelId,
+                dragOver: dragOverPanel === panelId,
+                onDragStart: () => setDraggingPanel(panelId),
+                onDragOver: () => setDragOverPanel(panelId),
+                onDragLeave: () => setDragOverPanel(null),
+                onDrop: () => handlePanelDrop(panelId),
+                onDragEnd: () => { setDraggingPanel(null); setDragOverPanel(null); },
+              };
 
-            {/* Editor flyout (left side, overlay) */}
-            {editorFilePath && (
-              <EditorFlyout
-                filePath={editorFilePath}
-                onClose={handleCloseEditor}
-                theme={theme}
-                position="left"
-              />
-            )}
+              if (panelId === "workspace") {
+                return (
+                  <AccordionPanel.Section key="workspace" id="workspace" unstyled className={sectionClass}>
+                    <AccordionPanel.Trigger>
+                      {(state) => <ShellPanelHeader label={label} state={state} {...headerProps} />}
+                    </AccordionPanel.Trigger>
+                    <AccordionPanel.Content unstyled className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
+                      <main className="flex-1 min-h-0 flex flex-col overflow-hidden" data-testid="hearth-canvas">
+                        <RouteDevNotes />
+                        {editorFilePath && (
+                          <EditorFlyout
+                            filePath={editorFilePath}
+                            onClose={handleCloseEditor}
+                            theme={theme}
+                            position="left"
+                          />
+                        )}
+                        <Outlet context={ctx} />
+                      </main>
+                    </AccordionPanel.Content>
+                  </AccordionPanel.Section>
+                );
+              }
 
-            {/* Chat flyout (right side, overlay) */}
-            <ChatFlyout
-              open={chatOpen}
-              onClose={() => { setChatOpen(false); setChatContext(null); setChatInitialMessage(null); setChatRequestId(null); }}
-              theme={theme}
-              projects={projectsHook.projects}
-              openWithContext={chatContext}
-              openWithMessage={chatInitialMessage}
-              openRequestId={chatRequestId}
-              notifications={notifications}
-            />
-          </>
-        )}
+              if (panelId === "chat") {
+                return (
+                  <AccordionPanel.Section key="chat" id="chat" unstyled className={sectionClass}>
+                    <AccordionPanel.Trigger>
+                      {(state) => <ShellPanelHeader label={label} state={state} {...headerProps} />}
+                    </AccordionPanel.Trigger>
+                    <AccordionPanel.Content unstyled className="flex-1 min-h-0 min-w-0">
+                      <ChatFlyout
+                        open
+                        onClose={() => { setChatInitialMessage(null); setChatRequestId(null); }}
+                        theme={theme}
+                        projects={projectsHook.projects}
+                        openWithContext={chatContext}
+                        openWithMessage={chatInitialMessage}
+                        openRequestId={chatRequestId}
+                        notifications={notifications}
+                        docked
+                        inShell
+                        canvasPortalTarget={canvasMountEl}
+                      />
+                    </AccordionPanel.Content>
+                  </AccordionPanel.Section>
+                );
+              }
+
+              if (panelId === "canvas") {
+                return (
+                  <AccordionPanel.Section key="canvas" id="canvas" unstyled className={sectionClass}>
+                    <AccordionPanel.Trigger>
+                      {(state) => <ShellPanelHeader label={label} state={state} {...headerProps} />}
+                    </AccordionPanel.Trigger>
+                    <AccordionPanel.Content unstyled className="flex-1 min-h-0 min-w-0">
+                      {/* AgentCanvas portalled here from ChatFlyout's React tree */}
+                      <div ref={canvasMountRef} className="h-full w-full" />
+                    </AccordionPanel.Content>
+                  </AccordionPanel.Section>
+                );
+              }
+
+              return null;
+            })}
+          </AccordionPanel>
+        </div>
       </div>
 
       {/* Terminal flyout (bottom, overlay) */}
@@ -918,6 +1046,15 @@ export default function RootLayout() {
       />
 
       <WhoDBFlyout open={whodbOpen} onClose={() => setWhodbOpen(false)} />
+
+      {upgradedEvent && (
+        <UpgradeNextStepsPanel
+          open={showUpgradePanel}
+          toVersion={upgradedEvent.toVersion}
+          fromVersion={upgradedEvent.fromVersion}
+          onClose={() => setShowUpgradePanel(false)}
+        />
+      )}
 
       {/* MagicApp floating/docked modals */}
       {magicAppInstances

@@ -515,7 +515,7 @@ export function useHosting() {
   const statusQuery = useQuery({
     queryKey: ["hosting", "status"],
     queryFn: fetchHostingStatus,
-    refetchInterval: 120_000, // WS events are primary; polling is fallback only
+    refetchInterval: 10_000, // WS events are primary; 10s poll catches missed events
   });
 
   const enableMutation = useMutation({

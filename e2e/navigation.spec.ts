@@ -93,12 +93,10 @@ test.describe("WorkspaceChip Navigation", () => {
     await expect(page.getByTestId("workspace-chip-dropdown")).toHaveCount(0);
   });
 
-  test("chat button in header opens ChatFlyout", async ({ page }) => {
+  test("chat flyout is always visible in shell (no header button needed)", async ({ page }) => {
     await page.goto("/");
-    const chatButton = page.getByTestId("header-chat-button");
-    await expect(chatButton).toBeVisible();
-    await chatButton.click();
-    await expect(chatButton).toHaveClass(/bg-primary/);
+    await expect(page.getByTestId("chat-flyout")).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByTestId("header-chat-button")).toHaveCount(0);
   });
 });
 

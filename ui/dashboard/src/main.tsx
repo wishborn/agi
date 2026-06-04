@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { registerAll as registerAllEChartTypes } from "@particle-academy/fancy-echarts";
 import "./index.css";
 import "@particle-academy/react-fancy/styles.css";
+import "@particle-academy/fancy-code/styles.css";
 import "@particle-academy/fancy-whiteboard/styles.css";
 import "@particle-academy/agent-integrations/styles.css";
 import { App } from "./App.js";

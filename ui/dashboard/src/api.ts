@@ -885,6 +885,28 @@ export async function fetchChangelog(count = 50, offset = 0): Promise<{ commits:
 }
 
 // ---------------------------------------------------------------------------
+// UpgradeNextSteps — /api/system/upgrade-next-steps
+// ---------------------------------------------------------------------------
+
+export async function fetchUpgradeNextSteps(filter: "pending" | "all" = "pending"): Promise<{ steps: import("./types.js").UpgradeNextStep[]; hasRequired: boolean }> {
+  const res = await fetch(`/api/system/upgrade-next-steps?filter=${filter}`);
+  if (!res.ok) return { steps: [], hasRequired: false };
+  return res.json() as Promise<{ steps: import("./types.js").UpgradeNextStep[]; hasRequired: boolean }>;
+}
+
+export async function completeUpgradeStep(id: string): Promise<{ ok: boolean; hasRequired: boolean }> {
+  const res = await fetch(`/api/system/upgrade-next-steps/${encodeURIComponent(id)}/done`, { method: "POST" });
+  if (!res.ok) return { ok: false, hasRequired: false };
+  return res.json() as Promise<{ ok: boolean; hasRequired: boolean }>;
+}
+
+export async function dismissUpgradeStep(id: string): Promise<{ ok: boolean; hasRequired: boolean }> {
+  const res = await fetch(`/api/system/upgrade-next-steps/${encodeURIComponent(id)}/dismiss`, { method: "POST" });
+  if (!res.ok) return { ok: false, hasRequired: false };
+  return res.json() as Promise<{ ok: boolean; hasRequired: boolean }>;
+}
+
+// ---------------------------------------------------------------------------
 // System connections — /api/system/connections
 // ---------------------------------------------------------------------------
 
@@ -1109,6 +1131,7 @@ export interface HostingStatus {
     hostname: string;
     type: string;
     status: "running" | "stopped" | "error" | "unconfigured";
+    serving: boolean;
     port: number | null;
     url: string | null;
     mode: "production" | "development";

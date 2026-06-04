@@ -106,6 +106,33 @@ export interface SystemUpgradeEvent {
   status?: string;
 }
 
+/** Emitted once on gateway boot when a new version is detected. */
+export interface SystemUpgradedEvent {
+  toVersion: string;
+  fromVersion: string | null;
+  pendingSteps: number;
+  hasRequired: boolean;
+}
+
+/** A single post-upgrade action item (required or optional). */
+export interface UpgradeNextStep {
+  id: string;
+  title: string;
+  description: string;
+  required: boolean;
+  /** pending = actionable. done/dismissed = resolved. superseded = cancelled by a later migration. */
+  status: "pending" | "done" | "dismissed" | "superseded";
+  addedAt: string;
+  fromVersion: string;
+  action?: {
+    label: string;
+    kind: "navigate" | "external-url" | "chat";
+    target: string;
+  };
+  /** IDs of earlier steps this step supersedes. */
+  cancels?: string[];
+}
+
 /** Hosting infrastructure status from WebSocket. */
 export interface HostingStatusData {
   ready: boolean;
@@ -397,6 +424,7 @@ export type DashboardEvent =
   | { type: "overview:updated"; data: DashboardOverview }
   | { type: "project:activity"; data: ProjectActivity }
   | { type: "system:upgrade"; data: SystemUpgradeEvent }
+  | { type: "system:upgraded"; data: SystemUpgradedEvent }
   | { type: "system:update_available"; data: UpdateCheck }
   | { type: "hosting:status"; data: HostingStatusData }
   | { type: "project:config_changed"; data: ProjectConfigChangedData }
@@ -428,6 +456,10 @@ export interface ProjectHostingInfo {
   internalPort: number | null;
   runtimeId?: string | null;
   status: "running" | "stopped" | "error" | "unconfigured";
+  /** True when the most recent TCP probe to the container's port succeeded.
+   *  Green = running + serving. Yellow = running + !serving (starting/degraded).
+   *  Only meaningful when status === "running"; always false otherwise. */
+  serving?: boolean;
   tunnelUrl?: string | null;
   containerName?: string;
   image?: string;
@@ -440,6 +472,10 @@ export interface ProjectHostingInfo {
   containerKind?: "static" | "code" | "mapp";
   /** s145 t585 — installed MApp IDs for the MApp container kind. */
   mapps?: string[];
+  /** When false, the Caddy offline-page error block is omitted — raw app errors pass through. */
+  friendlyErrors?: boolean;
+  /** Custom container image for multi-repo projects (overrides agi-runtime:lamp). */
+  baseImage?: string | null;
   /** Circuit-breaker state for this project's hosting service id, when not closed.
    *  Surfaces "open" / "half-open" so the dashboard can render a distinct chip. */
   breaker?: {

@@ -14,8 +14,8 @@ import { Select } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, createProjectFile, deleteProjectFile, renameProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes, fetchIterativeWorkStatus, fetchIterativeWorkProgress, fetchNotes, updateProjectRepo } from "../api.js";
-import type { FileNode, IterativeWorkProjectStatus, IterativeWorkProgress } from "../api.js";
+import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, createProjectFile, deleteProjectFile, renameProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes, updateProjectRepo } from "../api.js";
+import type { FileNode } from "../api.js";
 import { DevNotes } from "@/components/ui/dev-notes";
 import { ProjHeader } from "@/components/ProjHeader.js";
 import { StackStrip } from "@/components/StackStrip.js";
@@ -112,6 +112,7 @@ function tabIdToCanvasLabel(tabId: string, panels: PluginPanel[]): string {
 
 export function ProjectDetail({
   projects, onUpdate, updating, onDelete, deleting, onRefresh, onOpenChat, theme,
+  projectActivity,
   hostingStatus, onHostingConfigure, onHostingRestart,
   onTunnelEnable, onTunnelDisable, hostingBusy,
   onOpenEditor, onToolExecute, onOpenTerminal, contributingEnabled, onFixFinding,
@@ -412,18 +413,10 @@ export function ProjectDetail({
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden p-3 md:p-6">
       {/* Header row */}
-      <div className="flex items-center justify-between mb-6 shrink-0">
+      <div className="flex items-center mb-6 shrink-0">
         <Link to="/projects" className="no-underline">
           <Button variant="outline" size="sm">Back to Projects</Button>
         </Link>
-        <div className="flex gap-2">
-          {/* The project-level (container) terminal lives in the Development tab > Terminal
-              subtab. The host-level system terminal is now a global button in the dashboard
-              header — see root.tsx. No Terminal button on the project page. */}
-          <Button size="sm" data-testid="project-chat-button" onClick={() => onOpenChat(project.path)}>
-            open chat
-          </Button>
-        </div>
       </div>
 
       {/* Project heading — extended per projects-ux-v2 mockup B (cycle 134):
@@ -435,7 +428,13 @@ export function ProjectDetail({
           const s = project.hosting?.status;
           const enabled = project.hosting?.enabled;
           if (!enabled) return null;
-          const cls = s === "running" ? "bg-green" : s === "error" ? "bg-red" : "bg-yellow";
+          const serving = project.hosting?.serving ?? false;
+          const cls =
+            s === "running" && serving ? "bg-green"
+            : s === "running" ? "bg-yellow"
+            : s === "error" ? "bg-red"
+            : s === "stopped" ? "bg-red"
+            : "bg-muted-foreground";
           // s140 cycle-172 t594 — aria-label not title. title doesn't show
           // on touch devices and is inconsistently announced by screen
           // readers. aria-label is the durable a11y primitive for an
@@ -451,6 +450,12 @@ export function ProjectDetail({
         })()}
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
         <DevNotes title="Project workspace — dev notes">
+          <DevNotes.Item kind="info" heading="Cycle 2026-05-31 — 3-state status dot + TCP health probe">
+            Status dot is now 3-state: green = container running AND TCP probe reached the port (app serving),
+            yellow = container running but port not yet responding (starting up / internal crash),
+            red = container stopped or error. Backend runs a 10-second TCP probe loop; frontend polls
+            every 10s (was 120s). StackStrip fallback text simplified to "No active tasks".
+          </DevNotes.Item>
           <DevNotes.Item kind="info" heading="s199 (2026-05-28) — ProjHeader + StackStrip + mode picker restyle">
             ProjHeader compact bar (name, category badge, primary repo URL, hosted URL, Chat button) added
             above mode picker. StackStrip shows Aion's live iterative-work task summary (from projectActivity)
@@ -1543,164 +1548,8 @@ export function ProjectDetail({
           </TabsContent>
         )}
       </Tabs>
-      {!isCoreFork && (
-        <aside
-          className="w-[280px] hidden lg:flex flex-col border-l border-border pl-3"
-          data-testid="project-chat-aside"
-          aria-label="Project chat panel"
-        >
-          <ProjectChatAside
-            project={project}
-            onOpenChat={() => onOpenChat(project.path)}
-            onOpenNotes={() => setActiveTab("notes")}
-          />
-        </aside>
-      )}
       </div>
     </div>
   );
 }
 
-/**
- * Project chat aside (slice 5c phase 3 starter — cycle 147).
- *
- * Replaces the cycle-145 placeholder with useful project-scoped content
- * pending the heavier ChatFlyout-into-aside integration. Shows:
- *  - Iterative-work status (enabled / cron / next fire) when eligible
- *  - Progress bar (done/total tasks) sourced from the PM provider
- *  - "Open chat" CTA that mirrors the header button (talk about this project)
- *
- * Iterative-work data is fetched in parallel with progress; failures collapse
- * to a "no status available" hint without breaking the aside chrome.
- */
-function ProjectChatAside({
-  project,
-  onOpenChat,
-  onOpenNotes,
-}: {
-  project: ProjectInfo;
-  onOpenChat: () => void;
-  /** s152 t653 — clicking the notes breadcrumb routes here. */
-  onOpenNotes?: () => void;
-}) {
-  const eligible = (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) === true;
-  const [status, setStatus] = useState<IterativeWorkProjectStatus | null>(null);
-  const [progress, setProgress] = useState<IterativeWorkProgress | null>(null);
-  // s152 t653 — passive note-availability breadcrumb. When notes exist
-  // for this project (or globally), surface a count so the user knows
-  // Aion is seeing them as project context. Click navigates to the
-  // Notes tab. Best-effort fetch; failures are silent.
-  const [noteCount, setNoteCount] = useState<{ project: number; global: number } | null>(null);
-
-  useEffect(() => {
-    // Cycle 148 — reset state on project change so we don't briefly show
-    // the previous project's status/progress while the new fetch lands.
-    setStatus(null);
-    setProgress(null);
-    setNoteCount(null);
-    if (!eligible) return;
-    let cancelled = false;
-    void Promise.all([
-      fetchIterativeWorkStatus(project.path).catch(() => null),
-      fetchIterativeWorkProgress(project.path).catch(() => null),
-    ]).then(([s, p]) => {
-      if (cancelled) return;
-      setStatus(s);
-      setProgress(p);
-    });
-    return () => { cancelled = true; };
-  }, [eligible, project.path]);
-
-  // s152 t653 — note count fetch lives in its own effect so it runs for
-  // every project (not just iterative-work-eligible ones).
-  useEffect(() => {
-    let cancelled = false;
-    void Promise.all([
-      fetchNotes(project.path).catch(() => []),
-      fetchNotes(null).catch(() => []),
-    ]).then(([proj, global]) => {
-      if (cancelled) return;
-      setNoteCount({ project: proj.length, global: global.length });
-    });
-    return () => { cancelled = true; };
-  }, [project.path]);
-
-  return (
-    <>
-      <h2 className="text-[12px] uppercase tracking-wider text-muted-foreground/80 font-semibold mt-3 mb-2">
-        Chat
-      </h2>
-
-      {/* s152 t653 — passive notes breadcrumb. Visible when at least one
-          per-project or global note exists. Clicking it switches to the
-          Notes tab so the user can see what Aion is seeing. */}
-      {noteCount !== null && (noteCount.project > 0 || noteCount.global > 0) && (
-        <button
-          type="button"
-          className="text-left mb-2 px-3 py-2 rounded bg-secondary/10 hover:bg-secondary/20 transition-colors w-full"
-          onClick={() => { onOpenNotes?.(); }}
-          data-testid="project-chat-aside-notes-breadcrumb"
-          title="Aion sees these notes as project context"
-        >
-          <span className="text-[11px] text-muted-foreground">
-            <span aria-hidden="true">📝</span>{" "}
-            {noteCount.project > 0 && (
-              <>
-                <strong className="text-foreground">{String(noteCount.project)}</strong>{" "}
-                project note{noteCount.project === 1 ? "" : "s"}
-              </>
-            )}
-            {noteCount.project > 0 && noteCount.global > 0 && " · "}
-            {noteCount.global > 0 && (
-              <>
-                <strong className="text-foreground">{String(noteCount.global)}</strong>{" "}
-                global
-              </>
-            )}
-          </span>
-        </button>
-      )}
-
-      {eligible && (
-        <Card className="p-3 mb-2 bg-secondary/10" data-testid="project-chat-aside-iterative">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-semibold mb-1">Iterative work</div>
-          <div className="text-[12px] text-foreground">
-            {status === null ? "Loading…" : status.enabled ? "Enabled" : "Disabled"}
-            {status?.inFlight && <span className="ml-1 text-yellow text-[10px]">· running</span>}
-          </div>
-          {status?.cron && (
-            <div className="text-[11px] text-muted-foreground font-mono mt-0.5">{status.cron}</div>
-          )}
-          {progress !== null && progress.totalTasks > 0 && (
-            <div className="mt-2">
-              <div className="text-[11px] text-muted-foreground mb-1">
-                {progress.doneTasks}/{progress.totalTasks} done · {progress.percentComplete}%
-              </div>
-              <div className="h-1.5 bg-secondary rounded overflow-hidden">
-                <div
-                  className="h-full bg-yellow transition-[width]"
-                  style={{ width: `${String(progress.percentComplete)}%` }}
-                />
-              </div>
-            </div>
-          )}
-        </Card>
-      )}
-
-      <Card className="p-3 flex-1 min-h-0 overflow-y-auto bg-secondary/10 border-dashed border-border/60">
-        <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
-          Project-scoped chat panel — the heavy integration ships in slice 5c phase 4. Use Open chat to talk
-          about this project today.
-        </p>
-        <Button
-          size="sm"
-          className="mt-3 w-full"
-          onClick={onOpenChat}
-          data-testid="project-chat-aside-open"
-        >
-          Open chat
-        </Button>
-      </Card>
-    </>
-  );
-}

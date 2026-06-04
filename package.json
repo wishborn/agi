@@ -1,6 +1,6 @@
 {
   "name": "agi",
-  "version": "0.4.863",
+  "version": "0.4.883",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",
@@ -15,6 +15,7 @@
     "migrate:agi_data:dry": "tsx scripts/migrate-to-agi_data.ts --dry-run",
     "build:dashboard": "pnpm --filter @agi/dashboard build",
     "runtime:build:lamp": "bash scripts/runtime-images/lamp/build.sh",
+    "runtime:build:polyglot": "bash scripts/runtime-images/polyglot/build.sh",
     "start": "tsx cli/src/index.ts run",
     "cli": "tsx cli/src/index.ts",
     "dev": "tsx watch cli/src/index.ts run",

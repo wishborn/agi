@@ -167,7 +167,13 @@ cmd_status() {
   echo ""
   echo -e "${BOLD}Infrastructure${RESET}"
   label "Caddy:"
-  systemctl is-active caddy 2>/dev/null || echo "not installed"
+  if podman ps --filter "name=^agi-caddy$" --format '{{.Status}}' 2>/dev/null | grep -q "^Up"; then
+    echo -e "${GREEN}active${RESET} (containerized)"
+  elif systemctl is-active caddy 2>/dev/null | grep -q "^active"; then
+    echo -e "${YELLOW}active${RESET} (system-scope)"
+  else
+    echo -e "${RED}inactive / not installed${RESET}"
+  fi
   label "Podman:"
   if command -v podman &>/dev/null; then
     echo -e "${GREEN}installed${RESET} ($(podman --version 2>/dev/null | head -1))"
@@ -177,9 +183,9 @@ cmd_status() {
   label "dnsmasq:"
   systemctl is-active dnsmasq 2>/dev/null || echo "not installed"
 
-  # Running containers
+  # Running containers — label is agi.managed=true (not aionima.managed)
   local containers
-  containers="$(podman ps --filter label=aionima.managed=true --format '{{.Names}}' 2>/dev/null | wc -l)"
+  containers="$(podman ps --filter label=agi.managed=true --format '{{.Names}}' 2>/dev/null | wc -l)"
   label "Containers:"
   echo "${containers} running"
 }
