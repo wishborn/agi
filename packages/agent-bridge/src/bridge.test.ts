@@ -55,8 +55,8 @@ beforeEach(() => {
 
   mockBroadcast = vi.fn();
 
-  dispatcher = { dispatch: mockDispatch };
-  broadcaster = { broadcast: mockBroadcast };
+  dispatcher = { dispatch: mockDispatch as unknown as BridgeDispatcher["dispatch"] };
+  broadcaster = { broadcast: mockBroadcast as unknown as BridgeBroadcaster["broadcast"] };
 
   bridge = new AgentBridge({ dispatcher, broadcaster });
 });
