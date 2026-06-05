@@ -10,6 +10,7 @@ import { EditorFlyout } from "@/components/EditorFlyout.js";
 import { TerminalFlyout } from "@/components/TerminalFlyout.js";
 import { WhoDBFlyout } from "@/components/WhoDBFlyout.js";
 import { UpgradeNextStepsPanel } from "@/components/UpgradeNextStepsPanel.js";
+import { UpgradeWizard } from "@/components/UpgradeWizard.js";
 
 import { cn, safeArray } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -257,10 +258,9 @@ export default function RootLayout() {
   const [balanceHistories, setBalanceHistories] = useState<Record<string, number[]>>({});
   const [upgradePhase, setUpgradePhase] = useState<string | null>(null);
   const [upgradeLogs, setUpgradeLogs] = useState<{ step: string; status: string; message: string; timestamp: string }[]>([]);
-  const [upgradeDropdown, setUpgradeDropdown] = useState(false);
   const [upgradeReloading, setUpgradeReloading] = useState(false);
+  const [upgradeWizardOpen, setUpgradeWizardOpen] = useState(false);
   const [profileManagerOpen, setProfileManagerOpen] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
   const upgradePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -382,31 +382,19 @@ export default function RootLayout() {
       const isError = last.phase === "error";
       if (isComplete) {
         setUpgradePhase("complete");
-        setUpgradeDropdown(true);
+        setUpgradeWizardOpen(true);
         setTimeout(() => setUpgradePhase(null), 8000);
       } else if (isError) {
         setUpgradePhase("error");
-        setUpgradeDropdown(true);
+        setUpgradeWizardOpen(true);
         setTimeout(() => setUpgradePhase(null), 8000);
       } else {
         // Upgrade still in progress — show it
         setUpgradePhase(last.phase);
-        setUpgradeDropdown(true);
+        setUpgradeWizardOpen(true);
       }
     }).catch(() => {});
   }, []);
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    if (!upgradeDropdown) return;
-    const handler = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setUpgradeDropdown(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [upgradeDropdown]);
 
   const handleOpenChat = useCallback((context: string) => {
     setChatContext(context);
@@ -510,7 +498,7 @@ export default function RootLayout() {
     if (event.type === "system:upgrade") {
       const { phase, step, status, message } = event.data;
       // Auto-open the dropdown so the user sees real-time progress
-      setUpgradeDropdown(true);
+      setUpgradeWizardOpen(true);
       // Update the coarse UI phase (pulling → building → restarting → complete/error)
       if (phase === "error") {
         setUpgradePhase("error");
@@ -571,7 +559,7 @@ export default function RootLayout() {
 
   // Upgrade with log-based completion detection (replaces commit-based polling)
   const doUpgrade = useCallback(() => {
-    setUpgradeDropdown(true);
+    setUpgradeWizardOpen(true);
     setUpgradePhase("pulling");
     setUpgradeLogs([]);
 
@@ -735,75 +723,34 @@ export default function RootLayout() {
             )}
             {/* Active downloads indicator */}
             <ActiveDownloads />
-            {/* Upgrade status with step log */}
+            {/* Upgrade wizard trigger — in-progress badge or "N updates" button */}
             {upgradePhase !== null && (
-              <div className="relative" ref={upgradePhase !== "complete" && upgradePhase !== "error" ? dropdownRef : undefined}>
-                <Badge
-                  className={cn(
-                    "text-xs cursor-pointer",
-                    upgradePhase === "error"
-                      ? "bg-red text-primary-foreground"
-                      : "bg-primary text-primary-foreground",
-                    upgradePhase !== "complete" && upgradePhase !== "error" && "animate-pulse",
-                  )}
-                  onClick={() => upgradeLogs.length > 0 && setUpgradeDropdown((p) => !p)}
-                >
-                  {upgradePhase === "complete" ? "Upgraded!" : upgradePhase === "error" ? "Upgrade failed" : `${upgradePhase.charAt(0).toUpperCase() + upgradePhase.slice(1)}...`}
-                  {upgradeLogs.length > 0 && <span className="ml-1 opacity-70">({upgradeLogs.length})</span>}
-                </Badge>
-                {upgradeDropdown && upgradeLogs.length > 0 && upgradePhase !== "complete" && !upgradeReloading && (
-                  <div className="absolute top-[calc(100%+8px)] right-0 w-[min(384px,calc(100vw-24px))] bg-card border border-border rounded-xl p-3 z-[300] shadow-lg max-h-[300px] overflow-y-auto">
-                    <div className="text-[13px] font-semibold mb-2">Deploy Log</div>
-                    {upgradeLogs.map((entry, i) => (
-                      <div key={i} className="text-xs py-1 border-b border-border flex items-center gap-2">
-                        <span className={cn(
-                          "inline-block w-2 h-2 rounded-full shrink-0",
-                          entry.status === "ok" ? "bg-green" :
-                          entry.status === "fail" ? "bg-red" :
-                          entry.status === "skip" ? "bg-yellow" :
-                          "bg-blue animate-pulse",
-                        )} />
-                        <code className="text-subtext0">{entry.step}</code>
-                        <span className="text-subtext1 truncate">{entry.message}</span>
-                      </div>
-                    ))}
-                  </div>
+              <Badge
+                data-testid="upgrade-wizard-trigger"
+                className={cn(
+                  "text-xs cursor-pointer",
+                  upgradePhase === "error"
+                    ? "bg-red text-primary-foreground"
+                    : "bg-primary text-primary-foreground",
+                  upgradePhase !== "complete" && upgradePhase !== "error" && "animate-pulse",
                 )}
-              </div>
+                onClick={() => setUpgradeWizardOpen(true)}
+              >
+                {upgradePhase === "complete" ? "Upgraded!" : upgradePhase === "error" ? "Upgrade failed" : `${upgradePhase.charAt(0).toUpperCase() + upgradePhase.slice(1)}…`}
+              </Badge>
             )}
-
-            {/* Updates available badge */}
             {upgradePhase === null && updateCheck?.updateAvailable && (
-              <div ref={dropdownRef} className="relative">
-                <Button
-                  size="sm"
-                  onClick={() => setUpgradeDropdown((p) => !p)}
-                  className="rounded-xl"
-                >
-                  {updateCheck.behindCount} update{updateCheck.behindCount !== 1 ? "s" : ""}
-                  {updateCheck.channel === "dev" && (
-                    <span className="ml-1 text-[10px] opacity-70">(dev)</span>
-                  )}
-                </Button>
-                {upgradeDropdown && (
-                  <div className="absolute top-[calc(100%+8px)] right-0 w-[min(320px,calc(100vw-24px))] bg-card border border-border rounded-xl p-4 z-[300] shadow-lg">
-                    <div className="text-[13px] font-semibold mb-2">
-                      Pending commits{updateCheck.channel === "dev" ? " (dev)" : ""}
-                    </div>
-                    <div className="max-h-[200px] overflow-y-auto mb-3">
-                      {updateCheck.commits.map((c) => (
-                        <div key={c.hash} className="text-xs py-1 border-b border-border">
-                          <code className="text-blue mr-1.5">{c.hash.slice(0, 7)}</code>
-                          {c.message}
-                        </div>
-                      ))}
-                    </div>
-                    <Button className="w-full" onClick={doUpgrade}>
-                      Upgrade Now
-                    </Button>
-                  </div>
+              <Button
+                data-testid="upgrade-wizard-trigger"
+                size="sm"
+                onClick={() => setUpgradeWizardOpen(true)}
+                className="rounded-xl"
+              >
+                {updateCheck.behindCount} update{updateCheck.behindCount !== 1 ? "s" : ""}
+                {updateCheck.channel === "dev" && (
+                  <span className="ml-1 text-[10px] opacity-70">(dev)</span>
                 )}
-              </div>
+              </Button>
             )}
 
             {/* System Terminal — host-level shell, distinct from the per-project
@@ -1047,7 +994,20 @@ export default function RootLayout() {
 
       <WhoDBFlyout open={whodbOpen} onClose={() => setWhodbOpen(false)} />
 
-      {upgradedEvent && (
+      {/* Upgrade Wizard — full-page overlay for fork-aware 2-step upgrade */}
+      <UpgradeWizard
+        open={upgradeWizardOpen}
+        onClose={() => setUpgradeWizardOpen(false)}
+        upgradePhase={upgradePhase}
+        upgradeLogs={upgradeLogs}
+        upgradedEvent={upgradedEvent}
+        showUpgradePanel={showUpgradePanel}
+        onCloseUpgradePanel={() => { setShowUpgradePanel(false); setUpgradeWizardOpen(false); }}
+        doUpgrade={doUpgrade}
+      />
+
+      {/* Standalone post-upgrade panel — shown when service restarts without wizard open */}
+      {upgradedEvent && !upgradeWizardOpen && (
         <UpgradeNextStepsPanel
           open={showUpgradePanel}
           toVersion={upgradedEvent.toVersion}

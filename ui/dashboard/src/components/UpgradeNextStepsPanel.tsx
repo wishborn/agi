@@ -20,11 +20,13 @@ export interface UpgradeNextStepsPanelProps {
   toVersion: string;
   fromVersion: string | null;
   onClose: () => void;
+  /** When true, renders inline without the outer Modal wrapper (used inside UpgradeWizard step 3). */
+  embedded?: boolean;
 }
 
 type ChangelogCommit = { hash: string; subject: string; body: string };
 
-export function UpgradeNextStepsPanel({ open, toVersion, fromVersion, onClose }: UpgradeNextStepsPanelProps) {
+export function UpgradeNextStepsPanel({ open, toVersion, fromVersion, onClose, embedded = false }: UpgradeNextStepsPanelProps) {
   const navigate = useNavigate();
   const [steps, setSteps] = useState<UpgradeNextStep[]>([]);
   const [hasRequired, setHasRequired] = useState(false);
@@ -81,9 +83,8 @@ export function UpgradeNextStepsPanel({ open, toVersion, fromVersion, onClose }:
 
   if (!open) return null;
 
-  return (
-    <Modal open={open} onClose={canClose ? onClose : undefined} size="lg">
-      <div className="flex flex-col gap-4 p-1">
+  const inner = (
+    <div className="flex flex-col gap-4 p-1">
         {/* Header */}
         <div className="flex items-start justify-between">
           <div>
@@ -201,7 +202,20 @@ export function UpgradeNextStepsPanel({ open, toVersion, fromVersion, onClose }:
             {canClose ? "Done" : "Complete required steps to continue"}
           </Button>
         </div>
+    </div>
+  );
+
+  if (embedded) {
+    return (
+      <div className="rounded-lg border border-border bg-card">
+        {inner}
       </div>
+    );
+  }
+
+  return (
+    <Modal open={open} onClose={canClose ? onClose : undefined} size="lg">
+      {inner}
     </Modal>
   );
 }
