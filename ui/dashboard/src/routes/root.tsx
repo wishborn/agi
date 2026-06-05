@@ -163,6 +163,7 @@ export interface RootContext {
   onOpenTerminal: (projectPath: string) => void;
   onRefreshMagicApps?: () => void;
   onOpenMagicApp?: (appId: string, projectPath: string) => Promise<void>;
+  onOpenUpgradeWizard: () => void;
 }
 
 
@@ -663,6 +664,7 @@ export default function RootLayout() {
       await fetchMagicApps().then(setMagicApps).catch(() => {});
       await instanceMgr.openApp(appId, projectPath);
     },
+    onOpenUpgradeWizard: () => setUpgradeWizardOpen(true),
   };
 
   return (

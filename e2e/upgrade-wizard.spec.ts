@@ -104,18 +104,24 @@ test.describe("Upgrade Wizard — API layer", () => {
 
 // ---------------------------------------------------------------------------
 // Wizard UI — these pass after Iteration B
+//
+// The "Manage Upgrade" button in Settings → Gateway → General is the
+// always-available entry point. The header trigger only appears when updates
+// are pending; using settings ensures tests pass in up-to-date environments.
 // ---------------------------------------------------------------------------
 
 test.describe("Upgrade Wizard — UI", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
+    // Navigate via Settings > Gateway so the trigger is always visible
+    // regardless of whether updates are pending.
+    await page.goto("/settings/gateway");
     await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10_000 });
   });
 
-  test("header shows upgrade trigger button", async ({ page }) => {
-    // Either "Review Upgrade" (when update available) or the upgrade badge area
-    const upgradeArea = page.getByTestId("upgrade-wizard-trigger");
-    await expect(upgradeArea).toBeVisible({ timeout: 8_000 });
+  test("settings-gateway shows Manage Upgrade button (always accessible)", async ({ page }) => {
+    // The trigger in settings is always rendered, regardless of update availability.
+    const trigger = page.getByTestId("upgrade-wizard-trigger");
+    await expect(trigger).toBeVisible({ timeout: 8_000 });
   });
 
   test("clicking the trigger opens the upgrade wizard overlay", async ({ page }) => {

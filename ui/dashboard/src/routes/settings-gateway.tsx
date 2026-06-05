@@ -5,12 +5,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useSettingsContext } from "./settings-layout.js";
+import { useRootContext } from "./root.js";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar.js";
 import { OwnerSettings } from "@/components/settings/OwnerSettings.js";
 import { DevSettings } from "@/components/settings/DevSettings.js";
 import { GatewayNetworkSettings } from "@/components/settings/GatewayNetworkSettings.js";
 import { IdentitySettings } from "@/components/settings/IdentitySettings.js";
 import { DevNote } from "@/components/ui/dev-notes";
+import { Button } from "@/components/ui/button";
 import type { AionimaConfig } from "../types.js";
 
 type Tab = "general" | "identity" | "dev" | "network";
@@ -24,6 +26,7 @@ const tabs: { id: Tab; label: string }[] = [
 
 export default function SettingsGatewayPage() {
   const { configHook } = useSettingsContext();
+  const { onOpenUpgradeWizard } = useRootContext();
   const [activeTab, setActiveTab] = useState<Tab>("general");
   const [draft, setDraft] = useState<AionimaConfig>(configHook.data ?? ({} as AionimaConfig));
   const [dirty, setDirty] = useState(false);
@@ -108,7 +111,27 @@ export default function SettingsGatewayPage() {
 
       {/* Tab content */}
       {activeTab === "general" && (
-        <GatewayNetworkSettings gateway={gateway} config={draft} update={update} section="general" />
+        <>
+          <GatewayNetworkSettings gateway={gateway} config={draft} update={update} section="general" />
+          {/* Upgrade management — always accessible regardless of pending updates */}
+          <div className="mt-6 rounded-lg border border-border bg-card p-4 flex items-center justify-between gap-4">
+            <div>
+              <div className="text-[13px] font-semibold text-foreground">Upgrade Manager</div>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                View fork status, preview upcoming changes, and manage upgrades across origin and upstream branches.
+              </p>
+            </div>
+            <Button
+              data-testid="upgrade-wizard-trigger"
+              size="sm"
+              variant="outline"
+              onClick={onOpenUpgradeWizard}
+              className="shrink-0"
+            >
+              Manage Upgrade
+            </Button>
+          </div>
+        </>
       )}
 
       {activeTab === "identity" && (
