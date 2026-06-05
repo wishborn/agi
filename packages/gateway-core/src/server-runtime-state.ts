@@ -8134,6 +8134,338 @@ export async function createGatewayRuntimeState(
   }
 
   // -----------------------------------------------------------------------
+  // GET /api/system/fork-status — multi-source upgrade status
+  //
+  // Fetches all remotes and computes ahead/behind commit counts for each
+  // branch combination (origin/main, origin/dev, upstream/main, upstream/dev).
+  // Used by the Upgrade Wizard step 1 to show which source the user can pull
+  // from, including across fork boundaries in Dev Mode.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/system/fork-status", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "System API only allowed from private network" });
+    }
+    const repoPath = deps.selfRepoPath ?? process.cwd();
+
+    try {
+      // Fetch all remotes so rev-list comparisons are fresh
+      await execGitDashboard(["fetch", "--all", "--quiet"], repoPath);
+
+      // Deployed commit (written by upgrade.sh; fall back to HEAD if absent)
+      let deployedCommit = "";
+      try {
+        deployedCommit = readFileSync(join(process.cwd(), ".deployed-commit"), "utf-8").trim();
+      } catch {
+        const headRes = await execGitDashboard(["rev-parse", "HEAD"], repoPath);
+        deployedCommit = headRes.stdout.trim();
+      }
+
+      // Current branch
+      const branchRes = await execGitDashboard(["rev-parse", "--abbrev-ref", "HEAD"], repoPath);
+      const currentBranch = branchRes.stdout.trim() || "HEAD";
+
+      // Current deployed version from package.json
+      let currentVersion = "0.0.0";
+      try {
+        const raw = readFileSync(join(repoPath, "package.json"), "utf-8");
+        currentVersion = (JSON.parse(raw) as { version?: string }).version ?? "0.0.0";
+      } catch { /* best-effort */ }
+
+      const channel = getUpdateChannel();
+      const devEnabled = deps.config
+        ? Boolean((deps.config as Record<string, unknown>).dev && ((deps.config as Record<string, unknown>).dev as Record<string, unknown>).enabled)
+        : false;
+
+      // List all known remote/branch combinations to check
+      const remoteRes = await execGitDashboard(["remote"], repoPath);
+      const remotes = remoteRes.stdout.trim().split("\n").filter(Boolean);
+
+      const candidateBranches = ["main", "dev"];
+      const sources: Array<{
+        ref: string;
+        label: string;
+        commitsAhead: number;
+        commitsBehind: number;
+        latestCommit: { hash: string; message: string; date: string } | null;
+        latestVersion: string | null;
+        isCurrentChannel: boolean;
+      }> = [];
+
+      for (const remote of remotes) {
+        // Determine display label for this remote
+        let remoteLabel = remote;
+        const urlRes = await execGitDashboard(["remote", "get-url", remote], repoPath);
+        const remoteUrl = urlRes.stdout.trim();
+        const ghMatch = /github\.com[/:]([^/]+)\/([^.]+)/.exec(remoteUrl);
+        if (ghMatch) remoteLabel = `${ghMatch[1]}/${ghMatch[2]}`;
+
+        for (const branch of candidateBranches) {
+          const ref = `${remote}/${branch}`;
+
+          // Check that this ref actually exists
+          const existsRes = await execGitDashboard(["rev-parse", "--verify", ref], repoPath);
+          if (existsRes.exitCode !== 0) continue;
+
+          const refCommit = existsRes.stdout.trim();
+
+          // Compute ahead (local has these) and behind (remote has these)
+          const aheadRes = await execGitDashboard(["rev-list", "--count", `${ref}..${deployedCommit}`], repoPath);
+          const commitsAhead = parseInt(aheadRes.stdout.trim(), 10) || 0;
+
+          const behindRes = await execGitDashboard(["rev-list", "--count", `${deployedCommit}..${ref}`], repoPath);
+          const commitsBehind = parseInt(behindRes.stdout.trim(), 10) || 0;
+
+          // Latest commit on this ref
+          let latestCommit: { hash: string; message: string; date: string } | null = null;
+          const logRes = await execGitDashboard(
+            ["log", "-1", "--format=%H|%s|%ai", refCommit],
+            repoPath,
+          );
+          const logLine = logRes.stdout.trim();
+          if (logLine) {
+            const [hash, message, date] = logLine.split("|");
+            latestCommit = { hash: hash ?? "", message: message ?? "", date: date ?? "" };
+          }
+
+          // Version at this ref from package.json
+          let latestVersion: string | null = null;
+          const pkgRes = await execGitDashboard(["show", `${ref}:package.json`], repoPath);
+          if (pkgRes.exitCode === 0) {
+            try {
+              latestVersion = (JSON.parse(pkgRes.stdout) as { version?: string }).version ?? null;
+            } catch { /* non-JSON or missing */ }
+          }
+
+          const isCurrentChannel = branch === channel && (remote === "origin" || !devEnabled);
+
+          sources.push({ ref, label: `${remoteLabel} — ${branch}`, commitsAhead, commitsBehind, latestCommit, latestVersion, isCurrentChannel });
+        }
+      }
+
+      // Sort: current channel first, then by commitsBehind descending
+      sources.sort((a, b) => {
+        if (a.isCurrentChannel && !b.isCurrentChannel) return -1;
+        if (!a.isCurrentChannel && b.isCurrentChannel) return 1;
+        return b.commitsBehind - a.commitsBehind;
+      });
+
+      return reply.send({ devModeEnabled: devEnabled, currentBranch, currentVersion, deployedCommit, sources });
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/system/upgrade-preview — read upgrade impact without executing
+  //
+  // ?source={ref}  e.g. "upstream/dev", "origin/main"
+  //
+  // Returns the changelog, list of migrations that will run, and a
+  // classification of what the upgrade will affect (restart / db / frontend).
+  // Nothing is mutated.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/system/upgrade-preview", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "System API only allowed from private network" });
+    }
+    const repoPath = deps.selfRepoPath ?? process.cwd();
+    const query = request.query as Record<string, string>;
+    const source = query.source ?? "";
+
+    if (!source) {
+      return reply.code(400).send({ error: "source query parameter required (e.g. ?source=upstream/dev)" });
+    }
+
+    try {
+      // Verify the ref exists
+      const verifyRes = await execGitDashboard(["rev-parse", "--verify", source], repoPath);
+      if (verifyRes.exitCode !== 0) {
+        return reply.code(422).send({ error: `Ref not found: ${source}` });
+      }
+
+      // Deployed commit
+      let deployedCommit = "";
+      try {
+        deployedCommit = readFileSync(join(process.cwd(), ".deployed-commit"), "utf-8").trim();
+      } catch {
+        const headRes = await execGitDashboard(["rev-parse", "HEAD"], repoPath);
+        deployedCommit = headRes.stdout.trim();
+      }
+
+      // Version we're deploying FROM (current deployed)
+      let fromVersion = "0.0.0";
+      try {
+        const raw = readFileSync(join(repoPath, "package.json"), "utf-8");
+        fromVersion = (JSON.parse(raw) as { version?: string }).version ?? "0.0.0";
+      } catch { /* best-effort */ }
+
+      // Version we're deploying TO (target ref)
+      let toVersion = fromVersion;
+      const targetPkgRes = await execGitDashboard(["show", `${source}:package.json`], repoPath);
+      if (targetPkgRes.exitCode === 0) {
+        try {
+          toVersion = (JSON.parse(targetPkgRes.stdout) as { version?: string }).version ?? fromVersion;
+        } catch { /* best-effort */ }
+      }
+
+      // Commit list between deployed and target
+      const logRes = await execGitDashboard(
+        ["log", `${deployedCommit}..${source}`, "--format=%H|%s|%ai"],
+        repoPath,
+      );
+      const commits = logRes.stdout.trim().split("\n").filter(Boolean).map((line) => {
+        const [hash, message, date] = line.split("|");
+        return { hash: hash ?? "", message: message ?? "", date: date ?? "" };
+      });
+      const commitCount = commits.length;
+
+      // Changed files for impact classification
+      const diffRes = await execGitDashboard(
+        ["diff", "--name-only", deployedCommit, source],
+        repoPath,
+      );
+      const changedFiles = diffRes.stdout.trim().split("\n").filter(Boolean);
+
+      const BACKEND_PREFIXES = ["packages/gateway-core", "packages/entity-model", "packages/agent-bridge", "packages/model-runtime", "packages/skills", "packages/memory", "packages/coa-chain", "packages/security", "packages/trpc-api"];
+      const CHANNEL_PREFIXES = ["channels/"];
+      const UI_PREFIXES = ["ui/", "packages/aion-sdk"];
+      const DB_FILES = ["packages/db-schema", "packages/entity-model/src/migration"];
+
+      const backendChanged = changedFiles.some(f => BACKEND_PREFIXES.some(p => f.startsWith(p)));
+      const dbChanged = changedFiles.some(f => DB_FILES.some(p => f.startsWith(p)));
+      const uiChanged = changedFiles.some(f => UI_PREFIXES.some(p => f.startsWith(p)));
+      const channelChanged = changedFiles.some(f => CHANNEL_PREFIXES.some(p => f.startsWith(p)));
+
+      const changedAreas: string[] = [];
+      if (backendChanged) changedAreas.push("gateway-core");
+      if (dbChanged) changedAreas.push("db-schema");
+      if (uiChanged) changedAreas.push("ui/dashboard");
+      if (channelChanged) changedAreas.push("channels");
+
+      // Parse pending migrations from migration-runner.ts at the target ref
+      const migrations: Array<{ id: string; version: string; description: string }> = [];
+      const migrationSrcRes = await execGitDashboard(
+        ["show", `${source}:packages/gateway-core/src/migration-runner.ts`],
+        repoPath,
+      );
+      if (migrationSrcRes.exitCode === 0) {
+        // Regex extracts each migration block's version + id + description
+        const migrationRegex = /version:\s*["'](\d+\.\d+\.\d+)["'][^}]*?id:\s*["']([^"']+)["'][^}]*?description:\s*["']([^"']+)["']/gs;
+        let match: RegExpExecArray | null;
+        while ((match = migrationRegex.exec(migrationSrcRes.stdout)) !== null) {
+          const [, version, id, description] = match;
+          if (version && id && description && version > fromVersion) {
+            migrations.push({ id, version, description });
+          }
+        }
+      }
+
+      const impact = {
+        requiresRestart: backendChanged || dbChanged || channelChanged,
+        requiresDbMigration: dbChanged || migrations.length > 0,
+        frontendOnly: uiChanged && !backendChanged && !dbChanged && !channelChanged,
+        changedAreas,
+      };
+
+      return reply.send({ fromVersion, toVersion, commitCount, commits, migrations, impact, source });
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/system/merge-source — merge a remote ref into the local branch
+  //
+  // Body: { source: string }  e.g. { source: "upstream/main" }
+  //
+  // Runs: git fetch {remote} && git merge {ref} --no-edit
+  // On conflict: aborts immediately and returns the conflicted file list.
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/system/merge-source", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "System API only allowed from private network" });
+    }
+    const repoPath = deps.selfRepoPath ?? process.cwd();
+    const body = request.body as { source?: string };
+    const source = typeof body.source === "string" ? body.source.trim() : "";
+
+    if (!source) {
+      return reply.code(400).send({ error: "source field required in request body" });
+    }
+
+    // Validate the ref looks like "remote/branch" to prevent injection
+    if (!/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._/-]+$/.test(source)) {
+      return reply.code(400).send({ error: "Invalid source format — expected remote/branch" });
+    }
+
+    // Verify the ref exists
+    const verifyRes = await execGitDashboard(["rev-parse", "--verify", source], repoPath);
+    if (verifyRes.exitCode !== 0) {
+      return reply.code(422).send({ error: `Ref not found: ${source}` });
+    }
+
+    try {
+      // Count commits that will be merged (for the response)
+      let deployedCommit = "";
+      try {
+        deployedCommit = readFileSync(join(process.cwd(), ".deployed-commit"), "utf-8").trim();
+      } catch {
+        const headRes = await execGitDashboard(["rev-parse", "HEAD"], repoPath);
+        deployedCommit = headRes.stdout.trim();
+      }
+      const countRes = await execGitDashboard(
+        ["rev-list", "--count", `${deployedCommit}..${source}`],
+        repoPath,
+      );
+      const mergedCommits = parseInt(countRes.stdout.trim(), 10) || 0;
+
+      // Fetch the specific remote so refs are fresh
+      const remote = source.split("/")[0];
+      await execGitDashboard(["fetch", remote ?? "origin"], repoPath);
+
+      // Attempt the merge
+      const mergeRes = await execGitDashboard(
+        ["merge", source, "--no-edit", "--no-ff"],
+        repoPath,
+      );
+
+      if (mergeRes.exitCode === 0) {
+        const fastForward = mergeRes.stdout.includes("Fast-forward");
+        return reply.send({ ok: true, fastForward, mergedCommits, aborted: false, message: mergeRes.stdout.trim() });
+      }
+
+      // Merge failed — check for conflicts
+      const statusRes = await execGitDashboard(
+        ["diff", "--name-only", "--diff-filter=U"],
+        repoPath,
+      );
+      const conflicts = statusRes.stdout.trim().split("\n").filter(Boolean);
+
+      // Abort to leave the repo in a clean state
+      await execGitDashboard(["merge", "--abort"], repoPath);
+
+      return reply.code(409).send({
+        ok: false,
+        fastForward: false,
+        mergedCommits: 0,
+        conflicts,
+        aborted: true,
+        message: `Merge aborted — ${conflicts.length} conflict(s) detected. Use Aion Doctor to resolve.`,
+      });
+    } catch (err) {
+      // Attempt cleanup on unexpected error
+      await execGitDashboard(["merge", "--abort"], repoPath).catch(() => null);
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // -----------------------------------------------------------------------
   // Pre-listen hooks — register additional routes before the server starts
   // -----------------------------------------------------------------------
 

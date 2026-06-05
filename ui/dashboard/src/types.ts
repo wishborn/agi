@@ -133,6 +133,78 @@ export interface UpgradeNextStep {
   cancels?: string[];
 }
 
+// ---------------------------------------------------------------------------
+// Upgrade Wizard — fork-aware 2-step upgrade workflow
+// ---------------------------------------------------------------------------
+
+/** One remote/branch source the user can upgrade from. */
+export interface ForkBranchInfo {
+  /** git ref string, e.g. "upstream/main", "origin/dev". */
+  ref: string;
+  /** Human label, e.g. "Civicognita/agi — main". */
+  label: string;
+  /** Commits the local fork has that this source does not. */
+  commitsAhead: number;
+  /** Commits this source has that the local fork does not (i.e. "behind count"). */
+  commitsBehind: number;
+  latestCommit: { hash: string; message: string; date: string } | null;
+  /** Version string from package.json at that ref, if readable. */
+  latestVersion: string | null;
+  /** True when this ref matches the current update channel. */
+  isCurrentChannel: boolean;
+}
+
+/** Response from GET /api/system/fork-status. */
+export interface ForkStatus {
+  devModeEnabled: boolean;
+  currentBranch: string;
+  currentVersion: string;
+  deployedCommit: string;
+  sources: ForkBranchInfo[];
+}
+
+/** A migration entry that will execute for a given upgrade. */
+export interface UpgradePreviewMigration {
+  id: string;
+  version: string;
+  description: string;
+}
+
+/** High-level classification of what an upgrade will affect. */
+export interface UpgradeImpact {
+  /** True if any backend file changed (gateway restart required). */
+  requiresRestart: boolean;
+  /** True if any migrations are in the range. */
+  requiresDbMigration: boolean;
+  /** True if only ui/ or channel static files changed (hot-swap, no restart). */
+  frontendOnly: boolean;
+  /** Coarse area labels, e.g. ["gateway-core", "ui/dashboard", "channels/discord"]. */
+  changedAreas: string[];
+}
+
+/** Response from GET /api/system/upgrade-preview?source={ref}. */
+export interface UpgradePreview {
+  fromVersion: string;
+  toVersion: string;
+  commitCount: number;
+  commits: { hash: string; message: string; date: string }[];
+  migrations: UpgradePreviewMigration[];
+  impact: UpgradeImpact;
+  source: string;
+}
+
+/** Response from POST /api/system/merge-source. */
+export interface MergeResult {
+  ok: boolean;
+  fastForward: boolean;
+  mergedCommits: number;
+  /** Conflicted file paths — populated only when aborted is true. */
+  conflicts?: string[];
+  /** True when the merge was aborted due to conflicts. */
+  aborted: boolean;
+  message: string;
+}
+
 /** Hosting infrastructure status from WebSocket. */
 export interface HostingStatusData {
   ready: boolean;

@@ -907,6 +907,42 @@ export async function dismissUpgradeStep(id: string): Promise<{ ok: boolean; has
 }
 
 // ---------------------------------------------------------------------------
+// Upgrade Wizard — fork-aware multi-source upgrade workflow
+// ---------------------------------------------------------------------------
+
+export async function fetchForkStatus(): Promise<import("./types.js").ForkStatus> {
+  const res = await fetch("/api/system/fork-status");
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<import("./types.js").ForkStatus>;
+}
+
+export async function fetchUpgradePreview(source: string): Promise<import("./types.js").UpgradePreview> {
+  const res = await fetch(`/api/system/upgrade-preview?source=${encodeURIComponent(source)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<import("./types.js").UpgradePreview>;
+}
+
+export async function mergeForkSource(source: string): Promise<import("./types.js").MergeResult> {
+  const res = await fetch("/api/system/merge-source", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source }),
+  });
+  // 409 = merge conflict — still a structured response, not an error throw
+  if (!res.ok && res.status !== 409) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<import("./types.js").MergeResult>;
+}
+
+// ---------------------------------------------------------------------------
 // System connections — /api/system/connections
 // ---------------------------------------------------------------------------
 
