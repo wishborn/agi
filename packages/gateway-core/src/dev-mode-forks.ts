@@ -163,7 +163,7 @@ export async function resolveOrCreateForks(
   for (const spec of CORE_REPOS) {
     const upstreamUrl = upstreamRemoteUrl(spec);
     try {
-      const existing = await lookupFork(ownerToken, ownerLogin, spec.upstream);
+      const existing = await lookupFork(ownerToken, ownerLogin, spec.upstream, specUpstreamOrg(spec));
       if (existing) {
         results.push({ slug: spec.slug, cloneUrl: existing, upstreamUrl, created: false });
         continue;
@@ -193,14 +193,18 @@ export async function resolveOrCreateForks(
 }
 
 /**
- * HEAD the owner's fork. Returns its `clone_url` if it exists, null if
- * it 404s. Any other non-2xx response is thrown as an error so the
- * caller can report it.
+ * HEAD the owner's fork. Returns its `clone_url` if it exists AND is a
+ * verified fork of the expected upstream. Returns null if the repo doesn't
+ * exist (caller should then create a proper fork). Throws if the repo
+ * exists but is not a fork of the expected upstream — that is a name
+ * collision that requires manual resolution, not a fork-creation attempt
+ * (which would also fail with a 422 from GitHub).
  */
 async function lookupFork(
   token: string,
   ownerLogin: string,
   upstream: string,
+  expectedUpstreamOrg: string,
 ): Promise<string | null> {
   const url = `https://api.github.com/repos/${ownerLogin}/${upstream}`;
   const res = await fetch(url, {
@@ -211,7 +215,24 @@ async function lookupFork(
   if (!res.ok) {
     throw new Error(`GET ${url} → ${String(res.status)} ${res.statusText}`);
   }
-  const body = (await res.json()) as { clone_url?: string; html_url?: string };
+  const body = (await res.json()) as {
+    clone_url?: string;
+    html_url?: string;
+    fork?: boolean;
+    parent?: { full_name?: string };
+  };
+
+  // Verify this is a genuine fork of the correct upstream — not just any
+  // repo with the same name in the owner's account.
+  const expectedFullName = `${expectedUpstreamOrg}/${upstream}`;
+  if (!body.fork || body.parent?.full_name !== expectedFullName) {
+    throw new Error(
+      `${ownerLogin}/${upstream} exists but is not a fork of ${expectedFullName} ` +
+      `(fork=${String(!!body.fork)}, parent=${body.parent?.full_name ?? "none"}). ` +
+      `Rename or delete the existing repo to let Contributing Mode create a proper fork.`,
+    );
+  }
+
   return body.clone_url ?? (body.html_url ? `${body.html_url}.git` : null);
 }
 
