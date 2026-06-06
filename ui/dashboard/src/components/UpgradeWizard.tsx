@@ -26,6 +26,8 @@ import {
   fetchForkStatus,
   fetchUpgradePreview,
   mergeForkSource,
+  fetchUpgradeHistory,
+  addUpgradeHistoryNote,
 } from "@/api.js";
 import type {
   ForkStatus,
@@ -33,6 +35,7 @@ import type {
   UpgradePreview,
   MergeResult,
   SystemUpgradedEvent,
+  UpgradeHistoryEntry,
 } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -121,9 +124,33 @@ export function UpgradeWizard({
   // Track already-seen fine steps so the list grows monotonically
   const seenStepsRef = useRef<Map<string, { status: string; message: string }>>(new Map());
 
+  // History panel state
+  const [showHistory, setShowHistory] = useState(false);
+  const [history, setHistory] = useState<UpgradeHistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [noteEntryId, setNoteEntryId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
+
+  // Load history when history panel opens
+  useEffect(() => {
+    if (!showHistory) return;
+    setHistoryLoading(true);
+    fetchUpgradeHistory()
+      .then(({ entries }) => { setHistory(entries); setHistoryLoading(false); })
+      .catch(() => setHistoryLoading(false));
+  }, [showHistory]);
+
+  const handleSaveNote = useCallback(async (id: string) => {
+    if (!noteDraft.trim()) return;
+    await addUpgradeHistoryNote(id, noteDraft).catch(() => {});
+    setHistory(prev => prev.map(e => e.id === id ? { ...e, resolutionNote: noteDraft } : e));
+    setNoteEntryId(null);
+    setNoteDraft("");
+  }, [noteDraft]);
 
   // Load fork status on open
   useEffect(() => {
@@ -324,25 +351,44 @@ export function UpgradeWizard({
     selected: boolean;
     onSelect: () => void;
   }) {
-    const upToDate = source.commitsBehind === 0;
-    // Upstream with pending commits = amber; selected = primary; default = muted border
+    const isBehind = source.mergeType === "behind";
+    const upToDate = source.mergeType === "up-to-date";
+    const hasConflicts = source.hasConflicts;
+
+    // Color tiers: selected=primary, upstream pending=amber, conflicts/behind=red, default=border
     const borderClass = selected
       ? "border-primary bg-primary/5"
+      : isBehind || hasConflicts
+      ? "border-red/30 bg-red/5"
       : source.isUpstream && !upToDate
       ? "border-yellow/40 bg-yellow/5 hover:border-yellow/60"
       : "border-border bg-card hover:border-primary/40";
+
+    const MERGE_LABELS: Record<string, { label: string; className: string }> = {
+      "fast-forward": { label: "Fast-forward", className: "bg-green/15 text-green" },
+      "three-way": { label: hasConflicts ? "Conflicts detected" : "3-way merge", className: hasConflicts ? "bg-red/15 text-red" : "bg-yellow/15 text-yellow" },
+      "behind":    { label: "Source is older than installed", className: "bg-red/15 text-red" },
+      "up-to-date": { label: "", className: "" },
+    };
+    const mergeInfo = MERGE_LABELS[source.mergeType];
 
     return (
       <button
         data-testid={source.isCurrentChannel ? "upgrade-source-card-current" : "upgrade-source-card"}
         data-selected={selected ? "true" : "false"}
-        onClick={onSelect}
-        className={cn("w-full text-left rounded-lg border p-3 transition-all", borderClass)}
+        onClick={isBehind ? undefined : onSelect}
+        disabled={isBehind}
+        className={cn(
+          "w-full text-left rounded-lg border p-3 transition-all",
+          borderClass,
+          isBehind && "opacity-60 cursor-not-allowed",
+        )}
       >
         <div className="flex items-start gap-2.5">
           <span className={cn(
             "mt-0.5 w-3 h-3 rounded-full border-2 shrink-0",
             selected ? "border-primary bg-primary"
+              : isBehind || hasConflicts ? "border-red bg-red/30"
               : source.isUpstream && !upToDate ? "border-yellow bg-yellow/30"
               : "border-muted-foreground",
           )} />
@@ -354,7 +400,7 @@ export function UpgradeWizard({
                   Current channel
                 </span>
               )}
-              {source.isUpstream && !upToDate && (
+              {source.isUpstream && !upToDate && !isBehind && (
                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">
                   Update available
                 </span>
@@ -364,13 +410,28 @@ export function UpgradeWizard({
                   Up to date
                 </span>
               )}
+              {mergeInfo && mergeInfo.label && (
+                <span className={cn("text-[9px] px-1.5 py-0.5 rounded font-semibold", mergeInfo.className)}>
+                  {mergeInfo.label}
+                </span>
+              )}
             </div>
-            {!upToDate && (
-              <div className={cn("text-[11px] mt-0.5", source.isUpstream ? "text-yellow/80" : "text-muted-foreground")}>
-                <span className="font-medium">{source.commitsBehind}</span> commit{source.commitsBehind !== 1 ? "s" : ""} behind
+            {source.commitsBehind > 0 && (
+              <div className={cn("text-[11px] mt-0.5", isBehind ? "text-red/70" : source.isUpstream ? "text-yellow/80" : "text-muted-foreground")}>
+                <span className="font-medium">{source.commitsBehind}</span> commit{source.commitsBehind !== 1 ? "s" : ""} to merge
                 {source.latestVersion && (
                   <span className="ml-1.5 font-mono text-muted-foreground/80">→ v{source.latestVersion}</span>
                 )}
+                {source.commitsAhead > 0 && (
+                  <span className="ml-1.5 text-muted-foreground/60">
+                    · installed is {source.commitsAhead} ahead
+                  </span>
+                )}
+              </div>
+            )}
+            {isBehind && (
+              <div className="text-[10px] text-red/70 mt-0.5">
+                This source is older than your installation — selecting it could revert changes.
               </div>
             )}
             {source.latestCommit && (
@@ -427,21 +488,146 @@ export function UpgradeWizard({
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-border shrink-0">
         <span className="text-[15px] font-bold text-foreground">Upgrade Manager</span>
-        {step !== 3 && (
+        <div className="flex items-center gap-3">
           <button
-            onClick={onClose}
-            className="text-muted-foreground hover:text-foreground text-xl leading-none px-1"
-            aria-label="Close upgrade wizard"
+            onClick={() => setShowHistory(h => !h)}
+            className={cn(
+              "text-[12px] font-medium px-2.5 py-1 rounded transition-colors",
+              showHistory
+                ? "bg-primary/10 text-primary"
+                : "text-muted-foreground hover:text-foreground hover:bg-surface0",
+            )}
           >
-            ×
+            History
           </button>
-        )}
+          {(step !== 3 || showHistory) && (
+            <button
+              onClick={onClose}
+              className="text-muted-foreground hover:text-foreground text-xl leading-none px-1"
+              aria-label="Close upgrade wizard"
+            >
+              ×
+            </button>
+          )}
+        </div>
       </div>
 
-      <StepIndicator />
+      {!showHistory && <StepIndicator />}
+
+      {/* History panel (replaces step body when toggled) */}
+      {showHistory && (
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-2xl mx-auto w-full px-5 py-6">
+            <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-4">
+              Upgrade History
+            </div>
+
+            {historyLoading && (
+              <div className="text-[12px] text-muted-foreground animate-pulse py-8 text-center">
+                Loading history…
+              </div>
+            )}
+
+            {!historyLoading && history.length === 0 && (
+              <div className="text-[12px] text-muted-foreground py-8 text-center">
+                No upgrade history yet. History is recorded after the first upgrade run.
+              </div>
+            )}
+
+            {!historyLoading && history.map((entry) => (
+              <div
+                key={entry.id}
+                className={cn(
+                  "rounded-lg border p-4 mb-3",
+                  entry.success ? "border-border bg-card" : "border-red/20 bg-red/5",
+                )}
+              >
+                {/* Header row */}
+                <div className="flex items-start justify-between gap-3 mb-2">
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={cn(
+                        "text-[9px] px-1.5 py-0.5 rounded font-bold uppercase",
+                        entry.success ? "bg-green/15 text-green" : "bg-red/15 text-red",
+                      )}>
+                        {entry.success ? "Success" : "Failed"}
+                      </span>
+                      <span className="font-mono text-[12px] text-foreground font-semibold">
+                        v{entry.fromVersion} → v{entry.toVersion}
+                      </span>
+                      {entry.source && (
+                        <span className="text-[10px] text-muted-foreground font-mono">{entry.source}</span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">
+                      {new Date(entry.startedAt).toLocaleString()}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Failure detail */}
+                {!entry.success && entry.errorMessage && (
+                  <div className="text-[11px] text-red/80 bg-red/5 rounded px-2 py-1.5 mb-2 font-mono">
+                    {entry.failedAtStep && <span className="font-bold mr-1">[{entry.failedAtStep}]</span>}
+                    {entry.errorMessage}
+                  </div>
+                )}
+
+                {/* Resolution note */}
+                {entry.resolutionNote && (
+                  <div className="text-[11px] text-green/80 bg-green/5 rounded px-2 py-1.5 mb-2">
+                    <span className="font-semibold text-green/90 mr-1">Resolution:</span>
+                    {entry.resolutionNote}
+                  </div>
+                )}
+
+                {/* Add / edit resolution note for failed entries */}
+                {!entry.success && (
+                  noteEntryId === entry.id ? (
+                    <div className="flex gap-2 mt-2">
+                      <input
+                        value={noteDraft}
+                        onChange={e => setNoteDraft(e.target.value)}
+                        placeholder="Describe how this failure was resolved…"
+                        className="flex-1 text-[11px] bg-background border border-border rounded px-2 py-1 outline-none focus:border-primary"
+                      />
+                      <Button size="sm" onClick={() => void handleSaveNote(entry.id)} className="text-[11px] h-7">Save</Button>
+                      <Button size="sm" variant="outline" onClick={() => { setNoteEntryId(null); setNoteDraft(""); }} className="text-[11px] h-7">Cancel</Button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => { setNoteEntryId(entry.id); setNoteDraft(entry.resolutionNote ?? ""); }}
+                      className="text-[10px] text-muted-foreground hover:text-foreground mt-1"
+                    >
+                      {entry.resolutionNote ? "Edit resolution note" : "+ Add resolution note"}
+                    </button>
+                  )
+                )}
+
+                {/* Collapsible log */}
+                {entry.log.length > 0 && (
+                  <details className="group mt-2">
+                    <summary className="text-[10px] text-muted-foreground cursor-pointer list-none flex items-center gap-1 select-none">
+                      <span className="group-open:rotate-90 inline-block transition-transform">›</span>
+                      Step log ({entry.log.length} entries)
+                    </summary>
+                    <div className="mt-1 max-h-[120px] overflow-y-auto rounded bg-surface0 border border-border p-2 font-mono text-[9px] space-y-0.5">
+                      {entry.log.map((l, i) => (
+                        <div key={i} className={l.status === "fail" ? "text-red" : "text-subtext0"}>
+                          <span className="text-subtext1">[{l.step}:{l.status}]</span> {l.message}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Body — scrollable */}
-      <div className="flex-1 overflow-y-auto">
+      {!showHistory && <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto w-full px-5 py-6">
 
           {/* ------------------------------------------------------------------ */}
@@ -768,7 +954,7 @@ export function UpgradeWizard({
             </div>
           )}
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

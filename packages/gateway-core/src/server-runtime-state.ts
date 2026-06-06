@@ -75,6 +75,7 @@ import type { COAChainLogger } from "@agi/coa-chain";
 import type { DashboardSession } from "./dashboard-user-store.js";
 import type { FederationRouter as FedRouter } from "./federation-router.js";
 import { appendUpgradeLog, clearUpgradeLog, getUpgradeLog } from "./upgrade-log.js";
+import { appendUpgradeHistory, readUpgradeHistory, addResolutionNote, generateHistoryId } from "./upgrade-history.js";
 import {
   listUpgradeNextSteps,
   completeUpgradeNextStep,
@@ -419,11 +420,11 @@ interface GitExecResult {
   exitCode: number;
 }
 
-async function execGitDashboard(args: string[], cwd: string): Promise<GitExecResult> {
+async function execGitDashboard(args: string[], cwd: string, timeoutMs = 30_000): Promise<GitExecResult> {
   try {
     const { stdout, stderr } = await execFileAsync("git", args, {
       cwd,
-      timeout: 30_000,
+      timeout: timeoutMs,
       maxBuffer: 1024 * 1024,
     });
     return {
@@ -541,6 +542,8 @@ function parseGitStatus(raw: string): {
 /** Guard: only one upgrade at a time across the process. */
 let upgradeInProgress = false;
 let upgradeStartedAt = 0;
+/** History entry being built for the current upgrade run. */
+let currentHistoryEntry: import("./upgrade-history.js").UpgradeHistoryEntry | null = null;
 
 /** Fetch cache — avoid hammering the remote on rapid poll calls. */
 let lastFetchTime = 0;
@@ -5404,6 +5407,26 @@ export async function createGatewayRuntimeState(
     clearUpgradeLog();
     const repoPath = deps.selfRepoPath;
 
+    // Start a history entry for this upgrade run
+    let deployedVersion = "unknown";
+    try {
+      deployedVersion = (JSON.parse(readFileSync(join(repoPath, "package.json"), "utf-8")) as { version?: string }).version ?? "unknown";
+    } catch { /* best-effort */ }
+    const body = request.body as { source?: string } | undefined;
+    currentHistoryEntry = {
+      id: generateHistoryId(),
+      startedAt: new Date().toISOString(),
+      completedAt: "",
+      fromVersion: deployedVersion,
+      toVersion: deployedVersion,
+      source: body?.source ?? null,
+      success: false,
+      failedAtStep: null,
+      errorMessage: null,
+      resolutionNote: null,
+      log: [],
+    };
+
     // Respond immediately — upgrade runs in the background
     void reply.code(202).send({ ok: true, message: "Upgrade started" });
 
@@ -5496,14 +5519,52 @@ export async function createGatewayRuntimeState(
         } else {
           broadcastUpgrade("complete", "Deploy complete", "complete", "done");
         }
+        // Persist success to upgrade history
+        if (currentHistoryEntry) {
+          let newVersion = currentHistoryEntry.fromVersion;
+          try {
+            newVersion = (JSON.parse(readFileSync(join(repoPath, "package.json"), "utf-8")) as { version?: string }).version ?? newVersion;
+          } catch { /* best-effort */ }
+          appendUpgradeHistory({
+            ...currentHistoryEntry,
+            completedAt: new Date().toISOString(),
+            toVersion: newVersion,
+            success: true,
+            log: getUpgradeLog().map(e => ({ phase: e.phase, step: e.step ?? "", status: e.status ?? "", message: e.message, timestamp: e.timestamp })),
+          });
+          currentHistoryEntry = null;
+        }
       } else {
         broadcastUpgrade("error", `Deploy failed (exit ${code}) at step: ${lastStep}`, lastStep, "fail");
+        // Persist failure to upgrade history
+        if (currentHistoryEntry) {
+          appendUpgradeHistory({
+            ...currentHistoryEntry,
+            completedAt: new Date().toISOString(),
+            success: false,
+            failedAtStep: lastStep,
+            errorMessage: `Deploy failed (exit ${String(code)}) at step: ${lastStep}`,
+            log: getUpgradeLog().map(e => ({ phase: e.phase, step: e.step ?? "", status: e.status ?? "", message: e.message, timestamp: e.timestamp })),
+          });
+          currentHistoryEntry = null;
+        }
       }
     });
 
     child.on("error", (err) => {
       upgradeInProgress = false;
       broadcastUpgrade("error", `Deploy error: ${err.message}`, "upgrade", "fail");
+      if (currentHistoryEntry) {
+        appendUpgradeHistory({
+          ...currentHistoryEntry,
+          completedAt: new Date().toISOString(),
+          success: false,
+          failedAtStep: "upgrade",
+          errorMessage: err.message,
+          log: getUpgradeLog().map(e => ({ phase: e.phase, step: e.step ?? "", status: e.status ?? "", message: e.message, timestamp: e.timestamp })),
+        });
+        currentHistoryEntry = null;
+      }
     });
   });
 
@@ -5517,6 +5578,32 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "System API only allowed from private network" });
     }
     return reply.send(getUpgradeLog());
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/system/upgrade-history — persistent record of every upgrade
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/system/upgrade-history", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Forbidden" });
+    return reply.send({ entries: readUpgradeHistory() });
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/system/upgrade-history/:id/note — add resolution note
+  // -----------------------------------------------------------------------
+
+  fastify.post<{ Params: { id: string } }>("/api/system/upgrade-history/:id/note", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Forbidden" });
+    const { id } = request.params;
+    const body = request.body as { note?: string } | undefined;
+    const note = typeof body?.note === "string" ? body.note.trim() : "";
+    if (!note) return reply.code(400).send({ error: "note is required" });
+    const ok = addResolutionNote(id, note);
+    if (!ok) return reply.code(404).send({ error: `Entry not found: ${id}` });
+    return reply.send({ ok: true });
   });
 
   // ---------------------------------------------------------------------------
@@ -8151,9 +8238,16 @@ export async function createGatewayRuntimeState(
 
     try {
       const channel = getUpdateChannel();
-      const devEnabled = deps.config
-        ? Boolean((deps.config as Record<string, unknown>).dev && ((deps.config as Record<string, unknown>).dev as Record<string, unknown>).enabled)
-        : false;
+      // Read dev.enabled fresh from disk (same pattern as line ~3877) —
+      // deps.config may be a boot-time snapshot; configPath always has the live value.
+      let devEnabled = false;
+      if (deps.configPath) {
+        try {
+          const cfgRaw = readFileSync(deps.configPath, "utf-8");
+          const cfg = JSON.parse(cfgRaw) as { dev?: { enabled?: boolean } };
+          devEnabled = cfg.dev?.enabled ?? false;
+        } catch { /* config unreadable — stay false */ }
+      }
 
       // In Dev Mode, ensure an "upstream" remote points at the canonical repo
       // (Civicognita/agi) so the Upgrade Wizard can always show the upstream
@@ -8173,8 +8267,19 @@ export async function createGatewayRuntimeState(
         }
       }
 
-      // Fetch all remotes so rev-list comparisons are fresh
-      await execGitDashboard(["fetch", "--all", "--quiet"], repoPath);
+      // Fetch remotes so rev-list comparisons are fresh.
+      // Use targeted per-remote fetches with a longer timeout — "fetch --all"
+      // with a fresh upstream can take 30s+ when pulling full history.
+      const remoteListRes = await execGitDashboard(["remote"], repoPath);
+      const allRemotes = remoteListRes.stdout.trim().split("\n").filter(Boolean);
+      for (const r of allRemotes) {
+        // Shallow-ish fetch: get latest main+dev without full history depth
+        await execGitDashboard(
+          ["fetch", r, "main", "dev", "--quiet", "--update-head-ok"],
+          repoPath,
+          60_000,
+        );
+      }
 
       // Deployed commit (written by upgrade.sh; fall back to HEAD if absent)
       let deployedCommit = "";
@@ -8214,6 +8319,8 @@ export async function createGatewayRuntimeState(
         latestVersion: string | null;
         isCurrentChannel: boolean;
         isUpstream: boolean;
+        mergeType: "up-to-date" | "fast-forward" | "three-way" | "behind";
+        hasConflicts: boolean;
       }> = [];
 
       for (const remote of remotes) {
@@ -8272,6 +8379,41 @@ export async function createGatewayRuntimeState(
             } catch { /* non-JSON or missing */ }
           }
 
+          // Merge compatibility heuristic:
+          //   - up-to-date: nothing to merge
+          //   - fast-forward: source is simply ahead (no local divergence) — clean
+          //   - three-way: both sides have unique commits — may have conflicts
+          //   - behind: source is older than local — would bring back old state, warn
+          let mergeType: "up-to-date" | "fast-forward" | "three-way" | "behind";
+          if (commitsBehind === 0 && commitsAhead === 0) {
+            mergeType = "up-to-date";
+          } else if (commitsBehind > 0 && commitsAhead === 0) {
+            mergeType = "fast-forward";
+          } else if (commitsBehind > 0 && commitsAhead > 0) {
+            mergeType = "three-way";
+          } else {
+            // commitsAhead > 0 && commitsBehind === 0 — source is behind local
+            mergeType = "behind";
+          }
+
+          // Quick conflict pre-check via git merge-tree (non-destructive).
+          // Only run for three-way merges to keep latency down.
+          let hasConflicts = false;
+          if (mergeType === "three-way") {
+            const mergeBaseRes = await execGitDashboard(
+              ["merge-base", deployedCommit, refCommit],
+              repoPath,
+            );
+            if (mergeBaseRes.exitCode === 0) {
+              const mergeBase = mergeBaseRes.stdout.trim();
+              const mergeTreeRes = await execGitDashboard(
+                ["merge-tree", mergeBase, deployedCommit, refCommit],
+                repoPath,
+              );
+              hasConflicts = mergeTreeRes.stdout.includes("<<<<<<<");
+            }
+          }
+
           const isCurrentChannel = branch === channel && remote === canonicalRemote;
 
           sources.push({
@@ -8284,6 +8426,8 @@ export async function createGatewayRuntimeState(
             latestCommit,
             latestVersion,
             isCurrentChannel,
+            mergeType,
+            hasConflicts,
             isUpstream: isUpstreamRemote,
           });
         }

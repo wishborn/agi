@@ -156,6 +156,16 @@ export interface ForkBranchInfo {
    *  as opposed to the user's personal fork. Upstream sources are always shown;
    *  fork sources only appear in Dev Mode. */
   isUpstream: boolean;
+  /**
+   * Merge compatibility classification:
+   * - "up-to-date": nothing to merge
+   * - "fast-forward": source is ahead of local with no divergence — clean merge
+   * - "three-way": both sides have unique commits — may have conflicts
+   * - "behind": source is older than local — merging would bring back old state
+   */
+  mergeType: "up-to-date" | "fast-forward" | "three-way" | "behind";
+  /** True if a merge-tree simulation detected conflict markers. Only set for three-way merges. */
+  hasConflicts: boolean;
 }
 
 /** Response from GET /api/system/fork-status. */
@@ -195,6 +205,21 @@ export interface UpgradePreview {
   migrations: UpgradePreviewMigration[];
   impact: UpgradeImpact;
   source: string;
+}
+
+/** A single entry in the persistent upgrade history. */
+export interface UpgradeHistoryEntry {
+  id: string;
+  startedAt: string;
+  completedAt: string;
+  fromVersion: string;
+  toVersion: string;
+  source: string | null;
+  success: boolean;
+  failedAtStep: string | null;
+  errorMessage: string | null;
+  resolutionNote: string | null;
+  log: Array<{ phase: string; step: string; status: string; message: string; timestamp: string }>;
 }
 
 /** Response from POST /api/system/merge-source. */

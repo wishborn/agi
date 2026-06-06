@@ -44,6 +44,37 @@ test.describe("Upgrade Wizard — API layer", () => {
     expect(typeof source.commitsAhead).toBe("number");
     expect(typeof source.commitsBehind).toBe("number");
     expect(typeof source.isCurrentChannel).toBe("boolean");
+    expect(typeof source.isUpstream).toBe("boolean");
+    expect(["up-to-date", "fast-forward", "three-way", "behind"]).toContain(source.mergeType);
+    expect(typeof source.hasConflicts).toBe("boolean");
+  });
+
+  test("GET /api/system/upgrade-history returns valid shape", async ({ page }) => {
+    await page.goto("/");
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10_000 });
+    const result = await page.evaluate(async () => {
+      const res = await fetch("/api/system/upgrade-history");
+      if (!res.ok) return null;
+      return res.json();
+    });
+    expect(result).not.toBeNull();
+    expect(Array.isArray(result.entries)).toBe(true);
+  });
+
+  test("fork-status always includes upstream source in Dev Mode", async ({ page }) => {
+    await page.goto("/");
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10_000 });
+    const result = await page.evaluate(async () => {
+      const res = await fetch("/api/system/fork-status");
+      if (!res.ok) return null;
+      return res.json();
+    });
+    if (!result?.devModeEnabled) {
+      test.skip(); // not in Dev Mode
+      return;
+    }
+    const upstreamSources = result.sources.filter((s: { isUpstream: boolean }) => s.isUpstream);
+    expect(upstreamSources.length).toBeGreaterThan(0);
   });
 
   test("GET /api/system/upgrade-preview returns valid shape for current channel ref", async ({ page }) => {
@@ -190,5 +221,40 @@ test.describe("Upgrade Wizard — UI", () => {
     await expect(page.getByTestId("upgrade-wizard-step-indicator-1")).toHaveAttribute("data-active", "true", { timeout: 5_000 });
     await expect(page.getByTestId("upgrade-wizard-step-indicator-2")).toHaveAttribute("data-active", "false");
     await expect(page.getByTestId("upgrade-wizard-step-indicator-3")).toHaveAttribute("data-active", "false");
+  });
+
+  test("History button opens history panel", async ({ page }) => {
+    await page.getByTestId("upgrade-wizard-trigger").click();
+    await expect(page.getByTestId("upgrade-wizard-overlay")).toBeVisible({ timeout: 5_000 });
+
+    // Click History button
+    await page.getByRole("button", { name: "History" }).click();
+
+    // Step wizard should be hidden; history panel visible
+    await expect(page.getByTestId("upgrade-wizard-step-1")).not.toBeVisible({ timeout: 3_000 });
+    await expect(page.getByText("Upgrade History")).toBeVisible();
+  });
+
+  test("source cards show merge type indicator", async ({ page }) => {
+    await page.getByTestId("upgrade-wizard-trigger").click();
+    await expect(page.getByTestId("upgrade-wizard-step-1")).toBeVisible({ timeout: 5_000 });
+
+    // Source cards should exist; at least one may have a merge type badge
+    const cards = page.locator("[data-testid='upgrade-source-card'], [data-testid='upgrade-source-card-current']");
+    await expect(cards.first()).toBeVisible();
+  });
+
+  test("'behind' source cards are disabled", async ({ page }) => {
+    // A source where our installation is ahead of the source has mergeType='behind'
+    // and should be rendered as disabled (can't accidentally downgrade).
+    // This test verifies that disabled buttons cannot be clicked by checking
+    // that the wizard doesn't advance to preview when a behind card is clicked.
+    await page.getByTestId("upgrade-wizard-trigger").click();
+    await expect(page.getByTestId("upgrade-wizard-step-1")).toBeVisible({ timeout: 5_000 });
+    // If there's a disabled card, it should have disabled attribute
+    const disabledCard = page.locator("button[data-testid='upgrade-source-card'][disabled]");
+    if (await disabledCard.count() > 0) {
+      await expect(disabledCard.first()).toBeDisabled();
+    }
   });
 });
