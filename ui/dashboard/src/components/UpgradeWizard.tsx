@@ -461,7 +461,7 @@ export function UpgradeWizard({
               )}
               {source.commitsAhead > 0 && (
                 <span className="text-[10px] text-muted-foreground/70">
-                  your install is {source.commitsAhead} ahead of this source
+                  your fork has {source.commitsAhead} commit{source.commitsAhead !== 1 ? "s" : ""} not yet in this source
                 </span>
               )}
             </div>
@@ -917,7 +917,7 @@ export function UpgradeWizard({
               )}
 
               {/* Actions */}
-              <div className="flex items-center justify-between pt-1">
+              <div className="flex items-start justify-between pt-2 gap-4">
                 <Button
                   data-testid="upgrade-wizard-back-btn"
                   variant="outline"
@@ -925,13 +925,31 @@ export function UpgradeWizard({
                 >
                   ← Back
                 </Button>
-                {!mergeConflict && (
-                  <Button
-                    onClick={() => void handleMergeAndUpgrade()}
-                    disabled={mergeLoading || (preview?.commitCount === 0)}
-                  >
-                    {mergeLoading ? "Merging…" : preview?.commitCount === 0 ? "Up to date" : "Merge & Upgrade →"}
-                  </Button>
+                {!mergeConflict && preview && preview.commitCount > 0 && (
+                  <div className="flex flex-col items-end gap-1.5">
+                    {/* Flow explanation — what the button will actually do */}
+                    <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                      <span className="px-1.5 py-0.5 rounded bg-surface1">1</span>
+                      <span>Merge {preview.commitCount} commit{preview.commitCount !== 1 ? "s" : ""} from <span className="font-mono">{preview.source}</span></span>
+                      <span className="text-muted-foreground/40">→</span>
+                      <span className="px-1.5 py-0.5 rounded bg-surface1">2</span>
+                      <span>Push to your fork</span>
+                      <span className="text-muted-foreground/40">→</span>
+                      <span className="px-1.5 py-0.5 rounded bg-surface1">3</span>
+                      <span>Run upgrade</span>
+                    </div>
+                    <Button
+                      onClick={() => void handleMergeAndUpgrade()}
+                      disabled={mergeLoading}
+                    >
+                      {mergeLoading
+                        ? "Merging & pushing…"
+                        : `Merge, push & upgrade →`}
+                    </Button>
+                  </div>
+                )}
+                {!mergeConflict && preview?.commitCount === 0 && (
+                  <Button disabled>Already up to date</Button>
                 )}
               </div>
             </div>
@@ -943,12 +961,24 @@ export function UpgradeWizard({
 
           {step === 3 && (
             <div data-testid="upgrade-wizard-step-3" className="flex flex-col gap-4">
-              {/* Merge result line */}
+              {/* Merge + push result */}
               {mergeResult && (
-                <div className="flex items-center gap-2 text-[12px] text-muted-foreground bg-surface0 rounded-lg px-3 py-2">
-                  <span className="text-green">✓</span>
-                  Merged {mergeResult.commits} commit{mergeResult.commits !== 1 ? "s" : ""}
-                  {mergeResult.fastForward ? " (fast-forward)" : ""}
+                <div className="rounded-lg border border-border bg-card divide-y divide-border">
+                  <div className="flex items-center gap-2 px-3 py-2 text-[11px]">
+                    <span className="text-green font-semibold">✓</span>
+                    <span className="text-foreground">
+                      Merged {mergeResult.commits} commit{mergeResult.commits !== 1 ? "s" : ""}
+                      {mergeResult.fastForward ? " (fast-forward)" : " (3-way merge)"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 px-3 py-2 text-[11px]">
+                    <span className="text-green font-semibold">✓</span>
+                    <span className="text-foreground">Pushed to origin — fork updated</span>
+                  </div>
+                  <div className="flex items-center gap-2 px-3 py-2 text-[11px]">
+                    <span className="text-blue animate-pulse font-semibold">●</span>
+                    <span className="text-foreground font-medium">Running upgrade.sh</span>
+                  </div>
                 </div>
               )}
 

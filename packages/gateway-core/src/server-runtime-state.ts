@@ -8639,7 +8639,24 @@ export async function createGatewayRuntimeState(
 
       if (mergeRes.exitCode === 0) {
         const fastForward = mergeRes.stdout.includes("Fast-forward");
-        return reply.send({ ok: true, fastForward, mergedCommits, aborted: false, message: mergeRes.stdout.trim() });
+
+        // Push the merged result to origin so upgrade.sh can pull it.
+        // upgrade.sh always runs `git checkout -B dev origin/dev` which resets
+        // /opt/agi back to origin — without this push the merge is thrown away.
+        const currentBranch = (await execGitDashboard(["rev-parse", "--abbrev-ref", "HEAD"], repoPath)).stdout.trim() || "dev";
+        const pushRes = await execGitDashboard(["push", "origin", currentBranch], repoPath, 60_000);
+        const pushOk = pushRes.exitCode === 0;
+
+        return reply.send({
+          ok: true,
+          fastForward,
+          mergedCommits,
+          aborted: false,
+          pushedToFork: pushOk,
+          message: pushOk
+            ? `${mergeRes.stdout.trim()} — pushed to origin/${currentBranch}`
+            : `Merged locally but push failed: ${pushRes.stderr.trim()}`,
+        });
       }
 
       // Merge failed — check for conflicts

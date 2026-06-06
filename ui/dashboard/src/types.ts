@@ -234,6 +234,8 @@ export interface MergeResult {
   conflicts?: string[];
   /** True when the merge was aborted due to conflicts. */
   aborted: boolean;
+  /** True when the merged result was successfully pushed to origin/{branch}. */
+  pushedToFork?: boolean;
   message: string;
 }
 
