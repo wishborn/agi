@@ -22,6 +22,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { UpgradeNextStepsPanel } from "@/components/UpgradeNextStepsPanel.js";
+import { FancyDiff } from "@particle-academy/fancy-diff";
 import {
   fetchForkStatus,
   fetchUpgradePreview,
@@ -353,94 +354,137 @@ export function UpgradeWizard({
   }) {
     const isBehind = source.mergeType === "behind";
     const upToDate = source.mergeType === "up-to-date";
-    const hasConflicts = source.hasConflicts;
+    const canUpgrade = !isBehind && !upToDate;
 
-    // Color tiers: selected=primary, upstream pending=amber, conflicts/behind=red, default=border
-    const borderClass = selected
-      ? "border-primary bg-primary/5"
-      : isBehind || hasConflicts
-      ? "border-red/30 bg-red/5"
-      : source.isUpstream && !upToDate
-      ? "border-yellow/40 bg-yellow/5 hover:border-yellow/60"
-      : "border-border bg-card hover:border-primary/40";
+    // Visually prominent cards = upgradeable. Muted = up-to-date. Disabled = behind.
+    if (isBehind) {
+      // Compact disabled card — cannot select, clearly explains why
+      return (
+        <div className="flex items-center gap-3 rounded-lg border border-border/40 bg-surface0/30 px-3 py-2 opacity-50">
+          <span className="w-2 h-2 rounded-full bg-muted shrink-0" />
+          <span className="text-[11px] text-muted-foreground flex-1 truncate">{source.label}</span>
+          <span className="text-[9px] text-muted-foreground/60 shrink-0">older than installed</span>
+        </div>
+      );
+    }
 
-    const MERGE_LABELS: Record<string, { label: string; className: string }> = {
-      "fast-forward": { label: "Fast-forward", className: "bg-green/15 text-green" },
-      "three-way": { label: hasConflicts ? "Conflicts detected" : "3-way merge", className: hasConflicts ? "bg-red/15 text-red" : "bg-yellow/15 text-yellow" },
-      "behind":    { label: "Source is older than installed", className: "bg-red/15 text-red" },
-      "up-to-date": { label: "", className: "" },
-    };
-    const mergeInfo = MERGE_LABELS[source.mergeType];
+    if (upToDate) {
+      // Compact up-to-date card — selectable but visually secondary
+      return (
+        <button
+          data-testid={source.isCurrentChannel ? "upgrade-source-card-current" : "upgrade-source-card"}
+          data-selected={selected ? "true" : "false"}
+          onClick={onSelect}
+          className={cn(
+            "flex items-center gap-3 w-full text-left rounded-lg border px-3 py-2 transition-all",
+            selected ? "border-primary/40 bg-primary/5" : "border-border/40 bg-surface0/30 hover:bg-surface0/60",
+          )}
+        >
+          <span className={cn("w-2 h-2 rounded-full shrink-0", selected ? "bg-primary" : "bg-green/50")} />
+          <span className="text-[11px] text-muted-foreground flex-1 truncate">{source.label}</span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {source.isCurrentChannel && (
+              <span className="text-[9px] px-1 py-0.5 rounded bg-blue/10 text-blue/70 font-semibold">Current</span>
+            )}
+            <span className="text-[9px] text-green/70 font-semibold">Up to date</span>
+          </div>
+        </button>
+      );
+    }
+
+    // Upgradeable card — large, prominent, the user's attention goes here
+    const mergeColor = source.hasConflicts ? "red" : source.mergeType === "fast-forward" ? "green" : "yellow";
+    const MERGE_LABELS = {
+      "fast-forward": { label: "Clean fast-forward", bg: "bg-green/10", text: "text-green" },
+      "three-way":    { label: source.hasConflicts ? "Conflicts detected" : "3-way merge", bg: source.hasConflicts ? "bg-red/10" : "bg-yellow/10", text: source.hasConflicts ? "text-red" : "text-yellow" },
+    } as Record<string, { label: string; bg: string; text: string }>;
+    const mergeTag = MERGE_LABELS[source.mergeType] ?? { label: "", bg: "", text: "" };
 
     return (
       <button
         data-testid={source.isCurrentChannel ? "upgrade-source-card-current" : "upgrade-source-card"}
         data-selected={selected ? "true" : "false"}
-        onClick={isBehind ? undefined : onSelect}
-        disabled={isBehind}
+        onClick={onSelect}
         className={cn(
-          "w-full text-left rounded-lg border p-3 transition-all",
-          borderClass,
-          isBehind && "opacity-60 cursor-not-allowed",
+          "w-full text-left rounded-xl border-2 p-4 transition-all group",
+          selected
+            ? "border-primary bg-primary/5 shadow-sm shadow-primary/10"
+            : mergeColor === "red"
+            ? "border-red/30 bg-red/5 hover:border-red/50"
+            : "border-yellow/30 bg-yellow/5 hover:border-yellow/50 hover:shadow-sm",
         )}
       >
-        <div className="flex items-start gap-2.5">
+        <div className="flex items-start gap-3">
+          {/* Radio dot */}
           <span className={cn(
-            "mt-0.5 w-3 h-3 rounded-full border-2 shrink-0",
-            selected ? "border-primary bg-primary"
-              : isBehind || hasConflicts ? "border-red bg-red/30"
-              : source.isUpstream && !upToDate ? "border-yellow bg-yellow/30"
-              : "border-muted-foreground",
-          )} />
+            "mt-1 w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center",
+            selected
+              ? "border-primary bg-primary"
+              : mergeColor === "red" ? "border-red/50" : "border-yellow/50 group-hover:border-yellow",
+          )}>
+            {selected && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+          </span>
+
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[13px] font-semibold text-foreground">{source.label}</span>
+            {/* Title row */}
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <span className="text-[14px] font-bold text-foreground">{source.label}</span>
               {source.isCurrentChannel && (
                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue/15 text-blue font-bold uppercase tracking-wide">
                   Current channel
                 </span>
               )}
-              {source.isUpstream && !upToDate && !isBehind && (
-                <span className="text-[9px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">
-                  Update available
-                </span>
-              )}
-              {upToDate && (
-                <span className="text-[9px] px-1.5 py-0.5 rounded bg-green/15 text-green font-semibold">
-                  Up to date
-                </span>
-              )}
-              {mergeInfo && mergeInfo.label && (
-                <span className={cn("text-[9px] px-1.5 py-0.5 rounded font-semibold", mergeInfo.className)}>
-                  {mergeInfo.label}
+              {source.isUpstream && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-surface1 text-muted-foreground font-semibold">
+                  Upstream
                 </span>
               )}
             </div>
-            {source.commitsBehind > 0 && (
-              <div className={cn("text-[11px] mt-0.5", isBehind ? "text-red/70" : source.isUpstream ? "text-yellow/80" : "text-muted-foreground")}>
-                <span className="font-medium">{source.commitsBehind}</span> commit{source.commitsBehind !== 1 ? "s" : ""} to merge
-                {source.latestVersion && (
-                  <span className="ml-1.5 font-mono text-muted-foreground/80">→ v{source.latestVersion}</span>
-                )}
-                {source.commitsAhead > 0 && (
-                  <span className="ml-1.5 text-muted-foreground/60">
-                    · installed is {source.commitsAhead} ahead
-                  </span>
-                )}
-              </div>
-            )}
-            {isBehind && (
-              <div className="text-[10px] text-red/70 mt-0.5">
-                This source is older than your installation — selecting it could revert changes.
-              </div>
-            )}
+
+            {/* Commit delta — the main hook */}
+            <div className={cn(
+              "text-[15px] font-semibold mb-1.5",
+              mergeColor === "red" ? "text-red" : mergeColor === "green" ? "text-green" : "text-yellow",
+            )}>
+              ↑ {source.commitsBehind} commit{source.commitsBehind !== 1 ? "s" : ""} available
+              {source.latestVersion && (
+                <span className="ml-2 text-[12px] font-mono text-muted-foreground">→ v{source.latestVersion}</span>
+              )}
+            </div>
+
+            {/* Merge type + installed-ahead warning */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {mergeTag.label && (
+                <span className={cn("text-[10px] px-2 py-0.5 rounded font-semibold", mergeTag.bg, mergeTag.text)}>
+                  {mergeTag.label}
+                </span>
+              )}
+              {source.commitsAhead > 0 && (
+                <span className="text-[10px] text-muted-foreground/70">
+                  your install is {source.commitsAhead} ahead of this source
+                </span>
+              )}
+            </div>
+
+            {/* Latest commit preview */}
             {source.latestCommit && (
-              <div className="text-[10px] text-muted-foreground mt-0.5 truncate">
-                <span className="font-mono">{source.latestCommit.hash.slice(0, 7)}</span>
-                {" "}{source.latestCommit.message}
+              <div className="text-[10px] text-muted-foreground mt-1.5 truncate font-mono">
+                {source.latestCommit.hash.slice(0, 7)}{" "}
+                <span className="font-sans">{source.latestCommit.message}</span>
               </div>
             )}
           </div>
+
+          {/* Arrow chevron — call to action */}
+          {canUpgrade && !selected && (
+            <span className={cn(
+              "text-[18px] shrink-0 mt-1 opacity-40 group-hover:opacity-80 transition-opacity",
+              mergeColor === "red" ? "text-red" : "text-yellow",
+            )}>›</span>
+          )}
+          {selected && (
+            <span className="text-[18px] shrink-0 mt-1 text-primary">✓</span>
+          )}
         </div>
       </button>
     );
@@ -788,16 +832,29 @@ export function UpgradeWizard({
                 </div>
               )}
 
-              {/* Changelog */}
-              {preview && preview.commits.length > 0 && (
-                <div
-                  data-testid="upgrade-preview-changelog"
-                  className="rounded-lg border border-border bg-card"
-                >
-                  <div className="px-3 py-2 border-b border-border text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
-                    Changelog ({preview.commits.length} commits)
+              {/* Package diff — FancyDiff showing what changes in package.json */}
+              {preview?.packageDiff && (
+                <div data-testid="upgrade-preview-changelog" className="rounded-lg border border-border overflow-hidden">
+                  <div className="px-3 py-2 border-b border-border bg-card text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                    Version &amp; dependency changes
                   </div>
-                  <div className="divide-y divide-border max-h-[240px] overflow-y-auto">
+                  <div className="text-[11px] overflow-auto max-h-[320px]">
+                    <FancyDiff
+                      source={{ unified: preview.packageDiff }}
+                      mode="inline"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Commit list */}
+              {preview && preview.commits.length > 0 && (
+                <details className="group" open={!preview.packageDiff}>
+                  <summary className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 cursor-pointer list-none flex items-center gap-1 select-none">
+                    <span className="group-open:rotate-90 inline-block transition-transform">›</span>
+                    Commits ({preview.commits.length})
+                  </summary>
+                  <div className="rounded-lg border border-border bg-card divide-y divide-border max-h-[200px] overflow-y-auto">
                     {preview.commits.map((c) => (
                       <div key={c.hash} className="flex items-start gap-2 px-3 py-1.5 text-[11px]">
                         <span className="font-mono text-muted-foreground shrink-0 mt-px">{c.hash.slice(0, 7)}</span>
@@ -805,7 +862,7 @@ export function UpgradeWizard({
                       </div>
                     ))}
                   </div>
-                </div>
+                </details>
               )}
 
               {/* No commits */}

@@ -8562,7 +8562,18 @@ export async function createGatewayRuntimeState(
         changedAreas,
       };
 
-      return reply.send({ fromVersion, toVersion, commitCount, commits, migrations, impact, source });
+      // Unified diff of package.json — perfect input for FancyDiff source={{ unified }}
+      // Shows version bumps and dep changes in a human-readable format.
+      let packageDiff: string | null = null;
+      const pkgDiffRes = await execGitDashboard(
+        ["diff", `${deployedCommit}`, source, "--", "package.json"],
+        repoPath,
+      );
+      if (pkgDiffRes.exitCode === 0 && pkgDiffRes.stdout.trim()) {
+        packageDiff = pkgDiffRes.stdout.trim();
+      }
+
+      return reply.send({ fromVersion, toVersion, commitCount, commits, migrations, impact, source, packageDiff });
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
     }

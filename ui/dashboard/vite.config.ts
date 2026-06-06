@@ -20,6 +20,23 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    // fancy-diff@0.1.0 imports `Button` from react-fancy which was renamed to
+    // `Action` in v3. The wishborn/react-fancy fork exports both, but the
+    // published 3.2.1 only exports Action. This plugin patches the fancy-diff
+    // bundle at build time to use Action instead.
+    // TODO: remove once fancy-diff publishes against react-fancy ≥ 3.2.1 or
+    //       Particle-Academy/react-fancy merges the dual Button/Action export.
+    {
+      name: "fancy-diff-button-compat",
+      transform(code: string, id: string) {
+        if (id.includes("fancy-diff") && code.includes("{ Badge, Button, Separator, Card }")) {
+          return code.replace(
+            "{ Badge, Button, Separator, Card }",
+            "{ Badge, Action as Button, Separator, Card }",
+          );
+        }
+      },
+    },
     VitePWA({
       registerType: "autoUpdate",
       selfDestroying: false,

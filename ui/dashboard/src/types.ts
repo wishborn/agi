@@ -205,6 +205,9 @@ export interface UpgradePreview {
   migrations: UpgradePreviewMigration[];
   impact: UpgradeImpact;
   source: string;
+  /** Unified diff (git format) of package.json between deployed and target.
+   *  Suitable for passing directly to FancyDiff source={{ unified }}. */
+  packageDiff: string | null;
 }
 
 /** A single entry in the persistent upgrade history. */

@@ -6,6 +6,7 @@ import "@particle-academy/react-fancy/styles.css";
 import "@particle-academy/fancy-code/styles.css";
 import "@particle-academy/fancy-whiteboard/styles.css";
 import "@particle-academy/agent-integrations/styles.css";
+import "@particle-academy/fancy-diff/styles.css";
 import { App } from "./App.js";
 import { isElectron } from "./lib/environment.js";
 import { setupContentRendererExtensions } from "./lib/content-renderer-setup.js";
