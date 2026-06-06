@@ -1880,7 +1880,8 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   // section.
   const chatSlot = (
     <div className="flex flex-col h-full min-w-0 w-full">
-      {panelHeader}
+      {/* Shell mode: the ShellPanelHeader already labels the panel — skip internal header */}
+      {!inShell && panelHeader}
       {panelBody}
     </div>
   );

@@ -152,6 +152,10 @@ export interface ForkBranchInfo {
   latestVersion: string | null;
   /** True when this ref matches the current update channel. */
   isCurrentChannel: boolean;
+  /** True when this ref is from the canonical upstream repo (Civicognita/agi),
+   *  as opposed to the user's personal fork. Upstream sources are always shown;
+   *  fork sources only appear in Dev Mode. */
+  isUpstream: boolean;
 }
 
 /** Response from GET /api/system/fork-status. */

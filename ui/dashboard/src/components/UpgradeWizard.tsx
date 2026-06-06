@@ -325,55 +325,60 @@ export function UpgradeWizard({
     onSelect: () => void;
   }) {
     const upToDate = source.commitsBehind === 0;
+    // Upstream with pending commits = amber; selected = primary; default = muted border
+    const borderClass = selected
+      ? "border-primary bg-primary/5"
+      : source.isUpstream && !upToDate
+      ? "border-yellow/40 bg-yellow/5 hover:border-yellow/60"
+      : "border-border bg-card hover:border-primary/40";
+
     return (
       <button
         data-testid={source.isCurrentChannel ? "upgrade-source-card-current" : "upgrade-source-card"}
         data-selected={selected ? "true" : "false"}
         onClick={onSelect}
-        className={cn(
-          "w-full text-left rounded-lg border p-3 transition-all",
-          selected
-            ? "border-primary bg-primary/5"
-            : "border-border bg-card hover:border-primary/40",
-        )}
+        className={cn("w-full text-left rounded-lg border p-3 transition-all", borderClass)}
       >
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-start gap-2.5">
-            <span className={cn(
-              "mt-0.5 w-3 h-3 rounded-full border-2 shrink-0",
-              selected ? "border-primary bg-primary" : "border-muted-foreground",
-            )} />
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[13px] font-semibold text-foreground">{source.label}</span>
-                {source.isCurrentChannel && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue/15 text-blue font-bold uppercase tracking-wide">
-                    Current channel
-                  </span>
-                )}
-                {upToDate && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-green/15 text-green font-semibold">
-                    Up to date
-                  </span>
-                )}
-              </div>
-              {!upToDate && (
-                <div className="text-[11px] text-muted-foreground mt-0.5">
-                  <span className="text-foreground font-medium">{source.commitsBehind}</span> commit{source.commitsBehind !== 1 ? "s" : ""} behind
-                  {source.latestVersion && source.commitsBehind > 0 && (
-                    <span className="ml-1.5 font-mono text-muted-foreground/80">
-                      → v{source.latestVersion}
-                    </span>
-                  )}
-                </div>
+        <div className="flex items-start gap-2.5">
+          <span className={cn(
+            "mt-0.5 w-3 h-3 rounded-full border-2 shrink-0",
+            selected ? "border-primary bg-primary"
+              : source.isUpstream && !upToDate ? "border-yellow bg-yellow/30"
+              : "border-muted-foreground",
+          )} />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[13px] font-semibold text-foreground">{source.label}</span>
+              {source.isCurrentChannel && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue/15 text-blue font-bold uppercase tracking-wide">
+                  Current channel
+                </span>
               )}
-              {source.latestCommit && (
-                <div className="text-[10px] text-muted-foreground mt-0.5 truncate">
-                  <span className="font-mono">{source.latestCommit.hash.slice(0, 7)}</span>
-                  {" "}{source.latestCommit.message}
-                </div>
+              {source.isUpstream && !upToDate && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">
+                  Update available
+                </span>
+              )}
+              {upToDate && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-green/15 text-green font-semibold">
+                  Up to date
+                </span>
               )}
             </div>
+            {!upToDate && (
+              <div className={cn("text-[11px] mt-0.5", source.isUpstream ? "text-yellow/80" : "text-muted-foreground")}>
+                <span className="font-medium">{source.commitsBehind}</span> commit{source.commitsBehind !== 1 ? "s" : ""} behind
+                {source.latestVersion && (
+                  <span className="ml-1.5 font-mono text-muted-foreground/80">→ v{source.latestVersion}</span>
+                )}
+              </div>
+            )}
+            {source.latestCommit && (
+              <div className="text-[10px] text-muted-foreground mt-0.5 truncate">
+                <span className="font-mono">{source.latestCommit.hash.slice(0, 7)}</span>
+                {" "}{source.latestCommit.message}
+              </div>
+            )}
           </div>
         </div>
       </button>
@@ -448,40 +453,66 @@ export function UpgradeWizard({
               {/* Current state chip */}
               {forkStatus && (
                 <div className="text-[11px] text-muted-foreground bg-surface0 rounded-lg px-3 py-2 font-mono">
-                  {forkStatus.devModeEnabled ? "fork" : "origin"} · {forkStatus.currentBranch} · v{forkStatus.currentVersion}
+                  {forkStatus.devModeEnabled ? "fork" : "upstream"} · {forkStatus.currentBranch} · v{forkStatus.currentVersion}
                 </div>
               )}
 
-              <div>
-                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-                  Available sources
+              {forkLoading && (
+                <div className="text-[12px] text-muted-foreground py-6 text-center animate-pulse">
+                  Fetching remote status…
                 </div>
+              )}
 
-                {forkLoading && (
-                  <div className="text-[12px] text-muted-foreground py-6 text-center animate-pulse">
-                    Fetching remote status…
-                  </div>
-                )}
+              {forkError && (
+                <div className="text-[12px] text-red bg-red/5 border border-red/20 rounded-lg px-3 py-2">
+                  {forkError}
+                </div>
+              )}
 
-                {forkError && (
-                  <div className="text-[12px] text-red bg-red/5 border border-red/20 rounded-lg px-3 py-2">
-                    {forkError}
-                  </div>
-                )}
+              {!forkLoading && !forkError && forkStatus && (() => {
+                const upstreamSources = forkStatus.sources.filter(s => s.isUpstream);
+                const forkSources = forkStatus.sources.filter(s => !s.isUpstream);
+                return (
+                  <div className="flex flex-col gap-4">
+                    {/* Upstream — always shown */}
+                    <div>
+                      <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                        Upstream
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        {upstreamSources.map((source) => (
+                          <SourceCard
+                            key={source.ref}
+                            source={source}
+                            selected={selectedSource === source.ref}
+                            onSelect={() => setSelectedSource(source.ref)}
+                          />
+                        ))}
+                      </div>
+                    </div>
 
-                {!forkLoading && !forkError && forkStatus && (
-                  <div className="flex flex-col gap-2">
-                    {forkStatus.sources.map((source) => (
-                      <SourceCard
-                        key={source.ref}
-                        source={source}
-                        selected={selectedSource === source.ref}
-                        onSelect={() => setSelectedSource(source.ref)}
-                      />
-                    ))}
+                    {/* Fork — only in Dev Mode */}
+                    {forkStatus.devModeEnabled && forkSources.length > 0 && (
+                      <div>
+                        <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                          Your fork
+                        </div>
+                        <div className="flex flex-col gap-2">
+                          {forkSources.map((source) => (
+                            <SourceCard
+                              key={source.ref}
+                              source={source}
+                              selected={selectedSource === source.ref}
+                              onSelect={() => setSelectedSource(source.ref)}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
+                );
+              })()}
+
 
               {previewError && (
                 <div className="text-[12px] text-red bg-red/5 border border-red/20 rounded-lg px-3 py-2">

@@ -8150,6 +8150,29 @@ export async function createGatewayRuntimeState(
     const repoPath = deps.selfRepoPath ?? process.cwd();
 
     try {
+      const channel = getUpdateChannel();
+      const devEnabled = deps.config
+        ? Boolean((deps.config as Record<string, unknown>).dev && ((deps.config as Record<string, unknown>).dev as Record<string, unknown>).enabled)
+        : false;
+
+      // In Dev Mode, ensure an "upstream" remote points at the canonical repo
+      // (Civicognita/agi) so the Upgrade Wizard can always show the upstream
+      // as a source — even when origin is the user's fork.
+      if (devEnabled) {
+        const { CORE_REPOS: CORE_REPO_SPECS } = await import("./dev-mode-forks.js");
+        const agiSpec = CORE_REPO_SPECS.find((s) => s.slug === "agi");
+        const canonicalUrl = agiSpec
+          ? `https://github.com/${agiSpec.upstreamOrg ?? "Civicognita"}/${agiSpec.upstream}.git`
+          : "https://github.com/Civicognita/agi.git";
+
+        const existingUrl = await execGitDashboard(["remote", "get-url", "upstream"], repoPath);
+        if (existingUrl.exitCode !== 0) {
+          await execGitDashboard(["remote", "add", "upstream", canonicalUrl], repoPath);
+        } else if (existingUrl.stdout.trim() !== canonicalUrl) {
+          await execGitDashboard(["remote", "set-url", "upstream", canonicalUrl], repoPath);
+        }
+      }
+
       // Fetch all remotes so rev-list comparisons are fresh
       await execGitDashboard(["fetch", "--all", "--quiet"], repoPath);
 
@@ -8173,14 +8196,13 @@ export async function createGatewayRuntimeState(
         currentVersion = (JSON.parse(raw) as { version?: string }).version ?? "0.0.0";
       } catch { /* best-effort */ }
 
-      const channel = getUpdateChannel();
-      const devEnabled = deps.config
-        ? Boolean((deps.config as Record<string, unknown>).dev && ((deps.config as Record<string, unknown>).dev as Record<string, unknown>).enabled)
-        : false;
-
       // List all known remote/branch combinations to check
       const remoteRes = await execGitDashboard(["remote"], repoPath);
       const remotes = remoteRes.stdout.trim().split("\n").filter(Boolean);
+
+      // The canonical upstream remote name — "upstream" in Dev Mode, "origin"
+      // otherwise (when origin IS the canonical Civicognita repo).
+      const canonicalRemote = devEnabled ? "upstream" : "origin";
 
       const candidateBranches = ["main", "dev"];
       const sources: Array<{
@@ -8191,9 +8213,16 @@ export async function createGatewayRuntimeState(
         latestCommit: { hash: string; message: string; date: string } | null;
         latestVersion: string | null;
         isCurrentChannel: boolean;
+        isUpstream: boolean;
       }> = [];
 
       for (const remote of remotes) {
+        // In Dev Mode: skip origin/main (fork's main is not a useful upgrade source).
+        // The fork's current channel (origin/dev or similar) IS included.
+        if (devEnabled && remote === "origin" && candidateBranches.some(b => b !== channel)) {
+          // Only include origin/{currentChannel} in Dev Mode, skip other origin branches
+        }
+
         // Determine display label for this remote
         let remoteLabel = remote;
         const urlRes = await execGitDashboard(["remote", "get-url", remote], repoPath);
@@ -8201,7 +8230,12 @@ export async function createGatewayRuntimeState(
         const ghMatch = /github\.com[/:]([^/]+)\/([^.]+)/.exec(remoteUrl);
         if (ghMatch) remoteLabel = `${ghMatch[1]}/${ghMatch[2]}`;
 
+        const isUpstreamRemote = remote === canonicalRemote;
+
         for (const branch of candidateBranches) {
+          // In Dev Mode, for the fork remote (origin), only include the current channel
+          if (devEnabled && remote === "origin" && branch !== channel) continue;
+
           const ref = `${remote}/${branch}`;
 
           // Check that this ref actually exists
@@ -8238,14 +8272,27 @@ export async function createGatewayRuntimeState(
             } catch { /* non-JSON or missing */ }
           }
 
-          const isCurrentChannel = branch === channel && (remote === "origin" || !devEnabled);
+          const isCurrentChannel = branch === channel && remote === canonicalRemote;
 
-          sources.push({ ref, label: `${remoteLabel} — ${branch}`, commitsAhead, commitsBehind, latestCommit, latestVersion, isCurrentChannel });
+          sources.push({
+            ref,
+            label: devEnabled && !isUpstreamRemote
+              ? `${remoteLabel} — ${branch} (your fork)`
+              : `${remoteLabel} — ${branch}`,
+            commitsAhead,
+            commitsBehind,
+            latestCommit,
+            latestVersion,
+            isCurrentChannel,
+            isUpstream: isUpstreamRemote,
+          });
         }
       }
 
-      // Sort: current channel first, then by commitsBehind descending
+      // Sort: upstream first (canonical), then current channel, then by commitsBehind
       sources.sort((a, b) => {
+        if (a.isUpstream && !b.isUpstream) return -1;
+        if (!a.isUpstream && b.isUpstream) return 1;
         if (a.isCurrentChannel && !b.isCurrentChannel) return -1;
         if (!a.isCurrentChannel && b.isCurrentChannel) return 1;
         return b.commitsBehind - a.commitsBehind;

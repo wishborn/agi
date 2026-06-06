@@ -84,14 +84,20 @@ function ShellPanelHeader({ label, state, dragging, dragOver, onDragStart, onDra
         aria-label={`Expand ${label}`}
         aria-expanded={false}
         className={cn(
-          "w-10 h-full flex items-center justify-center select-none",
-          "bg-surface0/40 hover:bg-secondary/30 transition-colors",
-          "cursor-grab active:cursor-grabbing",
+          "w-10 h-full flex flex-col items-center justify-center gap-3 select-none",
+          "bg-surface0/60 hover:bg-secondary/40 transition-colors border-r border-border/40",
+          "cursor-pointer",
           dragging && "opacity-50",
         )}
         data-testid={`shell-panel-header-${label.toLowerCase()}`}
       >
-        <span className="text-[10px] tracking-[0.2em] uppercase font-semibold text-muted-foreground/50 [writing-mode:vertical-rl] [transform:rotate(180deg)]">
+        {/* Expand affordance dots */}
+        <svg className="w-2.5 h-2.5 text-muted-foreground/40" viewBox="0 0 6 10" fill="currentColor">
+          <circle cx="2" cy="2" r="1" /><circle cx="4" cy="2" r="1" />
+          <circle cx="2" cy="5" r="1" /><circle cx="4" cy="5" r="1" />
+          <circle cx="2" cy="8" r="1" /><circle cx="4" cy="8" r="1" />
+        </svg>
+        <span className="text-[9px] tracking-[0.18em] uppercase font-semibold text-muted-foreground/60 [writing-mode:vertical-rl] [transform:rotate(180deg)]">
           {label}
         </span>
       </button>
