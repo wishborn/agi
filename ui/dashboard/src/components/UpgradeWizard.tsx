@@ -164,8 +164,15 @@ export function UpgradeWizard({
     fetchForkStatus()
       .then((status) => {
         setForkStatus(status);
-        const current = status.sources.find((s) => s.isCurrentChannel) ?? status.sources[0];
-        if (current) setSelectedSource(current.ref);
+        // Only real upgrades (commitsBehind > 0) are actionable. Pre-select the
+        // current-channel upgrade if it's a real one, else the first real upgrade.
+        // When everything is up-to-date/behind, nothing is selected — the wizard
+        // shows an informational "up to date" state with no review action.
+        const realUpgrades = status.sources.filter(
+          (s) => s.mergeType === "fast-forward" || s.mergeType === "three-way",
+        );
+        const preselect = realUpgrades.find((s) => s.isCurrentChannel) ?? realUpgrades[0];
+        if (preselect) setSelectedSource(preselect.ref);
         setForkLoading(false);
       })
       .catch((err: unknown) => {
@@ -358,39 +365,48 @@ export function UpgradeWizard({
     const upToDate = source.mergeType === "up-to-date";
     const canUpgrade = !isBehind && !upToDate;
 
-    // Visually prominent cards = upgradeable. Muted = up-to-date. Disabled = behind.
+    // Owner directive: the source listing + commit deltas are ALWAYS shown, but
+    // the review/upgrade action only appears for a real upgrade (commitsBehind > 0).
+    // up-to-date and behind sources render as non-interactive info rows.
     if (isBehind) {
-      // Compact disabled card — cannot select, clearly explains why
+      // Info row — our fork is ahead of this source; nothing to pull.
       return (
-        <div className="flex items-center gap-3 rounded-lg border border-border/40 bg-surface0/30 px-3 py-2 opacity-50">
-          <span className="w-2 h-2 rounded-full bg-muted shrink-0" />
-          <span className="text-[11px] text-muted-foreground flex-1 truncate">{source.label}</span>
-          <span className="text-[9px] text-muted-foreground/60 shrink-0">older than installed</span>
-        </div>
-      );
-    }
-
-    if (upToDate) {
-      // Compact up-to-date card — selectable but visually secondary
-      return (
-        <button
-          data-testid={source.isCurrentChannel ? "upgrade-source-card-current" : "upgrade-source-card"}
-          data-selected={selected ? "true" : "false"}
-          onClick={onSelect}
-          className={cn(
-            "flex items-center gap-3 w-full text-left rounded-lg border px-3 py-2 transition-all",
-            selected ? "border-primary/40 bg-primary/5" : "border-border/40 bg-surface0/30 hover:bg-surface0/60",
-          )}
+        <div
+          data-testid="upgrade-source-info"
+          data-merge-type="behind"
+          className="flex items-center gap-3 rounded-lg border border-border/40 bg-surface0/30 px-3 py-2"
         >
-          <span className={cn("w-2 h-2 rounded-full shrink-0", selected ? "bg-primary" : "bg-green/50")} />
+          <span className="w-2 h-2 rounded-full bg-muted shrink-0" />
           <span className="text-[11px] text-muted-foreground flex-1 truncate">{source.label}</span>
           <div className="flex items-center gap-1.5 shrink-0">
             {source.isCurrentChannel && (
               <span className="text-[9px] px-1 py-0.5 rounded bg-blue/10 text-blue/70 font-semibold">Current</span>
             )}
-            <span className="text-[9px] text-green/70 font-semibold">Up to date</span>
+            <span className="text-[9px] text-muted-foreground/70">
+              your fork is {source.commitsAhead} ahead — nothing to pull
+            </span>
           </div>
-        </button>
+        </div>
+      );
+    }
+
+    if (upToDate) {
+      // Info row — already up to date; no review action.
+      return (
+        <div
+          data-testid="upgrade-source-info"
+          data-merge-type="up-to-date"
+          className="flex items-center gap-3 rounded-lg border border-border/40 bg-surface0/30 px-3 py-2"
+        >
+          <span className="w-2 h-2 rounded-full bg-green/50 shrink-0" />
+          <span className="text-[11px] text-muted-foreground flex-1 truncate">{source.label}</span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {source.isCurrentChannel && (
+              <span className="text-[9px] px-1 py-0.5 rounded bg-blue/10 text-blue/70 font-semibold">Current</span>
+            )}
+            <span className="text-[9px] text-green/70 font-semibold">✓ up to date</span>
+          </div>
+        </div>
       );
     }
 
@@ -752,15 +768,35 @@ export function UpgradeWizard({
                 </div>
               )}
 
-              <div className="flex justify-end pt-1">
-                <Button
-                  data-testid="upgrade-wizard-preview-btn"
-                  onClick={handlePreview}
-                  disabled={!selectedSource || forkLoading || previewLoading}
-                >
-                  {previewLoading ? "Loading…" : "Preview →"}
-                </Button>
-              </div>
+              {/* Footer — the review action only exists when a real upgrade is
+                  available. Up-to-date installs see a clear "nothing to review"
+                  state instead of a dangling Preview button. */}
+              {!forkLoading && forkStatus && (() => {
+                const hasRealUpgrade = forkStatus.sources.some(
+                  (s) => s.mergeType === "fast-forward" || s.mergeType === "three-way",
+                );
+                if (!hasRealUpgrade) {
+                  return (
+                    <div
+                      data-testid="upgrade-no-upgrades"
+                      className="flex items-center gap-2 justify-center text-[12px] text-green/80 bg-green/5 border border-green/15 rounded-lg px-3 py-3"
+                    >
+                      <span>✓</span> You're up to date — nothing to review.
+                    </div>
+                  );
+                }
+                return (
+                  <div className="flex justify-end pt-1">
+                    <Button
+                      data-testid="upgrade-wizard-preview-btn"
+                      onClick={handlePreview}
+                      disabled={!selectedSource || forkLoading || previewLoading}
+                    >
+                      {previewLoading ? "Loading…" : "Review →"}
+                    </Button>
+                  </div>
+                );
+              })()}
             </div>
           )}
 

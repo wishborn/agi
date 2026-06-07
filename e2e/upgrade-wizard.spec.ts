@@ -142,6 +142,21 @@ test.describe("Upgrade Wizard — API layer", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("Upgrade Wizard — UI", () => {
+  // Whether the live git state exposes a real upgrade (mergeType fast-forward
+  // or three-way). The review action only exists in that case — action-flow
+  // tests branch on this rather than forcing a fixture (env hits real git).
+  async function hasRealUpgrade(page: import("@playwright/test").Page): Promise<boolean> {
+    const status = await page.evaluate(async () => {
+      const res = await fetch("/api/system/fork-status");
+      if (!res.ok) return null;
+      return res.json();
+    });
+    if (!status?.sources) return false;
+    return status.sources.some(
+      (s: { mergeType: string }) => s.mergeType === "fast-forward" || s.mergeType === "three-way",
+    );
+  }
+
   test.beforeEach(async ({ page }) => {
     // Navigate via Settings > Gateway so the trigger is always visible
     // regardless of whether updates are pending.
@@ -161,26 +176,56 @@ test.describe("Upgrade Wizard — UI", () => {
     await expect(page.getByTestId("upgrade-wizard-step-1")).toBeVisible();
   });
 
-  test("step 1 shows source cards with ahead/behind counts", async ({ page }) => {
+  test("step 1 always shows every source (actionable card or info row)", async ({ page }) => {
     await page.getByTestId("upgrade-wizard-trigger").click();
     await expect(page.getByTestId("upgrade-wizard-step-1")).toBeVisible({ timeout: 5_000 });
 
-    // At least one source card must be visible
-    const sourceCards = page.getByTestId("upgrade-source-card");
-    await expect(sourceCards.first()).toBeVisible();
+    // Sources are ALWAYS listed — either as actionable upgrade cards or as
+    // non-interactive info rows (up-to-date / behind). At least one of either
+    // must be present.
+    const anySource = page.locator(
+      "[data-testid='upgrade-source-card'], [data-testid='upgrade-source-card-current'], [data-testid='upgrade-source-info']",
+    );
+    await expect(anySource.first()).toBeVisible();
   });
 
-  test("step 1 has the current channel source pre-selected", async ({ page }) => {
+  test("review action only exists when a real upgrade is available", async ({ page }) => {
+    const upgradeAvailable = await hasRealUpgrade(page);
     await page.getByTestId("upgrade-wizard-trigger").click();
     await expect(page.getByTestId("upgrade-wizard-step-1")).toBeVisible({ timeout: 5_000 });
 
-    // The current-channel card should have the selected state
-    const currentCard = page.getByTestId("upgrade-source-card-current");
-    await expect(currentCard).toBeVisible();
-    await expect(currentCard).toHaveAttribute("data-selected", "true");
+    if (upgradeAvailable) {
+      // A real upgrade exists — the Review button is present and an actionable
+      // card is pre-selected.
+      await expect(page.getByTestId("upgrade-wizard-preview-btn")).toBeVisible();
+      const actionable = page.locator(
+        "[data-testid='upgrade-source-card'], [data-testid='upgrade-source-card-current']",
+      );
+      await expect(actionable.first()).toBeVisible();
+    } else {
+      // Up to date — no Review button, an explicit "nothing to review" state,
+      // and every source rendered as a non-interactive info row.
+      await expect(page.getByTestId("upgrade-wizard-preview-btn")).toHaveCount(0);
+      await expect(page.getByTestId("upgrade-no-upgrades")).toBeVisible();
+    }
   });
 
-  test("selecting a source and clicking Preview advances to step 2", async ({ page }) => {
+  test("up-to-date and behind sources render as non-interactive info rows", async ({ page }) => {
+    await page.getByTestId("upgrade-wizard-trigger").click();
+    await expect(page.getByTestId("upgrade-wizard-step-1")).toBeVisible({ timeout: 5_000 });
+
+    // Info rows are <div>, not <button> — they carry no review action.
+    const infoRows = page.getByTestId("upgrade-source-info");
+    const count = await infoRows.count();
+    for (let i = 0; i < count; i++) {
+      const row = infoRows.nth(i);
+      const tag = await row.evaluate((el) => el.tagName.toLowerCase());
+      expect(tag).toBe("div");
+    }
+  });
+
+  test("clicking Review advances to step 2 (when a real upgrade exists)", async ({ page }) => {
+    test.skip(!(await hasRealUpgrade(page)), "no real upgrade available in this environment");
     await page.getByTestId("upgrade-wizard-trigger").click();
     await expect(page.getByTestId("upgrade-wizard-step-1")).toBeVisible({ timeout: 5_000 });
 
@@ -189,6 +234,7 @@ test.describe("Upgrade Wizard — UI", () => {
   });
 
   test("step 2 shows version delta, impact row, and changelog", async ({ page }) => {
+    test.skip(!(await hasRealUpgrade(page)), "no real upgrade available in this environment");
     await page.getByTestId("upgrade-wizard-trigger").click();
     await expect(page.getByTestId("upgrade-wizard-step-1")).toBeVisible({ timeout: 5_000 });
     await page.getByTestId("upgrade-wizard-preview-btn").click();
@@ -199,7 +245,8 @@ test.describe("Upgrade Wizard — UI", () => {
     await expect(page.getByTestId("upgrade-preview-changelog")).toBeVisible();
   });
 
-  test("step 2 Back button returns to step 1", async ({ page }) => {
+  test("step 2 Back button returns to step 1 (when a real upgrade exists)", async ({ page }) => {
+    test.skip(!(await hasRealUpgrade(page)), "no real upgrade available in this environment");
     await page.getByTestId("upgrade-wizard-trigger").click();
     await page.getByTestId("upgrade-wizard-preview-btn").click();
     await expect(page.getByTestId("upgrade-wizard-step-2")).toBeVisible({ timeout: 8_000 });
@@ -235,26 +282,31 @@ test.describe("Upgrade Wizard — UI", () => {
     await expect(page.getByText("Upgrade History")).toBeVisible();
   });
 
-  test("source cards show merge type indicator", async ({ page }) => {
+  test("actionable cards exist only when a real upgrade is available", async ({ page }) => {
+    const upgradeAvailable = await hasRealUpgrade(page);
     await page.getByTestId("upgrade-wizard-trigger").click();
     await expect(page.getByTestId("upgrade-wizard-step-1")).toBeVisible({ timeout: 5_000 });
 
-    // Source cards should exist; at least one may have a merge type badge
     const cards = page.locator("[data-testid='upgrade-source-card'], [data-testid='upgrade-source-card-current']");
-    await expect(cards.first()).toBeVisible();
+    if (upgradeAvailable) {
+      await expect(cards.first()).toBeVisible();
+    } else {
+      await expect(cards).toHaveCount(0);
+    }
   });
 
-  test("'behind' source cards are disabled", async ({ page }) => {
-    // A source where our installation is ahead of the source has mergeType='behind'
-    // and should be rendered as disabled (can't accidentally downgrade).
-    // This test verifies that disabled buttons cannot be clicked by checking
-    // that the wizard doesn't advance to preview when a behind card is clicked.
+  test("'behind' sources surface the ahead-count and offer no action", async ({ page }) => {
+    // A source older than the installed commit (mergeType='behind') is shown as
+    // an info row that reports how many commits the fork is ahead — never an
+    // actionable card, so the owner can't accidentally "downgrade".
     await page.getByTestId("upgrade-wizard-trigger").click();
     await expect(page.getByTestId("upgrade-wizard-step-1")).toBeVisible({ timeout: 5_000 });
-    // If there's a disabled card, it should have disabled attribute
-    const disabledCard = page.locator("button[data-testid='upgrade-source-card'][disabled]");
-    if (await disabledCard.count() > 0) {
-      await expect(disabledCard.first()).toBeDisabled();
+
+    const behindRows = page.locator("[data-testid='upgrade-source-info'][data-merge-type='behind']");
+    const count = await behindRows.count();
+    for (let i = 0; i < count; i++) {
+      // It's a div info row (not a button) and mentions the ahead count.
+      await expect(behindRows.nth(i)).toContainText("ahead");
     }
   });
 });

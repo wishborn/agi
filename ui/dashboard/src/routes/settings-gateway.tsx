@@ -81,6 +81,12 @@ export default function SettingsGatewayPage() {
         layout: every project gets {"{k/, repos/, sandbox/, project.json}"} at root (chat stays at k/chat/). Stacks attach
         per-repo (s141 follow-up). Sacred projects (Aionima 5 + PAx 4) untouched.
       </DevNote>
+      <DevNote heading="Manage Upgrade — review action only for real upgrades" kind="info" scope="settings/gateway">
+        The upgrade wizard now lists every source (commit deltas always shown) but only renders a
+        Review action for a real upgrade (commitsBehind &gt; 0 → fast-forward / 3-way). Up-to-date and
+        "behind" sources are non-interactive info rows; an up-to-date install sees a "nothing to review"
+        state instead of a dangling Preview button.
+      </DevNote>
       <SettingsSaveBar
         dirty={dirty}
         saving={configHook.saving}
