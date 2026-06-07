@@ -205,9 +205,13 @@ export interface UpgradePreview {
   migrations: UpgradePreviewMigration[];
   impact: UpgradeImpact;
   source: string;
-  /** Unified diff (git format) of package.json between deployed and target.
-   *  Suitable for passing directly to FancyDiff source={{ unified }}. */
-  packageDiff: string | null;
+  /** Full unified diff (git format) of all changed files between deployed and target.
+   *  Suitable for passing directly to FancyDiff source={{ unified }}.
+   *  Null when the diff exceeds the size cap — use diffStat fallback instead. */
+  fileDiff: string | null;
+  /** Output of git diff --stat — file names with +/- line counts.
+   *  Always present when there are commits, regardless of diff size. */
+  diffStat: string | null;
 }
 
 /** A single entry in the persistent upgrade history. */

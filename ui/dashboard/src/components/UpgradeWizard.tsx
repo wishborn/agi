@@ -832,24 +832,33 @@ export function UpgradeWizard({
                 </div>
               )}
 
-              {/* Package diff — FancyDiff showing what changes in package.json */}
-              {preview?.packageDiff && (
+              {/* File diff — all changed files between deployed and target */}
+              {preview && (preview.fileDiff ?? preview.diffStat) && (
                 <div data-testid="upgrade-preview-changelog" className="rounded-lg border border-border overflow-hidden">
-                  <div className="px-3 py-2 border-b border-border bg-card text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
-                    Version &amp; dependency changes
+                  <div className="px-3 py-2 border-b border-border bg-card text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+                    <span>Changed files ({preview.impact.changedAreas.join(", ") || "all areas"})</span>
+                    {!preview.fileDiff && preview.diffStat && (
+                      <span className="text-[9px] text-amber font-normal normal-case">diff too large — showing file list</span>
+                    )}
                   </div>
-                  <div className="text-[11px] overflow-auto max-h-[320px]">
-                    <FancyDiff
-                      source={{ unified: preview.packageDiff }}
-                      mode="inline"
-                    />
-                  </div>
+                  {preview.fileDiff ? (
+                    <div className="text-[11px] overflow-auto max-h-[420px]">
+                      <FancyDiff
+                        source={{ unified: preview.fileDiff }}
+                        mode="inline"
+                      />
+                    </div>
+                  ) : (
+                    <pre className="px-3 py-2 text-[10px] font-mono text-muted-foreground overflow-auto max-h-[320px] bg-surface0 whitespace-pre">
+                      {preview.diffStat}
+                    </pre>
+                  )}
                 </div>
               )}
 
               {/* Commit list */}
               {preview && preview.commits.length > 0 && (
-                <details className="group" open={!preview.packageDiff}>
+                <details className="group" open={!(preview.fileDiff ?? preview.diffStat)}>
                   <summary className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 cursor-pointer list-none flex items-center gap-1 select-none">
                     <span className="group-open:rotate-90 inline-block transition-transform">›</span>
                     Commits ({preview.commits.length})

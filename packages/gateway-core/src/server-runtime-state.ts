@@ -8562,18 +8562,30 @@ export async function createGatewayRuntimeState(
         changedAreas,
       };
 
-      // Unified diff of package.json — perfect input for FancyDiff source={{ unified }}
-      // Shows version bumps and dep changes in a human-readable format.
-      let packageDiff: string | null = null;
-      const pkgDiffRes = await execGitDashboard(
-        ["diff", `${deployedCommit}`, source, "--", "package.json"],
+      // Stat listing — always emitted (small regardless of diff size)
+      let diffStat: string | null = null;
+      const statRes = await execGitDashboard(
+        ["diff", "--stat", `${deployedCommit}`, source],
         repoPath,
       );
-      if (pkgDiffRes.exitCode === 0 && pkgDiffRes.stdout.trim()) {
-        packageDiff = pkgDiffRes.stdout.trim();
+      if (statRes.exitCode === 0 && statRes.stdout.trim()) {
+        diffStat = statRes.stdout.trim();
       }
 
-      return reply.send({ fromVersion, toVersion, commitCount, commits, migrations, impact, source, packageDiff });
+      // Full unified diff — capped at 500 KB to keep the response payload sane.
+      // If the diff exceeds the cap, fileDiff is null and the UI falls back to diffStat.
+      const DIFF_SIZE_CAP = 512 * 1024;
+      let fileDiff: string | null = null;
+      const fullDiffRes = await execGitDashboard(
+        ["diff", `${deployedCommit}`, source],
+        repoPath,
+      );
+      if (fullDiffRes.exitCode === 0 && fullDiffRes.stdout.trim()) {
+        const raw = fullDiffRes.stdout.trim();
+        fileDiff = raw.length <= DIFF_SIZE_CAP ? raw : null;
+      }
+
+      return reply.send({ fromVersion, toVersion, commitCount, commits, migrations, impact, source, fileDiff, diffStat });
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
     }
