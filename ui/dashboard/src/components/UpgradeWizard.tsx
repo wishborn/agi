@@ -234,8 +234,32 @@ export function UpgradeWizard({
     try {
       const result = await mergeForkSource(selectedSource);
       if (!result.ok && result.aborted) {
+        // Conflict detected — auto-invoke Doctor without waiting for user input
         setMergeConflict(result);
-        setMergeLoading(false);
+        setDoctorLoading(true);
+        try {
+          const res = await fetch("/api/system/doctor", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "resolve-merge" }),
+          });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({})) as { error?: string };
+            throw new Error(body.error ?? `HTTP ${res.status}`);
+          }
+          // Doctor resolved — clear conflict state, continue to upgrade
+          setMergeConflict(null);
+          setDoctorLoading(false);
+          setMergeLoading(false);
+          setMergeResult({ fastForward: result.fastForward, commits: result.mergedCommits });
+          setStep(3);
+          doUpgrade();
+        } catch (err: unknown) {
+          // Doctor failed — surface error and "Pick different source" fallback
+          setDoctorError(err instanceof Error ? err.message : "Aion Doctor could not resolve conflicts");
+          setDoctorLoading(false);
+          setMergeLoading(false);
+        }
         return;
       }
       setMergeResult({ fastForward: result.fastForward, commits: result.mergedCommits });
@@ -247,28 +271,6 @@ export function UpgradeWizard({
     setMergeLoading(false);
   }, [selectedSource, doUpgrade]);
 
-  const handleDoctorResolve = useCallback(async () => {
-    setDoctorLoading(true);
-    setDoctorError(null);
-    try {
-      const res = await fetch("/api/system/doctor", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "resolve-merge" }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as { error?: string };
-        throw new Error(body.error ?? `HTTP ${res.status}`);
-      }
-      // Doctor resolved the conflict — clear conflict state, move to step 3 and upgrade
-      setMergeConflict(null);
-      setStep(3);
-      doUpgrade();
-    } catch (err: unknown) {
-      setDoctorError(err instanceof Error ? err.message : "Aion Doctor could not resolve conflicts");
-    }
-    setDoctorLoading(false);
-  }, [doUpgrade]);
 
   if (!open) return null;
 
@@ -881,41 +883,37 @@ export function UpgradeWizard({
                 </div>
               )}
 
-              {/* Merge conflict panel */}
+              {/* Merge conflict panel — auto-resolving via Aion Doctor */}
               {mergeConflict && (
-                <div className="rounded-lg border border-red/30 bg-red/5 p-3">
-                  <div className="text-[12px] font-semibold text-red mb-1">
-                    Merge conflict — {mergeConflict.conflicts?.length ?? 0} file{(mergeConflict.conflicts?.length ?? 0) !== 1 ? "s" : ""}
+                <div className="rounded-lg border border-amber/30 bg-amber/5 p-3">
+                  <div className="text-[12px] font-semibold text-amber mb-1 flex items-center gap-2">
+                    {doctorLoading ? (
+                      <>
+                        <span className="inline-block w-3 h-3 rounded-full border-2 border-amber border-t-transparent animate-spin" />
+                        Aion Doctor resolving {mergeConflict.conflicts?.length ?? 0} conflict{(mergeConflict.conflicts?.length ?? 0) !== 1 ? "s" : ""}…
+                      </>
+                    ) : (
+                      <>Merge conflict — {mergeConflict.conflicts?.length ?? 0} file{(mergeConflict.conflicts?.length ?? 0) !== 1 ? "s" : ""}</>
+                    )}
                   </div>
-                  <div className="mb-2 space-y-0.5 max-h-[100px] overflow-y-auto">
+                  <div className="mb-2 space-y-0.5 max-h-[80px] overflow-y-auto">
                     {(mergeConflict.conflicts ?? []).map((f) => (
                       <div key={f} className="font-mono text-[10px] text-muted-foreground">{f}</div>
                     ))}
                   </div>
-                  <p className="text-[11px] text-muted-foreground mb-2">
-                    The merge was aborted. Ask Aion Doctor to resolve, or pick a different source.
-                  </p>
                   {doctorError && (
-                    <div className="text-[11px] text-red mb-2">{doctorError}</div>
+                    <>
+                      <p className="text-[11px] text-red mb-2">{doctorError}</p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => { setMergeConflict(null); setDoctorError(null); setStep(1); }}
+                        className="text-[11px] h-7"
+                      >
+                        Pick different source
+                      </Button>
+                    </>
                   )}
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      onClick={() => void handleDoctorResolve()}
-                      disabled={doctorLoading}
-                      className="text-[11px] h-7"
-                    >
-                      {doctorLoading ? "Resolving…" : "Let Aion Doctor resolve"}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => { setMergeConflict(null); setStep(1); }}
-                      className="text-[11px] h-7"
-                    >
-                      Pick different source
-                    </Button>
-                  </div>
                 </div>
               )}
 
