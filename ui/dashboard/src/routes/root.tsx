@@ -734,7 +734,7 @@ export default function RootLayout() {
             {/* Upgrade wizard trigger — in-progress badge or "N updates" button */}
             {upgradePhase !== null && (
               <Badge
-                data-testid="upgrade-wizard-trigger"
+                data-testid="upgrade-wizard-trigger-progress"
                 className={cn(
                   "text-xs cursor-pointer",
                   upgradePhase === "error"
@@ -749,7 +749,7 @@ export default function RootLayout() {
             )}
             {upgradePhase === null && updateCheck?.updateAvailable && (
               <Button
-                data-testid="upgrade-wizard-trigger"
+                data-testid="upgrade-wizard-trigger-header"
                 size="sm"
                 onClick={() => setUpgradeWizardOpen(true)}
                 className="rounded-xl"
