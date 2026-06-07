@@ -323,14 +323,27 @@ run_e2e() {
   # serves it with internal TLS + reverse_proxy to 127.0.0.1:3100. No
   # host-side proxy hop. The VM IS its own production instance.
   local base_url="https://test.ai.on"
-  # Verify reachability — if test.ai.on DNS isn't set up, fall back to
-  # the VM IP directly (unencrypted, just for the one run).
-  if ! curl -sk --connect-timeout 3 -o /dev/null -w "%{http_code}" "$base_url/api/system/stats" | grep -q "^2"; then
+  # Verify reachability with a bounded retry. The gateway may still be booting
+  # (auto-restart on version drift), so a single probe can spuriously fail.
+  #
+  # NOTE: do NOT fall back to https://<VM_IP>. Caddy serves the VM with
+  # `tls internal`, whose cert covers only `ai.on` / `test.ai.on` — never the
+  # raw IP. An IP base_url therefore guarantees ERR_SSL_PROTOCOL_ERROR on every
+  # navigation, which previously masked itself as a confusing wholesale e2e
+  # failure. If test.ai.on is genuinely unreachable, fail loudly with the fix.
+  local reachable=0 attempt
+  for attempt in 1 2 3 4 5 6; do
+    if curl -sk --connect-timeout 3 -o /dev/null -w "%{http_code}" "$base_url/api/system/stats" | grep -q "^2"; then
+      reachable=1
+      break
+    fi
+    log "test.ai.on not ready (attempt $attempt/6) — gateway may still be booting; retrying…"
+    sleep 5
+  done
+  if [ "$reachable" -ne 1 ]; then
     local vm_ip
-    vm_ip="$(multipass info "$VM_NAME" --format csv | tail -1 | cut -d',' -f3)"
-    log "test.ai.on unreachable — verify host DNS points at $vm_ip; run 'pnpm test:vm:services-setup' to rewire"
-    log "falling back to https://$vm_ip directly for this run"
-    base_url="https://$vm_ip"
+    vm_ip="$(multipass info "$VM_NAME" --format csv 2>/dev/null | tail -1 | cut -d',' -f3)"
+    die "test.ai.on unreachable after 6 attempts. Caddy's tls-internal cert only covers test.ai.on (NOT the raw IP), so there is no working IP fallback. Verify host DNS points test.ai.on → ${vm_ip:-<vm-ip>}, that the VM gateway is up + out of safemode, then re-run. (pnpm test:vm:services-setup rewires DNS.)" 1
   fi
   log "e2e → $spec (against $base_url)"
   (cd "$REPO_DIR" && BASE_URL="$base_url" npx playwright test "$spec" --reporter=list)
