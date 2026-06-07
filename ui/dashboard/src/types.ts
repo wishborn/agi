@@ -762,6 +762,43 @@ export interface CoreForkStatus {
   error?: string;
 }
 
+/** Outbound-contribution direction (fork → upstream/dev). Learnings = PRIME,
+ *  Mechanics = every other core repo. */
+export type ContributeKind = "learnings" | "mechanics";
+
+export interface RepoContributeInfo {
+  slug: string;
+  displayName: string;
+  kind: ContributeKind;
+  branch: string;
+  /** Commits on the fork's branch not yet in upstream/dev. */
+  commitsAhead: number;
+  upstream: string;
+  upstreamOrg: string;
+  /** Latest commit subjects the fork is ahead by (capped, most-recent first). */
+  aheadCommits: string[];
+  existingPrUrl: string | null;
+  existingPrNumber: number | null;
+  error?: string;
+}
+
+/** Response of GET /api/dev/contribute/status. */
+export interface ContributeStatus {
+  ownerLogin: string | null;
+  learnings: RepoContributeInfo[];
+  mechanics: RepoContributeInfo[];
+  error?: string;
+}
+
+/** Response of POST /api/dev/contribute/:slug/pr. */
+export interface CreatePrResult {
+  ok: boolean;
+  prUrl?: string;
+  prNumber?: number;
+  alreadyOpen?: boolean;
+  error?: string;
+}
+
 /** Response shape of POST /api/dev/core-forks/:slug/merge. */
 export type CoreForkMergeResult =
   | { ok: true; ff: boolean; agentic: boolean; newSha: string; pushed: boolean }

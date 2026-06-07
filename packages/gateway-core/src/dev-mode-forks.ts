@@ -264,7 +264,7 @@ async function createFork(
   return body.clone_url ?? (body.html_url ? `${body.html_url}.git` : null);
 }
 
-function githubHeaders(token: string): Record<string, string> {
+export function githubHeaders(token: string): Record<string, string> {
   return {
     Authorization: `Bearer ${token}`,
     Accept: "application/vnd.github+json",

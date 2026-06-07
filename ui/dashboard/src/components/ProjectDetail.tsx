@@ -45,6 +45,7 @@ import { SecurityTab } from "./SecurityTab.js";
 import { MagicAppPicker } from "./MagicAppPicker.js";
 import { isDesktopServedType } from "@/lib/project-type-classifier";
 import { AionimaSystemReposPanel } from "./AionimaSystemReposPanel.js";
+import { AionimaContributePanel } from "./AionimaContributePanel.js";
 
 export interface ProjectDetailProps {
   projects: ProjectInfo[];
@@ -450,6 +451,12 @@ export function ProjectDetail({
         })()}
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
         <DevNotes title="Project workspace — dev notes">
+          <DevNotes.Item kind="info" heading="2026-06-07 — Contribute tab (outbound PRs) on _aionima">
+            The aionima-system project gains a Contribute tab (Repos | Contribute | Details | Editor).
+            It groups core forks into Learnings (→ PRIME) and Mechanics (→ agi, marketplaces, PAx) and
+            opens cross-repo PRs to upstream/dev with an AI-drafted body. Mirror of the inbound merge
+            path; PRs always target dev (never main). See CONTRIBUTING.md.
+          </DevNotes.Item>
           <DevNotes.Item kind="info" heading="Cycle 2026-05-31 — 3-state status dot + TCP health probe">
             Status dot is now 3-state: green = container running AND TCP probe reached the port (app serving),
             yellow = container running but port not yet responding (starting up / internal crash),
@@ -717,9 +724,10 @@ export function ProjectDetail({
             <TabsTrigger value="repository">Repository</TabsTrigger>
           </TabsList>
         ) : isAionimaContainer ? (
-          // s179: _aionima meta-project — Repos | Details | Editor only
+          // s179: _aionima meta-project — Repos | Contribute | Details | Editor
           <TabsList>
             <TabsTrigger value="repos" data-testid="project-tab-repos">Repos</TabsTrigger>
+            <TabsTrigger value="contribute" data-testid="project-tab-contribute">Contribute</TabsTrigger>
             <TabsTrigger value="details">Details</TabsTrigger>
             <TabsTrigger value="files">Editor</TabsTrigger>
           </TabsList>
@@ -1329,6 +1337,12 @@ export function ProjectDetail({
               projectPath={project.path}
               onOpenChat={() => onOpenChat(project.path)}
             />
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="contribute" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          <Card className="p-4">
+            <AionimaContributePanel />
           </Card>
         </TabsContent>
 

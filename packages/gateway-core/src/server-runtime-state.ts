@@ -420,6 +420,35 @@ interface GitExecResult {
   exitCode: number;
 }
 
+/**
+ * Read the owner's GitHub login + decrypted access token from the connections
+ * table. Used by the dev/contribute endpoints (outbound PRs). Returns nulls
+ * when unavailable rather than throwing.
+ */
+async function readOwnerGithub(
+  deps: RuntimeStateDeps,
+  encryptionKey: Buffer | undefined,
+): Promise<{ login: string | null; token: string | null }> {
+  let login: string | null = null;
+  let token: string | null = null;
+  if (deps.db) {
+    try {
+      const [row] = await deps.db
+        .select({ accountLabel: connections.accountLabel, accessToken: connections.accessToken })
+        .from(connections)
+        .where(and(eq(connections.provider, "github"), eq(connections.role, "owner")))
+        .limit(1);
+      if (row) {
+        login = row.accountLabel?.trim() ?? null;
+        if (row.accessToken && encryptionKey) token = decryptToken(encryptionKey, row.accessToken);
+      }
+    } catch {
+      /* connection unavailable — return nulls */
+    }
+  }
+  return { login, token };
+}
+
 async function execGitDashboard(args: string[], cwd: string, timeoutMs = 30_000): Promise<GitExecResult> {
   try {
     const { stdout, stderr } = await execFileAsync("git", args, {
@@ -4127,6 +4156,124 @@ export async function createGatewayRuntimeState(
           });
         } catch { /* best-effort */ }
       }
+
+      return reply.send(result);
+    });
+
+    // -----------------------------------------------------------------------
+    // GET /api/dev/contribute/status — outbound PR status per core fork
+    // -----------------------------------------------------------------------
+    //
+    // Mirror of core-forks/status but for the OUTBOUND direction: how many
+    // commits each fork is ahead of `upstream/dev`, grouped into Learnings
+    // (PRIME) and Mechanics (everything else), plus any already-open PR.
+
+    fastify.get("/api/dev/contribute/status", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      }
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) {
+          return reply.code(403).send({ error: "Admin role required" });
+        }
+      }
+
+      const projectsRoot = (deps.workspaceProjects ?? [])[0];
+      if (!projectsRoot) {
+        return reply.send({ ownerLogin: null, learnings: [], mechanics: [], error: "no workspace projects dir configured" });
+      }
+      const coreCollectionDir = join(projectsRoot, "_aionima");
+      if (!existsSync(coreCollectionDir)) {
+        return reply.send({ ownerLogin: null, learnings: [], mechanics: [], error: "core-fork collection not provisioned — enable Contributing Mode" });
+      }
+
+      const { login, token } = await readOwnerGithub(deps, encryptionKey);
+
+      const { computeContributeStatus } = await import("./dev-mode-contribute.js");
+      const status = await computeContributeStatus(coreCollectionDir, login, token);
+      return reply.send(status);
+    });
+
+    // -----------------------------------------------------------------------
+    // POST /api/dev/contribute/:slug/pr — open a cross-repo PR to upstream/dev
+    // -----------------------------------------------------------------------
+    //
+    // Body `{ title?, body? }`. Drafts an AI body (aion-micro) when none is
+    // supplied, then opens `<ownerLogin>:<branch> → <upstreamOrg>:dev`.
+
+    fastify.post("/api/dev/contribute/:slug/pr", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      }
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) {
+          return reply.code(403).send({ error: "Admin role required" });
+        }
+      }
+
+      const { slug } = request.params as { slug: string };
+      const { CORE_REPOS: CORE_REPO_SPECS } = await import("./dev-mode-forks.js");
+      const spec = CORE_REPO_SPECS.find((s) => s.slug === slug);
+      if (!spec) {
+        return reply.code(404).send({ error: `unknown core fork: ${slug}` });
+      }
+
+      const projectsRoot = (deps.workspaceProjects ?? [])[0];
+      if (!projectsRoot) {
+        return reply.code(500).send({ error: "no workspace projects dir configured" });
+      }
+      const targetDir = join(projectsRoot, "_aionima", spec.slug);
+      if (!existsSync(targetDir)) {
+        return reply.code(404).send({ error: `fork not provisioned — toggle Contributing Mode to provision ${slug}` });
+      }
+
+      const { login, token } = await readOwnerGithub(deps, encryptionKey);
+      if (!token) {
+        return reply.code(502).send({ error: "GitHub token unavailable. Reconnect your GitHub account via Settings → Connections." });
+      }
+      if (!login) {
+        return reply.code(502).send({ error: "GitHub login not found. Reconnect your GitHub account via Settings → Connections." });
+      }
+
+      const {
+        computeContributeStatus,
+        draftPrBody,
+        defaultPrTitle,
+        createUpstreamPr,
+      } = await import("./dev-mode-contribute.js");
+
+      // Recompute this repo's ahead state so we draft from a fresh commit list
+      // and refuse a no-op PR.
+      const coreCollectionDir = join(projectsRoot, "_aionima");
+      const status = await computeContributeStatus(coreCollectionDir, login, token);
+      const repoInfo = [...status.learnings, ...status.mechanics].find((r) => r.slug === slug);
+      if (!repoInfo || repoInfo.error) {
+        return reply.code(400).send({ error: repoInfo?.error ?? "could not compute contribution status" });
+      }
+      if (repoInfo.commitsAhead === 0) {
+        return reply.code(400).send({ error: `${spec.displayName} has no commits ahead of upstream/dev — nothing to contribute.` });
+      }
+
+      const reqBody = (request.body as { title?: string; body?: string } | undefined) ?? {};
+      const prLog = createComponentLogger(deps.logger ?? undefined, "dev-contribute");
+      const title = reqBody.title?.trim() || defaultPrTitle(spec, repoInfo.aheadCommits);
+      const body = reqBody.body?.trim() || await draftPrBody(spec, repoInfo.aheadCommits, deps.aionMicro, prLog);
+
+      const result = await createUpstreamPr(spec, token, login, repoInfo.branch, title, body);
+      if (!result.ok) {
+        return reply.code(502).send({ error: result.error ?? "PR creation failed" });
+      }
+
+      try {
+        deps.wsRef?.server?.broadcast("dashboard_event", {
+          type: "dev:contribute-pr-opened" as const,
+          data: { slug: spec.slug, prUrl: result.prUrl, prNumber: result.prNumber, alreadyOpen: result.alreadyOpen ?? false },
+        });
+      } catch { /* best-effort */ }
 
       return reply.send(result);
     });

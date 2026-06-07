@@ -222,3 +222,30 @@ A red or yellow mark on any origin row means `agi upgrade` hasn't completed the 
 **Flipping Dev Mode OFF:**
 
 Toggle Dev Mode off in the dashboard → `dev.enabled: false` in config → next `agi upgrade` → `ensure_origin_remote` sees that `dev.*Repo` are no longer the effective URLs (because the fallback branches to Civicognita) → rewrites origins back to Civicognita → subsequent upgrades pull canonical releases again.
+
+---
+
+## Contributing upstream (outbound PRs)
+
+Dev Mode is bidirectional. The **inbound** path pulls upstream into your fork (the upgrade
+wizard + `dev-mode-merge.ts`). The **outbound** path contributes your work back as cross-repo
+pull requests — surfaced on the **_aionima → Contribute** tab.
+
+Contributions are grouped into two streams:
+
+| Stream | Targets | Carries |
+|--------|---------|---------|
+| **Learnings** | PRIME (`Civicognita/aionima`) | Knowledge & corpus updates |
+| **Mechanics** | `agi`, the Plugin/MApp Marketplaces, the `@particle-academy/*` packages, Local-ID | Code & framework changes |
+
+Each core fork that is ahead of `upstream/dev` shows a **Create PR** button. It:
+
+1. Refuses a no-op PR (must have commits ahead of `upstream/dev`).
+2. Drafts a title + body — AI-drafted via the local floor model (aion-micro), with a
+   commit-list fallback when offline.
+3. Opens `‹your-fork›:‹branch› → ‹upstreamOrg›:dev` and returns the PR URL. An already-open
+   PR is linked instead of duplicated.
+
+**PRs always target `dev`, never `main`.** See `CONTRIBUTING.md` for the full convention.
+Backend: `packages/gateway-core/src/dev-mode-contribute.ts`;
+endpoints `GET /api/dev/contribute/status` + `POST /api/dev/contribute/:slug/pr`.

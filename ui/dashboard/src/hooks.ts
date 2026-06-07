@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { DashboardEvent, LogEntry, AionimaConfig, HFModelSearchResult, CoreForkStatus } from "./types.js";
+import type { DashboardEvent, LogEntry, AionimaConfig, HFModelSearchResult, CoreForkStatus, ContributeStatus, CreatePrResult } from "./types.js";
 import {
   fetchOverview, fetchConfig, saveConfig,
   fetchProjects, createProject, updateProject, deleteProject,
@@ -205,6 +205,43 @@ export function useCoreForkStatus() {
     },
     staleTime: 30_000,
     refetchOnWindowFocus: false,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// useContributeStatus — outbound PR status (fork → upstream/dev), grouped
+// into Learnings (PRIME) + Mechanics (everything else).
+// ---------------------------------------------------------------------------
+
+export function useContributeStatus() {
+  return useQuery({
+    queryKey: ["dev", "contribute", "status"],
+    queryFn: async (): Promise<ContributeStatus> => {
+      const res = await fetch("/api/dev/contribute/status");
+      if (!res.ok) throw new Error(`HTTP ${String(res.status)}`);
+      return (await res.json()) as ContributeStatus;
+    },
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useCreateContributePr() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: { slug: string; title?: string; body?: string }): Promise<CreatePrResult> => {
+      const res = await fetch(`/api/dev/contribute/${encodeURIComponent(vars.slug)}/pr`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: vars.title, body: vars.body }),
+      });
+      const body = (await res.json().catch(() => ({}))) as CreatePrResult & { error?: string };
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${String(res.status)}`);
+      return body;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["dev", "contribute", "status"] });
+    },
   });
 }
 
