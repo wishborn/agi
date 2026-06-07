@@ -46,6 +46,7 @@ import { MagicAppPicker } from "./MagicAppPicker.js";
 import { isDesktopServedType } from "@/lib/project-type-classifier";
 import { AionimaSystemReposPanel } from "./AionimaSystemReposPanel.js";
 import { AionimaContributePanel } from "./AionimaContributePanel.js";
+import { AgiRepoCard } from "./AgiRepoCard.js";
 
 export interface ProjectDetailProps {
   projects: ProjectInfo[];
@@ -451,6 +452,12 @@ export function ProjectDetail({
         })()}
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
         <DevNotes title="Project workspace — dev notes">
+          <DevNotes.Item kind="info" heading="2026-06-07 — .agi monorepo envelope control (Details tab)">
+            Regular projects' Details tab now carries an AgiRepoCard: initialize the project folder as a
+            {" "}<code>{"{slug}.agi"}</code> git envelope, or import existing <code>repos/</code> as git
+            submodules. First slice — explicit action only (no auto-init on create yet); Tynn handshake +
+            remote auto-creation deferred. Excluded for the _aionima collection.
+          </DevNotes.Item>
           <DevNotes.Item kind="info" heading="2026-06-07 — Contribute tab (outbound PRs) on _aionima">
             The aionima-system project gains a Contribute tab (Repos | Contribute | Details | Editor).
             It groups core forks into Learnings (→ PRIME) and Mechanics (→ agi, marketplaces, PAx) and
@@ -810,6 +817,13 @@ export function ProjectDetail({
         )}
 
         <TabsContent value="details" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          {/* {project}.agi monorepo envelope control (Phase 3). Excluded for the
+              _aionima collection, which keeps its own collection.json convention. */}
+          {!isAionimaContainer && (
+            <div className="mb-4">
+              <AgiRepoCard projectPath={project.path} />
+            </div>
+          )}
           {/*
             s140 t592 cycle-176 — Tabbed sub-pages: Identity /
             Configuration / Lifecycle. Owner-chosen shape (Q-14).

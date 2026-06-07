@@ -1888,6 +1888,75 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // {project}.agi monorepo envelope (Phase 3, first slice)
+  //
+  // GET  /api/projects/agi-repo/status?path=<projectPath> — envelope + submodules
+  // POST /api/projects/agi-repo/init?path=<projectPath>   — git init the envelope
+  // POST /api/projects/agi-repo/import?path=<projectPath> — adopt existing repos/ as submodules
+  //
+  // Mirrors the /api/projects/repos gate (private-network + workspace-dir
+  // validation). The `_aionima` collection is excluded by the manager.
+  // -----------------------------------------------------------------------
+
+  const agiRepoGuard = (
+    request: import("fastify").FastifyRequest,
+    reply: import("fastify").FastifyReply,
+  ): string | null => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      reply.code(403).send({ error: "Projects API only allowed from private network" });
+      return null;
+    }
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) {
+      reply.code(400).send({ error: "path query parameter is required" });
+      return null;
+    }
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+      return null;
+    }
+    return targetPath;
+  };
+
+  fastify.get("/api/projects/agi-repo/status", async (request, reply) => {
+    const targetPath = agiRepoGuard(request, reply);
+    if (!targetPath) return reply;
+    const { getAgiRepoStatus } = await import("./agi-repo-manager.js");
+    return reply.send(getAgiRepoStatus(targetPath));
+  });
+
+  fastify.post("/api/projects/agi-repo/init", async (request, reply) => {
+    const targetPath = agiRepoGuard(request, reply);
+    if (!targetPath) return reply;
+    const { initAgiRepo } = await import("./agi-repo-manager.js");
+    const result = initAgiRepo(targetPath);
+    if (!result.ok) return reply.code(400).send({ error: result.error });
+    if (deps.projectConfigManager) {
+      try {
+        await deps.projectConfigManager.update(targetPath, { agiRepo: { initialized: true, remoteUrl: null } });
+      } catch { /* config update best-effort — git state is the source of truth */ }
+    }
+    return reply.send(result);
+  });
+
+  fastify.post("/api/projects/agi-repo/import", async (request, reply) => {
+    const targetPath = agiRepoGuard(request, reply);
+    if (!targetPath) return reply;
+    const { importAgiRepo } = await import("./agi-repo-manager.js");
+    const result = importAgiRepo(targetPath);
+    if (!result.ok) return reply.code(400).send({ error: result.error });
+    if (deps.projectConfigManager) {
+      try {
+        await deps.projectConfigManager.update(targetPath, { agiRepo: { initialized: true, remoteUrl: null } });
+      } catch { /* best-effort */ }
+    }
+    return reply.send(result);
+  });
+
+  // -----------------------------------------------------------------------
   // CHN-D (s165) slice 2 — channel-room binding CRUD per project
   //
   // GET    /api/projects/rooms?path=<projectPath>            — list bindings

@@ -799,6 +799,23 @@ export interface CreatePrResult {
   error?: string;
 }
 
+/** {project}.agi monorepo envelope status (Phase 3). */
+export interface AgiRepoStatus {
+  /** True when the project folder is itself a git repo. */
+  initialized: boolean;
+  /** Submodule paths registered in .gitmodules (e.g. ["repos/agi"]). */
+  submodules: string[];
+  /** repos/ subdirs that are git repos but not yet registered as submodules. */
+  unregisteredRepos: string[];
+}
+
+export interface AgiRepoOpResult {
+  ok: boolean;
+  initialized?: boolean;
+  registered?: string[];
+  error?: string;
+}
+
 /** Response shape of POST /api/dev/core-forks/:slug/merge. */
 export type CoreForkMergeResult =
   | { ok: true; ff: boolean; agentic: boolean; newSha: string; pushed: boolean }
