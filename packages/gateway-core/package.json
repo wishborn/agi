@@ -23,7 +23,7 @@
     "@agi/skills": "workspace:*",
     "@agi/trpc-api": "workspace:*",
     "@agi/voice": "workspace:*",
-    "@anthropic-ai/sdk": "^0.90.0",
+    "@anthropic-ai/sdk": "^0.100.1",
     "@node-rs/argon2": "^2.0.2",
     "@fastify/static": "^9.1.1",
     "@trpc/server": "^11.0.0",
@@ -31,7 +31,7 @@
     "fastify": "^5.8.5",
     "node-pty": "^1.1.0",
     "ulid": "^2.3.0",
-    "ws": "^8.18.0",
+    "ws": "^8.21.0",
     "yaml": "^2.6.0",
     "zod": "^3.24.0"
   },

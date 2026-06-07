@@ -508,6 +508,21 @@ export const ProjectConfigSchema = z
      *  At most one binding per (channelId, roomId) pair (refined below).
      *  Reference: agi/docs/agents/channel-plugin-redesign.md §5. */
     rooms: z.array(ProjectRoomBindingSchema).optional(),
+    /** `{slug}.agi` monorepo envelope state — Phase 3 first slice.
+     *  When the project folder is itself a git repo under the hard `.agi`
+     *  naming convention (distinguishing the project envelope from the
+     *  actual repos it contains), `agiRepo.initialized` is true. Each
+     *  entry in `repos/` that is a git repo is registered as a git
+     *  submodule of this envelope. `remoteUrl` is the `{slug}.agi` GitHub
+     *  remote when one has been created (optional — the envelope is
+     *  local-first). */
+    agiRepo: z
+      .object({
+        initialized: z.boolean(),
+        remoteUrl: z.string().nullable().optional(),
+      })
+      .passthrough()
+      .optional(),
   })
   .passthrough() // Plugins can store custom keys at the root level
   .refine(

@@ -415,19 +415,7 @@ export class OllamaProvider implements LLMProvider {
       } catch (err) {
         lastError = err;
 
-        // Friendly error for connection refused — Ollama may be idle-unloaded,
-        // restarting, or genuinely not running. Callers see this only after the
-        // agent-invoker's retry has also failed.
-        if (
-          err instanceof Error &&
-          (err.message.includes("ECONNREFUSED") || err.message.includes("fetch failed"))
-        ) {
-          throw new Error(
-            `Ollama isn't responding yet. It may be reloading the model — try again in a moment. If it keeps failing, run \`ollama serve\` to start Ollama (expected at ${baseUrl}).`,
-          );
-        }
-
-        // Don't retry non-retryable errors
+        // Non-retryable: model not installed
         if (
           err instanceof Error &&
           (err.message.includes("not found") || err.message.includes("ollama pull"))
@@ -436,11 +424,25 @@ export class OllamaProvider implements LLMProvider {
         }
 
         if (attempt < this.config.maxRetries) {
+          // Retry with exponential backoff — covers Ollama idle unload,
+          // transient restart, and brief unavailability
           const delay =
             (this.config.retryBaseMs ?? 1000) * Math.pow(2, attempt) +
             Math.floor(Math.random() * 500);
           await sleep(delay);
         } else {
+          // All retries exhausted — surface a friendly message for connection errors
+          // rather than the raw Node.js ECONNREFUSED / fetch-failed text.
+          if (
+            err instanceof Error &&
+            (err.message.includes("ECONNREFUSED") || err.message.includes("fetch failed"))
+          ) {
+            throw new Error(
+              `Ollama isn't responding after ${String(this.config.maxRetries)} retries. ` +
+              `It may have crashed or been stopped. Run \`ollama serve\` to restart it ` +
+              `(expected at ${baseUrl}).`,
+            );
+          }
           throw err;
         }
       }

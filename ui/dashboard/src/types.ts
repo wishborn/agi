@@ -133,6 +133,116 @@ export interface UpgradeNextStep {
   cancels?: string[];
 }
 
+// ---------------------------------------------------------------------------
+// Upgrade Wizard — fork-aware 2-step upgrade workflow
+// ---------------------------------------------------------------------------
+
+/** One remote/branch source the user can upgrade from. */
+export interface ForkBranchInfo {
+  /** git ref string, e.g. "upstream/main", "origin/dev". */
+  ref: string;
+  /** Human label, e.g. "Civicognita/agi — main". */
+  label: string;
+  /** Commits the local fork has that this source does not. */
+  commitsAhead: number;
+  /** Commits this source has that the local fork does not (i.e. "behind count"). */
+  commitsBehind: number;
+  latestCommit: { hash: string; message: string; date: string } | null;
+  /** Version string from package.json at that ref, if readable. */
+  latestVersion: string | null;
+  /** True when this ref matches the current update channel. */
+  isCurrentChannel: boolean;
+  /** True when this ref is from the canonical upstream repo (Civicognita/agi),
+   *  as opposed to the user's personal fork. Upstream sources are always shown;
+   *  fork sources only appear in Dev Mode. */
+  isUpstream: boolean;
+  /**
+   * Merge compatibility classification:
+   * - "up-to-date": nothing to merge
+   * - "fast-forward": source is ahead of local with no divergence — clean merge
+   * - "three-way": both sides have unique commits — may have conflicts
+   * - "behind": source is older than local — merging would bring back old state
+   */
+  mergeType: "up-to-date" | "fast-forward" | "three-way" | "behind";
+  /** True if a merge-tree simulation detected conflict markers. Only set for three-way merges. */
+  hasConflicts: boolean;
+}
+
+/** Response from GET /api/system/fork-status. */
+export interface ForkStatus {
+  devModeEnabled: boolean;
+  currentBranch: string;
+  currentVersion: string;
+  deployedCommit: string;
+  sources: ForkBranchInfo[];
+}
+
+/** A migration entry that will execute for a given upgrade. */
+export interface UpgradePreviewMigration {
+  id: string;
+  version: string;
+  description: string;
+}
+
+/** High-level classification of what an upgrade will affect. */
+export interface UpgradeImpact {
+  /** True if any backend file changed (gateway restart required). */
+  requiresRestart: boolean;
+  /** True if any migrations are in the range. */
+  requiresDbMigration: boolean;
+  /** True if only ui/ or channel static files changed (hot-swap, no restart). */
+  frontendOnly: boolean;
+  /** Coarse area labels, e.g. ["gateway-core", "ui/dashboard", "channels/discord"]. */
+  changedAreas: string[];
+}
+
+/** Response from GET /api/system/upgrade-preview?source={ref}. */
+export interface UpgradePreview {
+  fromVersion: string;
+  toVersion: string;
+  commitCount: number;
+  commits: { hash: string; message: string; date: string }[];
+  migrations: UpgradePreviewMigration[];
+  impact: UpgradeImpact;
+  source: string;
+  /** Full unified diff (git format) of all changed files between deployed and target.
+   *  Suitable for passing directly to FancyDiff source={{ unified }}.
+   *  Null when the diff exceeds the size cap — use diffStat fallback instead. */
+  fileDiff: string | null;
+  /** Output of git diff --stat — file names with +/- line counts.
+   *  Always present when there are commits, regardless of diff size. */
+  diffStat: string | null;
+}
+
+/** A single entry in the persistent upgrade history. */
+export interface UpgradeHistoryEntry {
+  id: string;
+  startedAt: string;
+  completedAt: string;
+  fromVersion: string;
+  toVersion: string;
+  source: string | null;
+  success: boolean;
+  failedAtStep: string | null;
+  errorMessage: string | null;
+  resolutionNote: string | null;
+  log: Array<{ phase: string; step: string; status: string; message: string; timestamp: string }>;
+}
+
+/** Response from POST /api/system/merge-source. */
+export interface MergeResult {
+  ok: boolean;
+  fastForward: boolean;
+  mergedCommits: number;
+  /** Conflicted file paths — populated only when aborted is true. */
+  conflicts?: string[];
+  /** True when the merge was aborted due to conflicts. */
+  aborted: boolean;
+  /** True when the merged result was successfully pushed to origin/{branch}. */
+  pushedToFork?: boolean;
+  message: string;
+}
+
 /** Hosting infrastructure status from WebSocket. */
 export interface HostingStatusData {
   ready: boolean;
@@ -649,6 +759,60 @@ export interface CoreForkStatus {
   /** Commits on upstream that haven't been merged into the fork yet. */
   behind: number;
   lastFetchedAt: string;
+  error?: string;
+}
+
+/** Outbound-contribution direction (fork → upstream/dev). Learnings = PRIME,
+ *  Mechanics = every other core repo. */
+export type ContributeKind = "learnings" | "mechanics";
+
+export interface RepoContributeInfo {
+  slug: string;
+  displayName: string;
+  kind: ContributeKind;
+  branch: string;
+  /** Commits on the fork's branch not yet in upstream/dev. */
+  commitsAhead: number;
+  upstream: string;
+  upstreamOrg: string;
+  /** Latest commit subjects the fork is ahead by (capped, most-recent first). */
+  aheadCommits: string[];
+  existingPrUrl: string | null;
+  existingPrNumber: number | null;
+  error?: string;
+}
+
+/** Response of GET /api/dev/contribute/status. */
+export interface ContributeStatus {
+  ownerLogin: string | null;
+  learnings: RepoContributeInfo[];
+  mechanics: RepoContributeInfo[];
+  error?: string;
+}
+
+/** Response of POST /api/dev/contribute/:slug/pr. */
+export interface CreatePrResult {
+  ok: boolean;
+  prUrl?: string;
+  prNumber?: number;
+  alreadyOpen?: boolean;
+  error?: string;
+}
+
+/** {project}.agi monorepo envelope status (Phase 3). */
+export interface AgiRepoStatus {
+  /** True when the project folder is itself a git repo. */
+  initialized: boolean;
+  /** Submodule paths registered in .gitmodules (e.g. ["repos/agi"]). */
+  submodules: string[];
+  /** repos/ subdirs that are git repos but not yet registered as submodules. */
+  unregisteredRepos: string[];
+}
+
+export interface AgiRepoOpResult {
+  ok: boolean;
+  initialized?: boolean;
+  registered?: string[];
   error?: string;
 }
 

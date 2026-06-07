@@ -1465,15 +1465,17 @@ describe("tool-registry.ts", () => {
       ).rejects.toThrow(/requires tier/);
     });
 
-    it("throws when tool requires a state not matching current state", async () => {
+    it("executes even when requiresState does not match current state (requiresState is audit-only)", async () => {
+      // requiresState was changed from an execution gate to metadata-only for
+      // COA<>COI logging and UI dimming. State never blocks tool use — see
+      // tool-registry.ts line ~216 and the comment there.
       registry.register(
         makeTool("online-tool", { requiresState: ["ONLINE"] }),
         async () => "ok",
         {},
       );
-      await expect(
-        registry.execute("online-tool", {}, makeExecCtx({ state: "LIMBO" })),
-      ).rejects.toThrow(/requires state/);
+      const result = await registry.execute("online-tool", {}, makeExecCtx({ state: "LIMBO" }));
+      expect(result.content).toContain("ok");
     });
 
     it("executes handler and returns content", async () => {

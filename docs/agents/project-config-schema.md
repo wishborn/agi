@@ -207,3 +207,20 @@ After s150 t636/t637/t638 the project detail page is type-driven, not category-d
 - **MagicApps tab** was retired; the picker now renders inline below the Hosting card when type is Desktop-served.
 - **Purpose** is a free-form textarea bound to `description` (was a `category` Select).
 - **Tab clutter trim:** primary tabs are Details / Editor / Hosting / Activity; secondary tabs (Repository / Environment / TaskMaster / Iterative Work / MCP / plugin-* / Security) collapse into a "More…" overflow Select.
+
+## `agiRepo` (Phase 3 — `{project}.agi` envelope)
+
+Optional, `.passthrough()`. Present once the project folder has been turned into a git
+repository under the hard `{slug}.agi` naming convention (the `.agi` suffix distinguishes the
+project *envelope* from the actual repos it contains). Each `repos/<name>` that is a git repo
+is registered as a git **submodule** of the envelope.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `initialized` | `boolean` | True when the project folder is itself a git repo (the envelope). |
+| `remoteUrl` | `string \| null` | The `{slug}.agi` GitHub remote, when one has been created. Optional — the envelope is local-first. |
+
+Managed by `packages/gateway-core/src/agi-repo-manager.ts` and the endpoints
+`GET/POST /api/projects/agi-repo/{status,init,import}?path=`. The `_aionima` meta-project is
+**excluded** (it keeps its `collection.json` convention). First slice: explicit action only —
+auto-init on `create()`, the Tynn-desktop handshake, and remote auto-creation are deferred.
