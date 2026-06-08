@@ -3177,7 +3177,14 @@ export async function createGatewayRuntimeState(
         scopeLabel: "v0.4.0",
       });
     } catch (err) {
-      return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+      // The progress bar is optional chrome. A provider failure must not become
+      // a 502 that spams the dashboard console every 30s — log the reason and
+      // return an empty feed (UI hides at total:0). The layered PM provider
+      // already degrades internally; this is defense-in-depth for any other throw.
+      log.warn(
+        `loop/progress: provider failed, hiding bar — ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return reply.send({ finished: 0, qa: 0, total: 0, scopeLabel: "v0.4.0" });
     }
   });
 
