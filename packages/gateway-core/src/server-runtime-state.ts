@@ -60,6 +60,7 @@ import { registerHandoffRoutes, startHandoffCleanup } from "./handoff-api.js";
 import { registerDeviceFlowRoutes } from "./device-flow-api.js";
 import { registerConnectionsRoutes } from "./connections-api.js";
 import { resolveEncryptionKey } from "./crypto-tokens.js";
+import { CompanionPairingService } from "./companion-pairing.js";
 import { registerEntityManagementRoutes } from "./entity-management-api.js";
 import { registerLocalFederationRoutes } from "./local-federation-api.js";
 import type { SecretsManager } from "./secrets.js";
@@ -648,6 +649,12 @@ export async function createGatewayRuntimeState(
   if (deps.configPath && deps.db) {
     encryptionKey = resolveEncryptionKey(deps.configPath);
   }
+
+  // Companion device pairing (gateway ↔ desktop/mobile companions, e.g. Genie).
+  // In-memory for now (devices re-pair after a gateway restart — persistence is
+  // a follow-up). The pairing LOGIC predates this (Task #182); we expose it over
+  // HTTP here so LAN companions can pair without a separate identity service.
+  const companionPairing = new CompanionPairingService();
 
   // Derive gateway base URL from hosting config (used in handoff authUrl)
   let gatewayBaseUrl = "https://ai.on";
@@ -1954,6 +1961,84 @@ export async function createGatewayRuntimeState(
       } catch { /* best-effort */ }
     }
     return reply.send(result);
+  });
+
+  // -----------------------------------------------------------------------
+  // Companion device pairing (gateway ↔ desktop/mobile companions, e.g. Genie)
+  //
+  // POST /api/companion/pair/code           — owner generates a 6-digit code
+  // POST /api/companion/pair                — device submits code + info → token
+  // GET  /api/companion/devices             — list paired devices
+  // POST /api/companion/devices/:id/revoke  — revoke a device's access
+  //
+  // LAN-only. Code generation + device management require admin (the owner
+  // operates them from the dashboard). The pair submission is gated by the
+  // code itself (the device has no session yet), private-network-only.
+  // -----------------------------------------------------------------------
+
+  const companionAdminGuard = (
+    request: import("fastify").FastifyRequest,
+    reply: import("fastify").FastifyReply,
+  ): boolean => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      reply.code(403).send({ error: "Companion API only allowed from private network" });
+      return false;
+    }
+    if (dashboardUserStore) {
+      const session = extractDashboardSession(request.raw, dashboardUserStore);
+      if (!session || !hasRole(session.role, "admin")) {
+        reply.code(403).send({ error: "Admin role required" });
+        return false;
+      }
+    }
+    return true;
+  };
+
+  fastify.post("/api/companion/pair/code", async (request, reply) => {
+    if (!companionAdminGuard(request, reply)) return reply;
+    const entityId = deps.ownerEntityId ?? "#E0";
+    const pairingCode = companionPairing.generateCode(entityId);
+    return reply.send({ code: pairingCode.code, expiresAt: pairingCode.expiresAt });
+  });
+
+  fastify.post("/api/companion/pair", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Companion API only allowed from private network" });
+    }
+    const body = (request.body as { code?: string; deviceName?: string; platform?: string; pushToken?: string } | undefined) ?? {};
+    if (!body.code || !body.deviceName) {
+      return reply.code(400).send({ error: "code and deviceName are required" });
+    }
+    const platform = body.platform === "ios" || body.platform === "android" ? body.platform : "desktop";
+    const result = companionPairing.pair({
+      code: body.code,
+      deviceName: body.deviceName,
+      platform,
+      pushToken: body.pushToken,
+    });
+    if (!result.success) {
+      return reply.code(400).send({ error: result.error ?? "pairing failed" });
+    }
+    return reply.send({
+      sessionToken: result.sessionToken,
+      device: result.device,
+      ownerEntityId: deps.ownerEntityId ?? "#E0",
+    });
+  });
+
+  fastify.get("/api/companion/devices", async (request, reply) => {
+    if (!companionAdminGuard(request, reply)) return reply;
+    const entityId = deps.ownerEntityId ?? "#E0";
+    return reply.send({ devices: companionPairing.getDevices(entityId) });
+  });
+
+  fastify.post<{ Params: { id: string } }>("/api/companion/devices/:id/revoke", async (request, reply) => {
+    if (!companionAdminGuard(request, reply)) return reply;
+    const revoked = companionPairing.revokeDevice(request.params.id);
+    if (!revoked) return reply.code(404).send({ error: "device not found" });
+    return reply.send({ ok: true });
   });
 
   // -----------------------------------------------------------------------

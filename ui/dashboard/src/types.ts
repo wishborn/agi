@@ -816,6 +816,24 @@ export interface AgiRepoOpResult {
   error?: string;
 }
 
+/** A paired companion device (gateway ↔ desktop/mobile). */
+export interface CompanionDevice {
+  id: string;
+  entityId: string;
+  deviceName: string;
+  platform: "ios" | "android" | "desktop";
+  pushToken: string | null;
+  lastSeenAt: string;
+  pairedAt: string;
+  status: "active" | "revoked";
+}
+
+/** Response of POST /api/companion/pair/code. */
+export interface PairCodeResult {
+  code: string;
+  expiresAt: string;
+}
+
 /** Response shape of POST /api/dev/core-forks/:slug/merge. */
 export type CoreForkMergeResult =
   | { ok: true; ff: boolean; agentic: boolean; newSha: string; pushed: boolean }

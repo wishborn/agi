@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { useSettingsContext } from "./settings-layout.js";
 import { useRootContext } from "./root.js";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar.js";
+import { CompanionDevicesCard } from "@/components/CompanionDevicesCard.js";
 import { OwnerSettings } from "@/components/settings/OwnerSettings.js";
 import { DevSettings } from "@/components/settings/DevSettings.js";
 import { GatewayNetworkSettings } from "@/components/settings/GatewayNetworkSettings.js";
@@ -81,6 +82,12 @@ export default function SettingsGatewayPage() {
         layout: every project gets {"{k/, repos/, sandbox/, project.json}"} at root (chat stays at k/chat/). Stacks attach
         per-repo (s141 follow-up). Sacred projects (Aionima 5 + PAx 4) untouched.
       </DevNote>
+      <DevNote heading="2026-06-07 — Companion device pairing (Genie / mobile)" kind="info" scope="settings/gateway">
+        General tab now has a Companion devices card: generate a 6-digit code, read it to a LAN
+        companion (e.g. Genie desktop), and it pairs for a per-device session token. Manage/revoke
+        devices here. Pairing lives in AGI (Local-ID deprecated); answers agi#178 Q5.2a. In-memory
+        for now — devices re-pair after a gateway restart (persistence is a follow-up).
+      </DevNote>
       <DevNote heading="Manage Upgrade — review action only for real upgrades" kind="info" scope="settings/gateway">
         The upgrade wizard now lists every source (commit deltas always shown) but only renders a
         Review action for a real upgrade (commitsBehind &gt; 0 → fast-forward / 3-way). Up-to-date and
@@ -136,6 +143,10 @@ export default function SettingsGatewayPage() {
             >
               Manage Upgrade
             </Button>
+          </div>
+          {/* Companion device pairing (gateway ↔ desktop/mobile, e.g. Genie) */}
+          <div className="mt-6">
+            <CompanionDevicesCard />
           </div>
         </>
       )}

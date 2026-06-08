@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { DashboardEvent, LogEntry, AionimaConfig, HFModelSearchResult, CoreForkStatus, ContributeStatus, CreatePrResult, AgiRepoStatus, AgiRepoOpResult } from "./types.js";
+import type { DashboardEvent, LogEntry, AionimaConfig, HFModelSearchResult, CoreForkStatus, ContributeStatus, CreatePrResult, AgiRepoStatus, AgiRepoOpResult, CompanionDevice, PairCodeResult } from "./types.js";
 import {
   fetchOverview, fetchConfig, saveConfig,
   fetchProjects, createProject, updateProject, deleteProject,
@@ -276,6 +276,47 @@ export function useAgiRepoAction(projectPath: string | undefined) {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["projects", "agi-repo", "status", projectPath] });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Companion device pairing (gateway ↔ desktop/mobile, e.g. Genie).
+// ---------------------------------------------------------------------------
+
+export function useCompanionDevices() {
+  return useQuery({
+    queryKey: ["companion", "devices"],
+    queryFn: async (): Promise<CompanionDevice[]> => {
+      const res = await fetch("/api/companion/devices");
+      if (!res.ok) throw new Error(`HTTP ${String(res.status)}`);
+      return ((await res.json()) as { devices: CompanionDevice[] }).devices;
+    },
+    staleTime: 15_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useGeneratePairCode() {
+  return useMutation({
+    mutationFn: async (): Promise<PairCodeResult> => {
+      const res = await fetch("/api/companion/pair/code", { method: "POST" });
+      const body = (await res.json().catch(() => ({}))) as PairCodeResult & { error?: string };
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${String(res.status)}`);
+      return body;
+    },
+  });
+}
+
+export function useRevokeCompanionDevice() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string): Promise<void> => {
+      const res = await fetch(`/api/companion/devices/${encodeURIComponent(id)}/revoke`, { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${String(res.status)}`);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["companion", "devices"] });
     },
   });
 }
