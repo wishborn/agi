@@ -171,6 +171,58 @@ describe("PendingApprovalStore — approve/reject", () => {
   });
 });
 
+describe("PendingApprovalStore — person-level cascade (one card per person)", () => {
+  let store: PendingApprovalStore;
+
+  beforeEach(() => {
+    store = new PendingApprovalStore();
+    // Alice posted in TWO rooms (a DM + a guild channel) → two per-room records
+    // for the same human. Bob is a control: a different person, one room.
+    store.capture({
+      channelId: "discord", roomId: "dm-alice", channelUserId: "alice",
+      displayName: "Alice", projectPath: "", firstMessagePreview: "dm hi",
+    });
+    store.capture({
+      channelId: "discord", roomId: "guild-1:general", channelUserId: "alice",
+      displayName: "Alice", projectPath: "/home/p", firstMessagePreview: "guild hi",
+    });
+    store.capture({
+      channelId: "discord", roomId: "guild-1:general", channelUserId: "bob",
+      displayName: "Bob", projectPath: "/home/p", firstMessagePreview: "bob hi",
+    });
+  });
+
+  it("approving any one of a person's records resolves ALL their rooms", () => {
+    expect(store.list()).toHaveLength(3);
+    // Approve Alice via just her DM record.
+    store.approve("discord::dm-alice::alice");
+    // Both Alice records gone; Bob untouched.
+    const remaining = store.list();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]!.channelUserId).toBe("bob");
+    // A decision is recorded for EACH of Alice's rooms (so the gate drops/admits
+    // future messages in either room consistently).
+    expect(store.decisionFor("discord", "dm-alice", "alice")?.status).toBe("approved");
+    expect(store.decisionFor("discord", "guild-1:general", "alice")?.status).toBe("approved");
+  });
+
+  it("rejecting any one of a person's records rejects ALL their rooms", () => {
+    store.reject("discord::guild-1:general::alice");
+    const remaining = store.list();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]!.channelUserId).toBe("bob");
+    expect(store.decisionFor("discord", "dm-alice", "alice")?.status).toBe("rejected");
+    expect(store.decisionFor("discord", "guild-1:general", "alice")?.status).toBe("rejected");
+  });
+
+  it("cascade does not touch a different person in the same room", () => {
+    store.approve("discord::guild-1:general::alice");
+    // Bob shared guild-1:general with Alice but must remain pending.
+    expect(store.decisionFor("discord", "guild-1:general", "bob")).toBeNull();
+    expect(store.getByChannelUser("discord", "bob")).not.toBeNull();
+  });
+});
+
 describe("PendingApprovalStore — persistence (slice 7)", () => {
   let tmpDir: string;
   let persistPath: string;

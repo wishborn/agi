@@ -241,8 +241,25 @@ export class PendingApprovalStore {
   }
 
   /**
-   * Mark the approval as approved and remove it from the pending queue.
-   * Returns the resolved record + decision. Throws when the id isn't found.
+   * Every pending-record id for the SAME person (channelId, channelUserId) —
+   * including the passed id. A single human who posted in N rooms has N records
+   * (the dedup key is per-room); approving/rejecting acts on the PERSON, so we
+   * cascade across all their rooms. The owner sees one card per person
+   * (grouped in the UI), and one click resolves the whole person.
+   */
+  private siblingIdsForPerson(channelId: string, channelUserId: string): string[] {
+    const out: string[] = [];
+    for (const a of this.approvals.values()) {
+      if (a.channelId === channelId && a.channelUserId === channelUserId) out.push(a.id);
+    }
+    return out;
+  }
+
+  /**
+   * Approve the PERSON behind a pending record: removes ALL of that
+   * (channelId, channelUserId)'s pending records across rooms and records an
+   * "approved" decision for each room id. Returns the targeted record (with any
+   * assigned project paths) + decision. Throws when the id isn't found.
    */
   approve(
     id: string,
@@ -259,16 +276,22 @@ export class PendingApprovalStore {
         : {}),
     };
     const decision: PendingApprovalDecision = { status: "approved", decidedAt: new Date().toISOString() };
-    this.approvals.delete(id);
-    this.decisions.set(id, decision);
-    this.log.info(`pending approval APPROVED: ${id}`);
+    const siblingIds = this.siblingIdsForPerson(approval.channelId, approval.channelUserId);
+    for (const sibId of siblingIds) {
+      this.approvals.delete(sibId);
+      this.decisions.set(sibId, decision);
+    }
+    this.log.info(`pending approval APPROVED: ${id}${siblingIds.length > 1 ? ` (+${String(siblingIds.length - 1)} sibling room(s))` : ""}`);
     this.save();
     return { approval: finalApproval, decision };
   }
 
   /**
-   * Mark the approval as rejected and remove it from the pending queue.
-   * Returns the rejected record + decision. Throws when the id isn't found.
+   * Reject the PERSON behind a pending record: removes ALL of that
+   * (channelId, channelUserId)'s pending records across rooms and records a
+   * "rejected" decision for each room id (so future messages in those rooms are
+   * dropped at the gate). Returns the targeted record + decision. Throws when
+   * the id isn't found.
    */
   reject(id: string): { approval: PendingApproval; decision: PendingApprovalDecision } {
     const approval = this.approvals.get(id);
@@ -276,9 +299,12 @@ export class PendingApprovalStore {
       throw new Error(`Pending approval not found: ${id}`);
     }
     const decision: PendingApprovalDecision = { status: "rejected", decidedAt: new Date().toISOString() };
-    this.approvals.delete(id);
-    this.decisions.set(id, decision);
-    this.log.info(`pending approval REJECTED: ${id}`);
+    const siblingIds = this.siblingIdsForPerson(approval.channelId, approval.channelUserId);
+    for (const sibId of siblingIds) {
+      this.approvals.delete(sibId);
+      this.decisions.set(sibId, decision);
+    }
+    this.log.info(`pending approval REJECTED: ${id}${siblingIds.length > 1 ? ` (+${String(siblingIds.length - 1)} sibling room(s))` : ""}`);
     this.save();
     return { approval, decision };
   }
