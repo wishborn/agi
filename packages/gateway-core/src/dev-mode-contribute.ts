@@ -20,6 +20,7 @@ import { join } from "node:path";
 
 import {
   CORE_REPOS,
+  coreForkDir,
   specUpstreamOrg,
   githubHeaders,
   type CoreRepoSpec,
@@ -147,7 +148,7 @@ async function computeRepoContribute(
     existingPrNumber: null,
   };
 
-  const targetDir = join(coreCollectionDir, spec.slug);
+  const targetDir = coreForkDir(coreCollectionDir, spec.slug);
   if (!existsSync(join(targetDir, ".git"))) {
     return { ...base, error: "fork not provisioned — enable Contributing Mode" };
   }

@@ -61,6 +61,7 @@ import { registerDeviceFlowRoutes } from "./device-flow-api.js";
 import { registerConnectionsRoutes } from "./connections-api.js";
 import { resolveEncryptionKey } from "./crypto-tokens.js";
 import { CompanionPairingService } from "./companion-pairing.js";
+import { coreForkDir } from "./dev-mode-forks.js";
 import { registerEntityManagementRoutes } from "./entity-management-api.js";
 import { registerLocalFederationRoutes } from "./local-federation-api.js";
 import type { SecretsManager } from "./secrets.js";
@@ -4266,7 +4267,7 @@ export async function createGatewayRuntimeState(
       if (!projectsRoot) {
         return reply.code(500).send({ error: "no workspace projects dir configured" });
       }
-      const targetDir = join(projectsRoot, "_aionima", spec.slug);
+      const targetDir = coreForkDir(join(projectsRoot, "_aionima"), spec.slug);
       if (!existsSync(targetDir)) {
         return reply.code(404).send({ error: `fork not provisioned — toggle Dev Mode to provision ${slug}` });
       }
@@ -4380,7 +4381,7 @@ export async function createGatewayRuntimeState(
       if (!projectsRoot) {
         return reply.code(500).send({ error: "no workspace projects dir configured" });
       }
-      const targetDir = join(projectsRoot, "_aionima", spec.slug);
+      const targetDir = coreForkDir(join(projectsRoot, "_aionima"), spec.slug);
       if (!existsSync(targetDir)) {
         return reply.code(404).send({ error: `fork not provisioned — toggle Contributing Mode to provision ${slug}` });
       }
@@ -4639,7 +4640,7 @@ export async function createGatewayRuntimeState(
             for (const repo of CORE_REPOS) {
               const repoUrl = devCfg[repo.repoKey] as string | undefined;
               if (!repoUrl) continue;
-              const targetDir = join(coreCollectionDir, repo.slug);
+              const targetDir = coreForkDir(coreCollectionDir, repo.slug);
               const cloneUrl = cloneAccessToken
                 ? injectTokenIntoCloneUrl(repoUrl, cloneAccessToken)
                 : repoUrl;

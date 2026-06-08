@@ -29,6 +29,9 @@
  * a default for legacy specs that don't set the field.
  */
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 /** GitHub org that owns the canonical upstream. */
 export type UpstreamOrg = "Civicognita" | "Particle-Academy";
 
@@ -150,6 +153,29 @@ export function specUpstreamOrg(spec: CoreRepoSpec): UpstreamOrg {
 /** Full `upstream` remote URL for a given core-repo spec. */
 export function upstreamRemoteUrl(spec: CoreRepoSpec): string {
   return `https://github.com/${specUpstreamOrg(spec)}/${spec.upstream}.git`;
+}
+
+/**
+ * Resolve the on-disk directory for a core fork inside its collection dir.
+ *
+ * **Layout history:** the meta-project restructure (CLAUDE.md § 8, 2026-05-13)
+ * moved every fork from a flat `_aionima/<slug>/` into `_aionima/repos/<slug>/`.
+ * Helpers that hardcoded `join(collectionDir, slug)` silently reported every
+ * fork as "not provisioned" after the move (the Aionima project page's Repos +
+ * Contribute panels and the upgrade-wizard fork list all went blank).
+ *
+ * This resolver is the single source of truth: it prefers the new
+ * `repos/<slug>` location and falls back to the legacy flat `<slug>` only if a
+ * `.git` exists there — so a pre-restructure install keeps working and a
+ * post-restructure install resolves correctly. Returns the `repos/<slug>` path
+ * when neither exists yet (the canonical target for new clones).
+ */
+export function coreForkDir(collectionDir: string, slug: string): string {
+  const nested = join(collectionDir, "repos", slug);
+  if (existsSync(join(nested, ".git"))) return nested;
+  const flat = join(collectionDir, slug);
+  if (existsSync(join(flat, ".git"))) return flat;
+  return nested;
 }
 
 /**

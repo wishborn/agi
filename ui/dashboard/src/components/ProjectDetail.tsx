@@ -452,6 +452,15 @@ export function ProjectDetail({
         })()}
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
         <DevNotes title="Project workspace — dev notes">
+          <DevNotes.Item kind="info" heading="2026-06-08 — Aionima page repaired: forks resolve + Details tab removed">
+            Two fixes. (1) The Repos + Contribute panels were blank ("No forks provisioned" / "No repos in
+            this group") because the backend looked for forks at <code>_aionima/&lt;slug&gt;</code> while the
+            2026-05-13 restructure moved them to <code>_aionima/repos/&lt;slug&gt;</code>. A shared
+            <code>coreForkDir()</code> resolver now prefers the nested layout (legacy flat still supported).
+            (2) The meta-project tab set is now <strong>Repos | Contribute | Editor</strong> — the read-only
+            Details tab was dropped (it duplicated what other tabs show). Regular projects keep their Details
+            tab.
+          </DevNotes.Item>
           <DevNotes.Item kind="info" heading="2026-06-07 — .agi monorepo envelope control (Details tab)">
             Regular projects' Details tab now carries an AgiRepoCard: initialize the project folder as a
             {" "}<code>{"{slug}.agi"}</code> git envelope, or import existing <code>repos/</code> as git
@@ -731,11 +740,15 @@ export function ProjectDetail({
             <TabsTrigger value="repository">Repository</TabsTrigger>
           </TabsList>
         ) : isAionimaContainer ? (
-          // s179: _aionima meta-project — Repos | Contribute | Details | Editor
+          // s179: _aionima meta-project — Repos | Contribute | Editor.
+          // Details tab dropped 2026-06-08 (owner directive): for the meta-project
+          // it was read-only metadata that duplicated what Repos/Editor already
+          // show — no user-visible value. The details TabsContent below is kept
+          // for regular projects; the redirect at ~L257 bounces any stray
+          // activeTab="details" back to "repos" for this container.
           <TabsList>
             <TabsTrigger value="repos" data-testid="project-tab-repos">Repos</TabsTrigger>
             <TabsTrigger value="contribute" data-testid="project-tab-contribute">Contribute</TabsTrigger>
-            <TabsTrigger value="details">Details</TabsTrigger>
             <TabsTrigger value="files">Editor</TabsTrigger>
           </TabsList>
         ) : (

@@ -309,7 +309,11 @@ run_unit() {
   # occasionally leaves worker processes pinned (open DB handles, unresolved
   # async handlers). Post-hang residue can be cleared with:
   #   multipass exec agi-test -- pkill -9 -f vitest
-  multipass exec "$VM_NAME" -- bash -lc "cd /mnt/agi && timeout 300 env AIONIMA_TEST_VM=1 pnpm exec vitest run '$spec' --reporter=basic"
+  # `--reporter=default`: the `basic` reporter was removed in Vitest 4
+  # (we run vitest ^4.1.8). Passing `basic` made vitest fail to boot with
+  # "Failed to load url basic" before any test ran, silently breaking ALL
+  # `agi test` unit runs. `default` is the always-available terse reporter.
+  multipass exec "$VM_NAME" -- bash -lc "cd /mnt/agi && timeout 300 env AIONIMA_TEST_VM=1 pnpm exec vitest run '$spec' --reporter=default"
 }
 
 run_e2e() {
