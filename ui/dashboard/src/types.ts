@@ -797,6 +797,42 @@ export interface ContributeStatus {
   error?: string;
 }
 
+/** One open PR a contributor's personal fork has targeted at upstream/dev. */
+export interface IncomingPrInfo {
+  slug: string;
+  number: number;
+  title: string;
+  authorLogin: string;
+  /** Head repo full name — the contributor fork, possibly a fork-of-fork. */
+  headRepoFullName: string;
+  headRef: string;
+  headSha: string;
+  baseRef: string;
+  htmlUrl: string;
+  createdAt: string;
+  updatedAt: string;
+  isDraft: boolean;
+  /** True when the head repo is not the upstream itself (a real cross-fork PR). */
+  isCrossRepo: boolean;
+}
+
+/** Incoming PRs for one core repo. */
+export interface IncomingRepoStatus {
+  slug: string;
+  displayName: string;
+  upstream: string;
+  upstreamOrg: string;
+  prs: IncomingPrInfo[];
+  error?: string;
+}
+
+/** Response of GET /api/dev/incoming/status — inbound PR review queue. */
+export interface IncomingStatus {
+  ownerLogin: string | null;
+  repos: IncomingRepoStatus[];
+  error?: string;
+}
+
 /** Response of POST /api/dev/contribute/:slug/pr. */
 export interface CreatePrResult {
   ok: boolean;

@@ -268,3 +268,24 @@ Each core fork that is ahead of `upstream/dev` shows a **Create PR** button. It:
 **PRs always target `dev`, never `main`.** See `CONTRIBUTING.md` for the full convention.
 Backend: `packages/gateway-core/src/dev-mode-contribute.ts`;
 endpoints `GET /api/dev/contribute/status` + `POST /api/dev/contribute/:slug/pr`.
+
+---
+
+## Reviewing incoming PRs (as Upstream custodian)
+
+The **First Custodian** of Upstream (the owner of `Civicognita/agi`) is the only one who
+merges PRs to `dev`/`main`. Other contributors PR their **personal forks** — possibly
+forks-of-forks — into the upstream `dev` branch. The dashboard surfaces those open PRs as a
+**review queue** so the custodian can inspect and test each one before merging.
+
+`GET /api/dev/incoming/status` returns, per core repo, the open PRs targeting
+`‹upstreamOrg›/‹repo›:dev` (`state=open`, sorted by most-recently-updated). Each entry
+carries the PR number, title, author, **head repo full name** (the contributor's fork — a
+cross-fork PR is flagged via `isCrossRepo`), head ref/sha, draft flag, and timestamps.
+Requires a connected GitHub account (the upstream repos may be private; the GitHub list
+endpoint is rate-limited unauthenticated) — without a token the endpoint returns an empty
+queue with an actionable error.
+
+Backend: `packages/gateway-core/src/dev-mode-incoming.ts`. **Merging stays on GitHub** — an
+irreversible write the dashboard never automates. Testing a PR before merge runs in the test
+VM (fetch the PR head → run the suite → serve at `test.ai.on`).

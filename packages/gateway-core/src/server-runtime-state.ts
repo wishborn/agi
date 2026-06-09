@@ -4360,6 +4360,43 @@ export async function createGatewayRuntimeState(
     });
 
     // -----------------------------------------------------------------------
+    // GET /api/dev/incoming/status — INBOUND PR review queue
+    // -----------------------------------------------------------------------
+    //
+    // The mirror of contribute/status: open PRs that contributors' personal
+    // forks (incl. forks-of-forks) have opened INTO upstream `dev`, grouped per
+    // core repo. The owner — First Custodian — reviews + tests these before
+    // merging (merge stays on GitHub; we never automate that write). Requires a
+    // GitHub token (upstream repos may be private; the list endpoint is
+    // rate-limited unauthenticated).
+
+    fastify.get("/api/dev/incoming/status", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      }
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) {
+          return reply.code(403).send({ error: "Admin role required" });
+        }
+      }
+
+      const { login, token } = await readOwnerGithub(deps, encryptionKey);
+      if (!token) {
+        return reply.send({
+          ownerLogin: login,
+          repos: [],
+          error: "GitHub token unavailable. Reconnect your GitHub account via Settings → Connections.",
+        });
+      }
+
+      const { computeIncomingStatus } = await import("./dev-mode-incoming.js");
+      const status = await computeIncomingStatus(token, login);
+      return reply.send(status);
+    });
+
+    // -----------------------------------------------------------------------
     // POST /api/dev/contribute/:slug/pr — open a cross-repo PR to upstream/dev
     // -----------------------------------------------------------------------
     //

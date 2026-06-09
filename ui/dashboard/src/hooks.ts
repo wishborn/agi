@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { DashboardEvent, LogEntry, AionimaConfig, HFModelSearchResult, CoreForkStatus, ContributeStatus, CreatePrResult, AgiRepoStatus, AgiRepoOpResult, CompanionDevice, PairCodeResult } from "./types.js";
+import type { DashboardEvent, LogEntry, AionimaConfig, HFModelSearchResult, CoreForkStatus, ContributeStatus, CreatePrResult, AgiRepoStatus, AgiRepoOpResult, CompanionDevice, PairCodeResult, IncomingStatus } from "./types.js";
 import {
   fetchOverview, fetchConfig, saveConfig,
   fetchProjects, createProject, updateProject, deleteProject,
@@ -220,6 +220,24 @@ export function useContributeStatus() {
       const res = await fetch("/api/dev/contribute/status");
       if (!res.ok) throw new Error(`HTTP ${String(res.status)}`);
       return (await res.json()) as ContributeStatus;
+    },
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// useIncomingStatus — inbound PR review queue (personal forks → upstream/dev),
+// grouped per core repo. The owner reviews + tests these before merging.
+// ---------------------------------------------------------------------------
+
+export function useIncomingStatus() {
+  return useQuery({
+    queryKey: ["dev", "incoming", "status"],
+    queryFn: async (): Promise<IncomingStatus> => {
+      const res = await fetch("/api/dev/incoming/status");
+      if (!res.ok) throw new Error(`HTTP ${String(res.status)}`);
+      return (await res.json()) as IncomingStatus;
     },
     staleTime: 30_000,
     refetchOnWindowFocus: false,
