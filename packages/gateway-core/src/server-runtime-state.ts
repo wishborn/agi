@@ -35,6 +35,7 @@ import { injectTokenIntoCloneUrl } from "./dev-mode-auth.js";
 import { eq, and } from "drizzle-orm";
 import { connections } from "@agi/db-schema";
 import { decryptToken } from "./crypto-tokens.js";
+import { isVersionNewer } from "./version-compare.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
 import { probeGpuStats } from "./hardware-probe.js";
@@ -8630,6 +8631,7 @@ export async function createGatewayRuntimeState(
         isUpstream: boolean;
         mergeType: "up-to-date" | "fast-forward" | "three-way" | "behind";
         hasConflicts: boolean;
+        isUpgrade: boolean;
       }> = [];
 
       for (const remote of remotes) {
@@ -8725,6 +8727,20 @@ export async function createGatewayRuntimeState(
 
           const isCurrentChannel = branch === channel && remote === canonicalRemote;
 
+          // A source is a REAL upgrade only when its package.json version is
+          // strictly newer than ours. Raw commit topology is not enough: a
+          // custodian's content flows fork/dev → upstream/dev → upstream/main,
+          // so upstream/main ALWAYS trails by merge bubbles and shows
+          // commitsBehind > 0 (three-way) despite being an OLDER version. The
+          // version gate is what keeps the wizard from offering a phantom
+          // "upgrade" back to an older release. When a source's version is
+          // unreadable, fall back to topology (conservative — still requires
+          // commits the local HEAD lacks, and never a "behind" source).
+          const topologyUpgrade = mergeType === "fast-forward" || mergeType === "three-way";
+          const isUpgrade = topologyUpgrade && (
+            latestVersion == null ? true : isVersionNewer(latestVersion, currentVersion)
+          );
+
           sources.push({
             ref,
             label: devEnabled && !isUpstreamRemote
@@ -8738,6 +8754,7 @@ export async function createGatewayRuntimeState(
             mergeType,
             hasConflicts,
             isUpstream: isUpstreamRemote,
+            isUpgrade,
           });
         }
       }

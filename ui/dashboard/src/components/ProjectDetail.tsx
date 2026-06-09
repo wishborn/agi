@@ -452,6 +452,16 @@ export function ProjectDetail({
         })()}
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
         <DevNotes title="Project workspace — dev notes">
+          <DevNotes.Item kind="info" heading="2026-06-08 — Upstream vs Personal forks + version-aware upgrades">
+            Terminology + correctness. (1) The Repos panel header is now <strong>Personal forks</strong>
+            ("tracked against Upstream (Civicognita)") instead of "Core Forks"; fork labels come from the
+            API's <code>displayName</code> (single source of truth) rather than a stale hardcoded map that
+            still listed the deprecated Local-ID and omitted the PAx repos. (2) The Upgrade Wizard now gates
+            the <strong>Review →</strong> action on a version-aware <code>isUpgrade</code> flag, not raw commit
+            topology. <code>upstream/main</code> trails your fork by merge bubbles, so it showed a phantom
+            "4 commits available" despite being an older version (v0.4.906 vs v0.4.911) — it now renders as an
+            <em>info row</em> ("older than your vX — nothing to pull"). Incoming-PR review/test tab is next.
+          </DevNotes.Item>
           <DevNotes.Item kind="info" heading="2026-06-08 — Aionima page repaired: forks resolve + Details tab removed">
             Two fixes. (1) The Repos + Contribute panels were blank ("No forks provisioned" / "No repos in
             this group") because the backend looked for forks at <code>_aionima/&lt;slug&gt;</code> while the

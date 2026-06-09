@@ -164,13 +164,13 @@ export function UpgradeWizard({
     fetchForkStatus()
       .then((status) => {
         setForkStatus(status);
-        // Only real upgrades (commitsBehind > 0) are actionable. Pre-select the
-        // current-channel upgrade if it's a real one, else the first real upgrade.
-        // When everything is up-to-date/behind, nothing is selected — the wizard
-        // shows an informational "up to date" state with no review action.
-        const realUpgrades = status.sources.filter(
-          (s) => s.mergeType === "fast-forward" || s.mergeType === "three-way",
-        );
+        // Only real upgrades (strictly-newer VERSION) are actionable. Pre-select
+        // the current-channel upgrade if it's a real one, else the first real
+        // upgrade. When everything is up-to-date / behind / older, nothing is
+        // selected — the wizard shows an informational state with no review
+        // action. Gating on `isUpgrade` (not mergeType) keeps upstream/main —
+        // which trails by merge bubbles — out of the actionable set.
+        const realUpgrades = status.sources.filter((s) => s.isUpgrade);
         const preselect = realUpgrades.find((s) => s.isCurrentChannel) ?? realUpgrades[0];
         if (preselect) setSelectedSource(preselect.ref);
         setForkLoading(false);
@@ -363,11 +363,17 @@ export function UpgradeWizard({
   }) {
     const isBehind = source.mergeType === "behind";
     const upToDate = source.mergeType === "up-to-date";
-    const canUpgrade = !isBehind && !upToDate;
+    // The review/upgrade action only appears for a REAL upgrade (strictly-newer
+    // version), never on raw topology. A source that is fast-forward/three-way
+    // by commits but NOT newer by version (the upstream/main merge-bubble case)
+    // is "older" — informational, not actionable.
+    const canUpgrade = source.isUpgrade;
+    const isOlder = !canUpgrade && !isBehind && !upToDate;
+    const currentVersion = forkStatus?.currentVersion;
 
     // Owner directive: the source listing + commit deltas are ALWAYS shown, but
-    // the review/upgrade action only appears for a real upgrade (commitsBehind > 0).
-    // up-to-date and behind sources render as non-interactive info rows.
+    // the review/upgrade action only appears for a real upgrade.
+    // up-to-date, behind, and older sources render as non-interactive info rows.
     if (isBehind) {
       // Info row — our fork is ahead of this source; nothing to pull.
       return (
@@ -405,6 +411,31 @@ export function UpgradeWizard({
               <span className="text-[9px] px-1 py-0.5 rounded bg-blue/10 text-blue/70 font-semibold">Current</span>
             )}
             <span className="text-[9px] text-green/70 font-semibold">✓ up to date</span>
+          </div>
+        </div>
+      );
+    }
+
+    if (isOlder) {
+      // Info row — the source has commits we don't (merge bubbles), but its
+      // VERSION is older than ours. This is the upstream/main case for a
+      // custodian: pulling it would be a phantom "downgrade", so no action.
+      return (
+        <div
+          data-testid="upgrade-source-info"
+          data-merge-type="older"
+          className="flex items-center gap-3 rounded-lg border border-border/40 bg-surface0/30 px-3 py-2"
+        >
+          <span className="w-2 h-2 rounded-full bg-muted shrink-0" />
+          <span className="text-[11px] text-muted-foreground flex-1 truncate">{source.label}</span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {source.isCurrentChannel && (
+              <span className="text-[9px] px-1 py-0.5 rounded bg-blue/10 text-blue/70 font-semibold">Current</span>
+            )}
+            <span className="text-[9px] text-muted-foreground/70">
+              {source.latestVersion ? `v${source.latestVersion}` : "this source"}
+              {currentVersion ? ` — older than your v${currentVersion}` : " — older than yours"}, nothing to pull
+            </span>
           </div>
         </div>
       );
@@ -772,9 +803,7 @@ export function UpgradeWizard({
                   available. Up-to-date installs see a clear "nothing to review"
                   state instead of a dangling Preview button. */}
               {!forkLoading && forkStatus && (() => {
-                const hasRealUpgrade = forkStatus.sources.some(
-                  (s) => s.mergeType === "fast-forward" || s.mergeType === "three-way",
-                );
+                const hasRealUpgrade = forkStatus.sources.some((s) => s.isUpgrade);
                 if (!hasRealUpgrade) {
                   return (
                     <div

@@ -166,6 +166,13 @@ export interface ForkBranchInfo {
   mergeType: "up-to-date" | "fast-forward" | "three-way" | "behind";
   /** True if a merge-tree simulation detected conflict markers. Only set for three-way merges. */
   hasConflicts: boolean;
+  /**
+   * True only when this source is a REAL upgrade — its package.json version is
+   * strictly newer than the current one. Topology alone (commitsBehind > 0) is
+   * not enough: upstream/main trails a custodian's fork by merge bubbles, so it
+   * shows as three-way despite being an OLDER version. The wizard gates the
+   * Review action on this, never on mergeType. */
+  isUpgrade: boolean;
 }
 
 /** Response from GET /api/system/fork-status. */

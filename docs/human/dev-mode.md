@@ -223,6 +223,25 @@ A red or yellow mark on any origin row means `agi upgrade` hasn't completed the 
 
 Toggle Dev Mode off in the dashboard → `dev.enabled: false` in config → next `agi upgrade` → `ensure_origin_remote` sees that `dev.*Repo` are no longer the effective URLs (because the fallback branches to Civicognita) → rewrites origins back to Civicognita → subsequent upgrades pull canonical releases again.
 
+### Upgrade Wizard source listing — Upstream vs your fork
+
+The Upgrade Wizard (`GET /api/system/fork-status`) lists every candidate source under
+two headings: **Upstream** (the canonical `Civicognita/agi` remote) and **Your fork**
+(your personal `wishborn/agi`, shown only in Dev Mode). Each source reports `commitsAhead`
+/ `commitsBehind` and a `mergeType` for information — but the **Review →** action is gated
+on a separate `isUpgrade` flag, **not** on commit topology.
+
+`isUpgrade` is **version-aware**: a source is a real upgrade only when its `package.json`
+version is *strictly newer* than the deployed version. This matters because content flows
+`fork/dev → upstream/dev → upstream/main`, so for the First Custodian **`upstream/main`
+always trails your fork by the merge commits that carried your own PRs**. Those merge
+bubbles make `commitsBehind > 0` (a "three-way" merge) even though the source is an *older*
+release. Without the version gate the wizard would offer a phantom "4 commits available"
+upgrade back to an older version (the v0.4.906-vs-v0.4.911 case). Sources that are newer by
+topology but older by version render as a non-interactive **info row** ("older than your
+vX — nothing to pull"), alongside the up-to-date and behind info rows. Only a
+strictly-newer source gets a selectable card and a Review button.
+
 ---
 
 ## Contributing upstream (outbound PRs)
