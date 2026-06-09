@@ -2462,45 +2462,6 @@ export async function loginDashboard(username: string, password: string): Promis
   return res.json() as Promise<{ ok: boolean; token: string; user: import("./types.js").DashboardUserInfo }>;
 }
 
-export interface IdLoginResult {
-  status: "completed" | "pending";
-  /** Present when status is "completed" — instant login (LAN auto-approved). */
-  token?: string;
-  user?: { userId: string; entityId: string; displayName: string; coaAlias: string; geid: string };
-  /** Present when status is "pending" — popup flow needed (off-LAN). */
-  handoffId?: string;
-  authUrl?: string;
-}
-
-export async function startIdLogin(): Promise<IdLoginResult> {
-  const res = await fetch("/api/auth/login-via-id", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<IdLoginResult>;
-}
-
-export async function pollIdLogin(handoffId: string): Promise<{
-  status: "pending" | "completed" | "expired" | "not_found";
-  token?: string;
-  user?: { userId: string; entityId: string; displayName: string; coaAlias: string; geid: string };
-}> {
-  const res = await fetch(`/api/auth/login-via-id/poll?handoffId=${encodeURIComponent(handoffId)}`);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<{
-    status: "pending" | "completed" | "expired" | "not_found";
-    token?: string;
-    user?: { userId: string; entityId: string; displayName: string; coaAlias: string; geid: string };
-  }>;
-}
-
 export async function fetchCurrentUser(token: string): Promise<{
   user: import("./types.js").DashboardUserInfo;
   session: { role: string; expiresAt: number };

@@ -27,7 +27,7 @@ describe("create_plan handler — input validation", () => {
   let tmpProjectDir: string;
 
   beforeEach(() => {
-    // PlanStore now writes to <projectPath>/k/plans/ (canonical per-project
+    // PlanStore now writes to <projectPath>/.ai/plans/ (canonical per-project
     // location). The project directory must exist for mkdirSync to succeed.
     tmpProjectDir = mkdtempSync(join(tmpdir(), "create-plan-proj-"));
   });
@@ -110,9 +110,9 @@ describe("create_plan handler — input validation", () => {
     expect(parseErr(res)).toMatch(/missing a title/);
   });
 
-  it("writes a plan to <projectPath>/k/plans/ when valid", async () => {
+  it("writes a plan to <projectPath>/.ai/plans/ when valid", async () => {
     // Canonical location is now per-project (not ~/.agi/{slug}) — see
-    // PlanStore.plansDir() which returns join(projectPath, "k", "plans").
+    // PlanStore.plansDir() which returns join(projectPath, ".ai", "plans").
     const handler = createCreatePlanHandler();
     const res = await handler({
       projectPath: tmpProjectDir,
@@ -134,7 +134,7 @@ describe("create_plan handler — input validation", () => {
     expect(steps[1]!.id).toBe("step_02");
 
     // File landed in the canonical per-project location.
-    const plansDir = join(tmpProjectDir, "k", "plans");
+    const plansDir = join(tmpProjectDir, ".ai", "plans");
     expect(existsSync(plansDir)).toBe(true);
     const files = readdirSync(plansDir);
     expect(files).toHaveLength(1);

@@ -281,7 +281,6 @@ export default function RootLayout() {
   // Auth gate state
   const [authChecked, setAuthChecked] = useState(false);
   const [authRequired, setAuthRequired] = useState(false);
-  const [authProvider, setAuthProvider] = useState<"local-id" | "internal">("internal");
   const [authenticated, setAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ displayName: string; role: string } | null>(null);
 
@@ -298,7 +297,6 @@ export default function RootLayout() {
           return;
         }
 
-        setAuthProvider(status.provider ?? "internal");
         setAuthRequired(true);
 
         if (token) {
@@ -628,7 +626,6 @@ export default function RootLayout() {
   if (authChecked && authRequired && !authenticated) {
     return (
       <LoginPage
-        provider={authProvider}
         onLogin={(token) => {
           // Fetch user info for the header display
           fetchCurrentUser(token)

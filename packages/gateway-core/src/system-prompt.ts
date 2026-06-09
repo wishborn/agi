@@ -18,6 +18,7 @@ import type { VerificationTier } from "@agi/entity-model";
 
 import type { GatewayState } from "./types.js";
 import type { StateCapabilities } from "./state-machine.js";
+import { KNOWLEDGE_DIR } from "./project-config-path.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -753,7 +754,7 @@ function buildOpsModeSection(): string {
  * prompt with deep checkouts (each `repos/<repo>` may itself be a huge
  * tree; we only show its top-level children, not its descendants).
  */
-const ARCHITECTURE_EXPAND_DIRS = new Set<string>(["k", "repos", "sandbox", ".agi"]);
+const ARCHITECTURE_EXPAND_DIRS = new Set<string>([KNOWLEDGE_DIR, "repos", "sandbox", ".agi"]);
 
 /** Folders pruned entirely from the architecture tree — noisy/transient. */
 const ARCHITECTURE_PRUNE_DIRS = new Set<string>([
@@ -985,7 +986,7 @@ To read plans: pm(action: "plan-list", projectPath) or pm(action: "plan-get", pr
 
 **On error:** the tool returns a JSON error object. Report the error briefly and ask the user how to proceed. Do NOT dump the full plan body as chat markdown.
 
-- Plans are saved at <projectPath>/k/plans/{planId}.mdc.
+- Plans are saved at <projectPath>/.ai/plans/{planId}.mdc.
 - They appear in the chat's Plans drawer with status "proposed" — the user can open, edit, and Approve or Reject.
 - You do NOT execute yet. Wait for the user to click Approve (status → "approved") or give explicit verbal approval in chat.
 - Once approved, mark the plan "executing" via pm(action: "plan-update", update: {status: "executing"}), then advance each step's status through pending → running → complete using stepUpdates.
