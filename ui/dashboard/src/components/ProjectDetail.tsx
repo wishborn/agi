@@ -46,6 +46,7 @@ import { MagicAppPicker } from "./MagicAppPicker.js";
 import { isDesktopServedType } from "@/lib/project-type-classifier";
 import { AionimaSystemReposPanel } from "./AionimaSystemReposPanel.js";
 import { AionimaContributePanel } from "./AionimaContributePanel.js";
+import { AionimaIncomingPrsPanel } from "./AionimaIncomingPrsPanel.js";
 import { AgiRepoCard } from "./AgiRepoCard.js";
 
 export interface ProjectDetailProps {
@@ -452,6 +453,15 @@ export function ProjectDetail({
         })()}
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
         <DevNotes title="Project workspace — dev notes">
+          <DevNotes.Item kind="info" heading="2026-06-08 — Incoming PRs tab (review contributors' forks)">
+            New <strong>Incoming</strong> tab on the _aionima container (Repos | Contribute |
+            Incoming | Editor). Lists open PRs that contributors' personal forks — including
+            forks-of-forks — have opened into upstream <code>dev</code>, grouped per core repo,
+            with author, head fork (cross-fork flagged), and draft state. Merge happens on
+            GitHub via <em>View on GitHub →</em> (an irreversible write we never automate). The
+            <em>Test in VM</em> action (fetch the PR head → run the suite → serve at
+            <code>test.ai.on</code>) wires in next.
+          </DevNotes.Item>
           <DevNotes.Item kind="info" heading="2026-06-08 — Upstream vs Personal forks + version-aware upgrades">
             Terminology + correctness. (1) The Repos panel header is now <strong>Personal forks</strong>
             ("tracked against Upstream (Civicognita)") instead of "Core Forks"; fork labels come from the
@@ -759,6 +769,7 @@ export function ProjectDetail({
           <TabsList>
             <TabsTrigger value="repos" data-testid="project-tab-repos">Repos</TabsTrigger>
             <TabsTrigger value="contribute" data-testid="project-tab-contribute">Contribute</TabsTrigger>
+            <TabsTrigger value="incoming" data-testid="project-tab-incoming">Incoming</TabsTrigger>
             <TabsTrigger value="files">Editor</TabsTrigger>
           </TabsList>
         ) : (
@@ -1380,6 +1391,12 @@ export function ProjectDetail({
         <TabsContent value="contribute" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <Card className="p-4">
             <AionimaContributePanel />
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="incoming" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          <Card className="p-4">
+            <AionimaIncomingPrsPanel />
           </Card>
         </TabsContent>
 
