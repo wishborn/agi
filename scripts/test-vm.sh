@@ -936,6 +936,85 @@ cmd_provision() {
 }
 
 # ---------------------------------------------------------------------------
+# cmd_pr_test — fetch an incoming PR's head and test it live in the VM.
+#
+#   test-vm.sh pr <slug> <pr-number>
+#
+# Flow (the custodian's "test before merge"):
+#   1. git fetch upstream pull/<n>/head    (the PR head)
+#   2. git worktree add as a SIBLING under _aionima/repos/ (NOT inside the fork,
+#      so the PRIME mount path still resolves when the VM remounts). The owner's
+#      working tree is never touched.
+#   3. pnpm install in the worktree (cheap — pnpm hard-links from the store)
+#   4. AGI_DEV_SOURCE=<worktree> services-align → remounts /mnt/agi to the PR
+#      build, rebuilds the dashboard, restarts services → test.ai.on serves it
+#   5. interactive (TTY): wait for Enter while the owner clicks through;
+#      non-interactive (PR_TEST_NONINTERACTIVE=1, the dashboard job): run the
+#      vitest suite against the PR build, then tear down
+#   6. ALWAYS clean up (trap): restore the owner's dev-tree mount + remove the
+#      worktree — even on failure or Ctrl-C.
+#
+# Scoped to the 'agi' repo: the VM serves agi, so an agi PR is what can be
+# tested live. PRs to other repos are reviewed on GitHub.
+# ---------------------------------------------------------------------------
+cmd_pr_test() {
+  local slug="${1:-}" prnum="${2:-}"
+  if [ -z "$slug" ] || [ -z "$prnum" ]; then
+    echo "Usage: $0 pr <slug> <pr-number>   (slug: agi)" >&2; exit 2
+  fi
+  case "$prnum" in ''|*[!0-9]*) echo "invalid PR number: $prnum" >&2; exit 2 ;; esac
+  if [ "$slug" != "agi" ]; then
+    echo "test-vm pr supports the 'agi' repo only (the VM serves agi)." >&2
+    echo "Review $slug PRs on GitHub; agi-side live testing is the supported path." >&2
+    exit 2
+  fi
+
+  ensure_vm_running
+
+  local FORK_DIR="$REPO_DIR" ORIG_SOURCE="$REPO_DIR"
+  local WT="$WORKSPACE_DIR/agi-pr-$prnum"
+
+  cleanup_pr_test() {
+    echo "==> Restoring your dev-tree mount..."
+    AGI_DEV_SOURCE="$ORIG_SOURCE" bash "$0" remount >/dev/null 2>&1 || true
+    git -C "$FORK_DIR" worktree remove --force "$WT" >/dev/null 2>&1 || true
+    git -C "$FORK_DIR" worktree prune >/dev/null 2>&1 || true
+  }
+  trap cleanup_pr_test EXIT INT TERM
+
+  echo "==> Fetching PR #$prnum head from upstream into a throwaway worktree..."
+  if ! git -C "$FORK_DIR" fetch --no-tags upstream "pull/$prnum/head"; then
+    echo "fetch failed — is the 'upstream' remote set and PR #$prnum open?" >&2; exit 1
+  fi
+  rm -rf "$WT"; git -C "$FORK_DIR" worktree prune >/dev/null 2>&1 || true
+  if ! git -C "$FORK_DIR" worktree add --detach "$WT" FETCH_HEAD; then
+    echo "worktree add failed" >&2; exit 1
+  fi
+
+  echo "==> Installing deps in the PR worktree (pnpm hard-links from the store)..."
+  if ! ( cd "$WT" && pnpm install --frozen-lockfile ); then
+    echo "pnpm install failed in worktree" >&2; exit 1
+  fi
+
+  echo "==> Remounting the VM to the PR worktree + aligning (rebuild + restart)..."
+  if ! AGI_DEV_SOURCE="$WT" bash "$0" services-align; then
+    echo "services-align failed" >&2; exit 1
+  fi
+
+  echo ""
+  echo "==> PR #$prnum is live at https://test.ai.on"
+  if [ -t 0 ] && [ "${PR_TEST_NONINTERACTIVE:-0}" != "1" ]; then
+    echo "    Click through it to review. Press Enter to tear down + restore your dev tree."
+    read -r _ || true
+  else
+    echo "==> Running the vitest suite against the PR build..."
+    AGI_DEV_SOURCE="$WT" AGI_TEST_SKIP_ALIGN=1 bash "$0" test || true
+    echo "==> Test run complete — tearing down."
+  fi
+  # cleanup_pr_test runs via the EXIT trap.
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 case "${1:-help}" in
@@ -958,8 +1037,9 @@ case "${1:-help}" in
   provision)        cmd_provision ;;
   test-services)    cmd_test_services ;;
   test-ui)          cmd_test_ui "${@:2}" ;;
+  pr)               cmd_pr_test "${2:-}" "${3:-}" ;;
   help|--help|-h)
-    echo "Usage: $0 {create|destroy|status|ssh|ip|setup|provision|test|remount|exec|services-setup|services-start|services-stop|services-restart|services-status|services-version|test-services|test-ui}"
+    echo "Usage: $0 {create|destroy|status|ssh|ip|setup|provision|test|pr|remount|exec|services-setup|services-start|services-stop|services-restart|services-status|services-version|test-services|test-ui}"
     echo ""
     echo "Commands:"
     echo "  create           Launch a fresh Ubuntu ${VM_IMAGE} VM with all repo mounts"
@@ -969,6 +1049,8 @@ case "${1:-help}" in
     echo "  ip               Print the VM's IP address"
     echo "  setup            Install Node 22 + pnpm, run pnpm install in VM"
     echo "  test             Run vitest unit tests inside the VM"
+    echo "  pr <slug> <n>    Test an incoming PR live: fetch pull/<n>/head → worktree →"
+    echo "                   remount VM → serve at test.ai.on (agi only; restores on exit)"
     echo "  remount          Re-mount all workspace repos (fixes stale mounts)"
     echo "  exec             Run a command inside the VM"
     echo ""

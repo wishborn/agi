@@ -459,8 +459,10 @@ export function ProjectDetail({
             forks-of-forks — have opened into upstream <code>dev</code>, grouped per core repo,
             with author, head fork (cross-fork flagged), and draft state. Merge happens on
             GitHub via <em>View on GitHub →</em> (an irreversible write we never automate). The
-            <em>Test in VM</em> action (fetch the PR head → run the suite → serve at
-            <code>test.ai.on</code>) wires in next.
+            <em>Test in VM</em> button hands you <code>agi test-vm pr agi &lt;n&gt;</code>, which
+            fetches the PR head into a throwaway worktree, remounts the VM to it, and serves it at
+            <code>test.ai.on</code> for live click-through — restoring your dev tree on exit
+            (agi repo only; v0.4.915).
           </DevNotes.Item>
           <DevNotes.Item kind="info" heading="2026-06-08 — Upstream vs Personal forks + version-aware upgrades">
             Terminology + correctness. (1) The Repos panel header is now <strong>Personal forks</strong>

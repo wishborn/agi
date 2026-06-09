@@ -4397,6 +4397,67 @@ export async function createGatewayRuntimeState(
     });
 
     // -----------------------------------------------------------------------
+    // POST /api/dev/incoming/:slug/pr/:number/test — prepare a live PR test
+    // -----------------------------------------------------------------------
+    //
+    // The live mount-swap (remount the VM to the PR worktree, serve at
+    // test.ai.on, click through, restore on exit) is inherently a terminal
+    // operation — it waits for the owner to finish reviewing, and restoring the
+    // mount must be guaranteed even on Ctrl-C (a trap the headless gateway
+    // can't own). So this endpoint VALIDATES the request and returns the exact,
+    // copy-able `agi test-vm pr <slug> <number>` command rather than spawning a
+    // headless job that could leave the VM mounted to a PR. The CLI is the full
+    // mechanism. Supported for the `agi` repo only (the VM serves agi).
+
+    fastify.post("/api/dev/incoming/:slug/pr/:number/test", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      }
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) {
+          return reply.code(403).send({ error: "Admin role required" });
+        }
+      }
+
+      const { slug, number } = request.params as { slug: string; number: string };
+      const prNumber = Number.parseInt(number, 10);
+      if (!Number.isInteger(prNumber) || prNumber <= 0) {
+        return reply.code(400).send({ error: `invalid PR number: ${number}` });
+      }
+
+      const { resolvePrTestTarget } = await import("./dev-mode-pr-test.js");
+      let target: ReturnType<typeof resolvePrTestTarget>;
+      try {
+        target = resolvePrTestTarget(slug, prNumber);
+      } catch (err) {
+        return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+      }
+      if (!target) {
+        return reply.code(404).send({ error: `unknown core repo: ${slug}` });
+      }
+
+      if (slug !== "agi") {
+        return reply.send({
+          supported: false,
+          command: null,
+          note: `Live VM testing is supported for the agi repo only (the VM serves agi). Review ${target.displayName} PRs on GitHub.`,
+        });
+      }
+
+      return reply.send({
+        supported: true,
+        command: `agi test-vm pr ${slug} ${String(prNumber)}`,
+        note:
+          "Run this in your terminal. It fetches the PR head into a throwaway worktree, " +
+          "remounts the test VM to it, and serves the PR at https://test.ai.on for you to " +
+          "click through. Press Enter when done — your dev tree is restored automatically " +
+          "(even on Ctrl-C). Your working tree is never touched.",
+      });
+    });
+
+    // -----------------------------------------------------------------------
     // POST /api/dev/contribute/:slug/pr — open a cross-repo PR to upstream/dev
     // -----------------------------------------------------------------------
     //

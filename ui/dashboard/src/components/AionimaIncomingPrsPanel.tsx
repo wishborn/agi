@@ -12,10 +12,18 @@
  * read-only review queue.
  */
 
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useIncomingStatus } from "../hooks.js";
 import type { IncomingPrInfo, IncomingRepoStatus } from "../types.js";
+
+interface PrTestPrep {
+  supported: boolean;
+  command: string | null;
+  note: string;
+  error?: string;
+}
 
 export function AionimaIncomingPrsPanel() {
   const { data, isLoading, refetch } = useIncomingStatus();
@@ -89,6 +97,22 @@ function IncomingRepoGroup({ repo }: { repo: IncomingRepoStatus }) {
 }
 
 function IncomingPrRow({ pr }: { pr: IncomingPrInfo }) {
+  const [prep, setPrep] = useState<PrTestPrep | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function handleTest() {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/dev/incoming/${pr.slug}/pr/${String(pr.number)}/test`, { method: "POST" });
+      const body = (await res.json()) as PrTestPrep;
+      setPrep(res.ok ? body : { supported: false, command: null, note: "", error: body.error ?? `HTTP ${String(res.status)}` });
+    } catch (err) {
+      setPrep({ supported: false, command: null, note: "", error: err instanceof Error ? err.message : "request failed" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <Card className="p-3" data-testid={`aionima-incoming-pr-${pr.slug}-${pr.number}`}>
       <div className="flex items-center gap-3">
@@ -116,6 +140,16 @@ function IncomingPrRow({ pr }: { pr: IncomingPrInfo }) {
         </div>
 
         <div className="shrink-0 flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-[11px] h-7"
+            disabled={busy}
+            onClick={() => void handleTest()}
+            data-testid={`aionima-incoming-test-${pr.slug}-${pr.number}`}
+          >
+            {busy ? "Preparing…" : "Test in VM"}
+          </Button>
           <a
             href={pr.htmlUrl}
             target="_blank"
@@ -127,6 +161,23 @@ function IncomingPrRow({ pr }: { pr: IncomingPrInfo }) {
           </a>
         </div>
       </div>
+
+      {prep && (
+        <div className="mt-2 border-t border-border/40 pt-2" data-testid={`aionima-incoming-testprep-${pr.slug}-${pr.number}`}>
+          {prep.error ? (
+            <p className="text-[11px] text-red">{prep.error}</p>
+          ) : prep.command ? (
+            <>
+              <p className="text-[11px] text-muted-foreground mb-1">{prep.note}</p>
+              <code className="block text-[11px] font-mono bg-surface0 rounded px-2 py-1 select-all">
+                {prep.command}
+              </code>
+            </>
+          ) : (
+            <p className="text-[11px] text-muted-foreground italic">{prep.note}</p>
+          )}
+        </div>
+      )}
     </Card>
   );
 }

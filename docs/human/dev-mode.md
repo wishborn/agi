@@ -287,5 +287,28 @@ endpoint is rate-limited unauthenticated) — without a token the endpoint retur
 queue with an actionable error.
 
 Backend: `packages/gateway-core/src/dev-mode-incoming.ts`. **Merging stays on GitHub** — an
-irreversible write the dashboard never automates. Testing a PR before merge runs in the test
-VM (fetch the PR head → run the suite → serve at `test.ai.on`).
+irreversible write the dashboard never automates.
+
+### Testing a PR live before merge
+
+The **Test in VM** button on a PR row (and the `agi test-vm pr <slug> <number>` CLI) tests the
+PR's actual code in the test VM:
+
+```bash
+agi test-vm pr agi 178
+```
+
+This fetches `pull/178/head` into a **throwaway git worktree** (a sibling under
+`_aionima/repos/` — your working tree is never touched), `pnpm install`s it (cheap — pnpm
+hard-links from the store), remounts the VM's `/mnt/agi` to the worktree, rebuilds + restarts,
+and serves the PR build at `https://test.ai.on`. Click through it; press Enter when done and
+your dev tree is **restored automatically** (a trap guarantees the remount + worktree cleanup
+even on Ctrl-C). Supported for the `agi` repo only — the VM serves agi, so an agi PR is what can
+run live; PRs to PRIME / the marketplaces / PAx are reviewed on GitHub.
+
+The dashboard button is a thin front for this: the live mount-swap waits for you to finish
+reviewing and must restore the mount even on interrupt — a terminal trap the headless gateway
+can't own — so the button validates the PR and hands you the exact command to run rather than
+spawning a job that could leave the VM mounted to a PR. Endpoint:
+`POST /api/dev/incoming/:slug/pr/:number/test`. CLI flow:
+`scripts/test-vm.sh pr` → `cmd_pr_test`.

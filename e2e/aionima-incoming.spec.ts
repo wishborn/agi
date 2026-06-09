@@ -40,6 +40,35 @@ test.describe("Incoming-PR review queue — API", () => {
       expect(Array.isArray(repo.prs)).toBe(true);
     }
   });
+
+  test("POST incoming/:slug/pr/:n/test returns the agi test-vm pr command", async ({ page }) => {
+    await page.goto("/");
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10_000 });
+
+    const result = await page.evaluate(async () => {
+      const res = await fetch("/api/dev/incoming/agi/pr/178/test", { method: "POST" });
+      return { status: res.status, body: await res.json().catch(() => null) };
+    });
+    if (result.status === 403) {
+      test.skip();
+      return;
+    }
+    expect(result.status).toBe(200);
+    expect(result.body.supported).toBe(true);
+    expect(result.body.command).toBe("agi test-vm pr agi 178");
+  });
+
+  test("POST incoming test rejects a non-numeric PR number", async ({ page }) => {
+    await page.goto("/");
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10_000 });
+
+    const result = await page.evaluate(async () => {
+      const res = await fetch("/api/dev/incoming/agi/pr/not-a-number/test", { method: "POST" });
+      return res.status;
+    });
+    // 400 invalid number, or 403 when not admin / not private network.
+    expect([400, 403]).toContain(result);
+  });
 });
 
 test.describe("Incoming-PR review queue — UI", () => {
