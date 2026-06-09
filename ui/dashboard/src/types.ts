@@ -1379,7 +1379,6 @@ export interface AuthStatus {
   enabled: boolean;
   hasUsers: boolean;
   userCount: number;
-  provider?: "local-id" | "internal";
 }
 
 /** PRIME corpus source status from GET /api/prime/status. */
