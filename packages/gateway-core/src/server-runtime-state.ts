@@ -8823,7 +8823,14 @@ export async function createGatewayRuntimeState(
             }
           }
 
-          const isCurrentChannel = branch === channel && remote === canonicalRemote;
+          // "Current" marks the source the gateway ACTUALLY upgrades from —
+          // which is always `origin`: the canonical Civicognita repo in
+          // production, and the owner's fork in Dev Mode (upgrade.sh rewrites
+          // origin → the fork). Keying this off canonicalRemote ("upstream" in
+          // Dev Mode) wrongly stamped "Current" on Civicognita/agi — dev,
+          // making the custodian think they track upstream/dev when they run
+          // their own fork.
+          const isCurrentChannel = branch === channel && remote === "origin";
 
           // A source is a REAL upgrade only when its package.json version is
           // strictly newer than ours. Raw commit topology is not enough: a
