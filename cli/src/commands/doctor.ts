@@ -699,7 +699,8 @@ async function projectShapeChecks(config: AionimaConfig): Promise<CheckGroup | n
 
   const checks: Check[] = [];
   const RETIRED_TYPES: ReadonlySet<string> = new Set(["monorepo"]);
-  const REQUIRED_DIRS = ["repos", "sandbox", ".trash", "k/plans", "k/knowledge", "k/pm", "k/memory", "k/chat"];
+  // Knowledge dir renamed k/ → .ai/ (owner directive 2026-06-09).
+  const REQUIRED_DIRS = ["repos", "sandbox", ".trash", ".ai/plans", ".ai/knowledge", ".ai/pm", ".ai/memory", ".ai/chat"];
   const SACRED_NAMES = new Set([
     "_aionima", "agi", "prime", "id", "marketplace", "mapp-marketplace",
     "react-fancy", "fancy-code", "fancy-sheets", "fancy-echarts", "fancy-3d", "fancy-screens",

@@ -22,6 +22,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
+import { KNOWLEDGE_DIR } from "./project-config-path.js";
 
 const GIT_TIMEOUT_MS = 30_000;
 
@@ -140,9 +141,9 @@ export function initAgiRepo(projectPath: string): AgiRepoOpResult {
     writeFileSync(gitignore, ["sandbox/", ".trash/", "node_modules/", ""].join("\n"), "utf-8");
   }
 
-  // Stage envelope-owned content only (project.json, k/, .gitignore). repos/
+  // Stage envelope-owned content only (project.json, .ai/, .gitignore). repos/
   // entries become submodules separately, not regular tracked content.
-  for (const rel of ["project.json", "k", ".gitignore"]) {
+  for (const rel of ["project.json", KNOWLEDGE_DIR, ".gitignore"]) {
     if (existsSync(join(projectPath, rel))) git(["add", "--", rel], projectPath);
   }
 

@@ -1,11 +1,11 @@
 /**
- * DocIndexer — indexes agi/docs/, global k/, and per-project k/ folders
- * into the doc_chunks table (s112 Phase 3).
+ * DocIndexer — indexes agi/docs/, the global knowledge dir, and per-project
+ * knowledge dirs (.ai/) into the doc_chunks table (s112 Phase 3).
  *
  * Chunking: split markdown at H1/H2/H3 boundaries, 100–800 char range.
  * Staleness: mtime-first fast path, then SHA-256 content hash (s197).
  *   mtime cache persisted to {cacheDir}/mtime-cache.json (~/.agi/doc-index/).
- * Scopes: 'global' (agi/docs/, _aionima/k/), 'project:<path>' (k/ under project root).
+ * Scopes: 'global' (agi/docs/, _aionima/.ai/), 'project:<path>' (.ai/ under project root).
  *
  * EmbeddingEngine is optional; chunks without embeddings still get FTS5 indexed.
  */
@@ -14,6 +14,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync, watch } from "node:fs";
 import { join, extname, relative } from "node:path";
 import { ulid } from "ulid";
+import { KNOWLEDGE_DIR } from "./project-config-path.js";
 import type { GraphMemoryAdapter } from "@agi/memory";
 import type { EmbeddingEngine } from "@agi/memory";
 
@@ -163,9 +164,9 @@ export class DocIndexer {
       sources.push({ dir: this.globalKDir, scope: "global" });
     }
 
-    // Per-project k/ directories
+    // Per-project knowledge (.ai/) directories
     for (const projectDir of this.projectDirs) {
-      const kDir = join(projectDir, "k");
+      const kDir = join(projectDir, KNOWLEDGE_DIR);
       if (existsSync(kDir)) {
         sources.push({ dir: kDir, scope: `project:${projectDir}` });
       }
@@ -191,7 +192,7 @@ export class DocIndexer {
     if (this.globalKDir && existsSync(this.globalKDir)) dirsToWatch.push(this.globalKDir);
 
     for (const projectDir of this.projectDirs) {
-      const kDir = join(projectDir, "k");
+      const kDir = join(projectDir, KNOWLEDGE_DIR);
       if (existsSync(kDir)) dirsToWatch.push(kDir);
     }
 

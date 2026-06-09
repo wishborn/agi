@@ -88,8 +88,8 @@ Trigger sites:
 | Source | Scope |
 |--------|-------|
 | `agi/docs/**/*.md` | `global` |
-| `_aionima/k/**/*.md` | `global` |
-| `<projectRoot>/k/**/*.md` | `project:<projectRoot>` |
+| `_aionima/.ai/**/*.md` | `global` |
+| `<projectRoot>/.ai/**/*.md` | `project:<projectRoot>` |
 
 **Chunking:** split at H1/H2/H3 boundaries, 100–800 char range. Larger sections split by paragraph.
 
@@ -115,7 +115,7 @@ Trigger sites:
 ### Established facts
 - {predicate}: {objectLiteral} (since {date})  ← up to 3 active relationships
 
-### Related docs               ← up to 2 chunks from k/ or agi/docs/
+### Related docs               ← up to 2 chunks from .ai/ or agi/docs/
 **{heading}** ({sourcePath})
 {content snippet, max 200 chars}
 ```
@@ -145,6 +145,6 @@ Full schema in `docs/agents/memory-graph.md`. Key tables:
 
 - `events` — episodic records with FTS5 index (`events_fts`)
 - `relationships` — consolidated semantic graph with temporal validity
-- `doc_chunks` — indexed documentation + k/ files with FTS5 index (`doc_chunks_fts`)
+- `doc_chunks` — indexed documentation + .ai/ files with FTS5 index (`doc_chunks_fts`)
 - `consolidation_log` — audit trail for consolidation runs
 - `_meta` — migration markers (e.g., `migrated_from_file_adapter`)

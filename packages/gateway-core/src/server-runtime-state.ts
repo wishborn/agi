@@ -85,7 +85,7 @@ import {
   dismissUpgradeNextStep,
   hasPendingRequiredSteps,
 } from "./upgrade-next-steps.js";
-import { projectConfigPath } from "./project-config-path.js";
+import { projectConfigPath, KNOWLEDGE_DIR, isVisibleInFileBrowser } from "./project-config-path.js";
 import {
   buildCandidatePayload,
   clearRawCaptures,
@@ -1421,8 +1421,8 @@ export async function createGatewayRuntimeState(
           // counts are all zero. Previously, only non-zero totals
           // populated the field, which made it impossible to tell
           // "not migrated" from "migrated but empty" in the dashboard.
-          // Now: presence of k/ dir → ▣ 0 for empty; absence → "—".
-          const kRoot = join(fullPath, "k");
+          // Now: presence of .ai/ dir → ▣ 0 for empty; absence → "—".
+          const kRoot = join(fullPath, KNOWLEDGE_DIR);
           if (existsSync(kRoot)) {
             const countJson = (subdir: string): number => {
               const dir = join(kRoot, subdir);
@@ -1450,7 +1450,7 @@ export async function createGatewayRuntimeState(
         let tynnSlice: { open: number; doing: number } | undefined;
         try {
           const candidates = [
-            join(fullPath, "k", "pm", "tasks.jsonl"),
+            join(fullPath, KNOWLEDGE_DIR, "pm", "tasks.jsonl"),
             join(fullPath, ".tynn-lite", "tasks.jsonl"),
           ];
           const tasksPath = candidates.find((p) => existsSync(p));
@@ -2445,7 +2445,7 @@ export async function createGatewayRuntimeState(
     // updatedAt falls within each day. (s130 phase A.6 reader-flip
     // landed cycle 100, so per-project chat dirs are populated for
     // s130-migrated projects.)
-    const chatDir = join(targetPath, "k", "chat");
+    const chatDir = join(targetPath, KNOWLEDGE_DIR, "chat");
     if (existsSync(chatDir)) {
       try {
         const files = readdirSync(chatDir).filter((f) => f.endsWith(".json"));
@@ -7120,7 +7120,7 @@ export async function createGatewayRuntimeState(
       const dirs: string[] = [];
       for (const projectPath of projects) {
         if (existsSync(join(projectPath, ".agi"))) {
-          const chatDir = join(projectPath, "k", "chat");
+          const chatDir = join(projectPath, KNOWLEDGE_DIR, "chat");
           if (existsSync(chatDir)) dirs.push(chatDir);
         }
       }
@@ -7847,8 +7847,10 @@ export async function createGatewayRuntimeState(
   function buildFileTree(dir: string, prefix: string, hideHidden = false): FileNode[] {
     if (!existsSync(dir)) return [];
     const entries = readdirSync(dir, { withFileTypes: true })
-      .filter((e) => e.name !== ".git" && e.name !== "node_modules")
-      .filter((e) => !hideHidden || !e.name.startsWith("."))
+      // Hides .git/node_modules, and (when hideHidden) dotfiles — EXCEPT the
+      // knowledge dir (.ai/), which stays visible in the UI per owner
+      // directive 2026-06-09. See isVisibleInFileBrowser.
+      .filter((e) => isVisibleInFileBrowser(e.name, hideHidden))
       .sort((a, b) => {
         // Directories first, then alphabetical
         if (a.isDirectory() && !b.isDirectory()) return -1;

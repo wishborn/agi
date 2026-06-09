@@ -453,6 +453,14 @@ export function ProjectDetail({
         })()}
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
         <DevNotes title="Project workspace — dev notes">
+          <DevNotes.Item kind="info" heading="2026-06-09 — Knowledge dir renamed k/ → .ai/">
+            Every project's knowledge layer (<code>plans/ knowledge/ pm/ memory/ chat/ issues/</code>)
+            moved from <code>k/</code> to <code>.ai/</code> to match common AI-workflow conventions
+            (<code>.cursor/</code>, <code>.aider/</code>). Existing projects auto-migrate on gateway
+            boot (rename is atomic + never clobbers). <code>.ai/</code> is dot-hidden to <code>ls</code>
+            but stays <strong>visible in the file browser</strong> here — the sibling <code>.agi/</code>
+            config envelope is unchanged. New projects scaffold <code>.ai/</code> directly (v0.4.919).
+          </DevNotes.Item>
           <DevNotes.Item kind="info" heading="2026-06-08 — Incoming PRs tab (review contributors' forks)">
             New <strong>Incoming</strong> tab on the _aionima container (Repos | Contribute |
             Incoming | Editor). Lists open PRs that contributors' personal forks — including
@@ -512,47 +520,6 @@ export function ProjectDetail({
             instead of the full mode-picker + all tabs. Stack strip and mode picker hidden.
             AionimaSystemReposPanel shows all five core forks with ahead/behind badges,
             a file browser toggle, and a Talk-to-project button.
-          </DevNotes.Item>
-          <DevNotes.Item kind="info" heading="Cycles 144-148 — Canvas + Chat split (slice 5c phases 1-3)">
-            Mockup B's flyout-shell shape is in: Canvas section header reads `Canvas · {"{tab}"}`,
-            tabs sit on the left (flex-1), chat aside sits on the right (280px, lg+ only). The
-            aside shows iterative-work status (when eligible) + an Open chat CTA.
-          </DevNotes.Item>
-          <DevNotes.Item kind="todo" heading="Slice 5c phase 4 — chat content not yet in aside">
-            The actual chat thread + composer is still rendered inside the cycle-87 floating
-            ChatFlyout, NOT inside the workspace aside. Phase 4 moves that content into the
-            right panel and adds collapsible AccordionFlyout chrome.
-          </DevNotes.Item>
-          <DevNotes.Item kind="warning" heading="Chat panel close button desync (cycle 149 owner-flagged)">
-            Clicking X in the chat panel header collapses both AccordionFlyout sections to rail-only
-            but leaves the header chat-button highlighted as active. The two close triggers need
-            two-way binding via `onOpenChange`. Filed as comment on s134 t517.
-          </DevNotes.Item>
-          <DevNotes.Item kind="info" heading="Cycle 137 — sub-surface pill restyle (slice 5b)">
-            Mode picker pill row uses tailwind arbitrary-attribute variant
-            `[&[aria-selected=true]]` to override react-fancy underline-variant defaults via
-            tailwind-merge. Yellow active fill, muted hover inactive.
-          </DevNotes.Item>
-          <DevNotes.Item kind="todo" heading="Cage indicator (t517 item 6)">
-            Depends on s130 t515 phase B (chat-tool cage primitive — backlog). When chat is
-            project-bound, a small "Tools caged to this project" pill appears in the chat header.
-          </DevNotes.Item>
-          <DevNotes.Item kind="warning" heading="Project folder restructure incoming (s140)">
-            Each project will move to {"{k/, repos/, sandbox/}"} (with chat at k/chat/) at the project root with a
-            single root `project.json` config (project- + repo-config combined). Stacks attach to
-            individual repos, not to the project. Multi-repo single-container hosting UI extends
-            with per-repo {"{config, start, dev, stack-actions}"} surfaces. Migration runs as a
-            dry-run report first; no file moves until owner sign-off.
-          </DevNotes.Item>
-          <DevNotes.Item kind="info" heading="Cycle 228 — _aionima Sacred card 404 regression fixed (s175)">
-            Three stale checks caused the Sacred meta-project to render incorrectly: (1) isSacred
-            only checked for type "aionima" but _aionima gets type "aionima-system" — Sacred
-            badge/locks were absent. (2) isCoreFork checked coreCollection === "aionima" which
-            matched the container itself (not just forks inside it), rendering the reduced
-            two-tab UX instead of the full project detail. (3) canViewSacred blocked "aionima-system"
-            projects behind contributing mode. Root cause was the ESM __dirname bug (now fixed at
-            project-config-path.ts:41) which prevented project.json creation → _aionima had no
-            project type on disk → cascade of wrong detections. All three guards tightened.
           </DevNotes.Item>
         </DevNotes>
         {project.category && (

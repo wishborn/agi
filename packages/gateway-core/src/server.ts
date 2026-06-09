@@ -146,6 +146,7 @@ import { buildTynnSyncPrompt } from "./plan-tynn-mapper.js";
 import { aionimaSystemProjectPath, ensureAionimaSystemProject, ensureWorkspaceSkeleton, projectConfigPath } from "./project-config-path.js";
 import { migrateAionimaSystemForks } from "./aionima-system-migration.js";
 import { migrateAionimaMemoryDir } from "./aionima-memory-migration.js";
+import { migrateAllKnowledgeDirs } from "./knowledge-dir-migration.js";
 import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
 import { ChannelEventDispatcher } from "./channel-event-dispatcher.js";
@@ -2162,6 +2163,31 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   hostingManager.regenerateSystemDomains();
+
+  // Owner directive 2026-06-09 — rename each project's knowledge dir k/ → .ai/
+  // (KNOWLEDGE_DIR). MUST run BEFORE every scaffolder + data migration below:
+  // those now target .ai/ via KNOWLEDGE_DIR, so renaming first prevents a fresh
+  // empty .ai/ from being created alongside an un-migrated k/ (which would
+  // strand the real data and trip the never-clobber conflict guard). Walks all
+  // immediate child dirs of each collection — incl `.new` skeleton + `_aionima`
+  // meta-project. Idempotent + non-fatal.
+  try {
+    const r = migrateAllKnowledgeDirs(projectPaths, createComponentLogger(logger, "migrate-knowledge-dir"));
+    if (r.renamed > 0 || r.conflicts > 0 || r.errors.length > 0) {
+      logger.info(
+        "migrate",
+        `boot-time knowledge-dir sweep (k/ → .ai/): scanned=${String(r.scanned)} renamed=${String(r.renamed)} conflicts=${String(r.conflicts)} errors=${String(r.errors.length)}`,
+      );
+      for (const e of r.errors) {
+        logger.warn("migrate", `knowledge-dir migration error [${e.dir}]: ${e.reason}`);
+      }
+    }
+  } catch (err) {
+    logger.warn(
+      "migrate",
+      `boot-time knowledge-dir sweep failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 
   // s150 t633 — workspace-owned project skeleton. Seeds <workspaceRoot>/.new/
   // from the agi-shipped templates on first boot, then registers each
