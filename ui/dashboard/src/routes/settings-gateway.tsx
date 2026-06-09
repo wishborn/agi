@@ -73,6 +73,13 @@ export default function SettingsGatewayPage() {
         live at Settings → Channels (plugin-driven, one tab per installed channel). Gateway settings no
         longer has a hardcoded Telegram/Discord config surface.
       </DevNote>
+      <DevNote heading="2026-06-08 — Contributing GitHub connect is AGI-native (no more id.ai.on)" kind="info" scope="settings/gateway">
+        The Contributing tab's GitHub auth gate no longer pops the retired Local-ID service at
+        id.ai.on. It now runs AGI's own device flow (device-flow-api.ts, absorbed from Local-ID):
+        click "Connect GitHub" → enter the shown code at github.com/login/device → the token lands
+        in the connections table and Dev Mode unlocks. Backend already read githubAuthenticated from
+        the connections table directly; only this UI was stuck on the dead popup.
+      </DevNote>
       <DevNote heading="Contributing/Dev Mode gates DevNotes visibility" kind="info" scope="settings/gateway">
         Toggle "Contributing" tab → enable Dev Mode. Notes only render when this is on. Production users
         running the gateway never see DevNotes; you (with Contributing on) see them on every page+tab.

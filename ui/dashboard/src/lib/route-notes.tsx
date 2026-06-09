@@ -186,7 +186,7 @@ const ROUTE_NOTES: Record<string, RouteNote | null> = {
   "/comms/gmail": {
     heading: "Gmail channel adapter",
     kind: "info",
-    body: "OAuth flow handled by id.ai.on (per memory feedback_id_owns_identity_not_agi); never re-implement OAuth here.",
+    body: "OAuth handled in-gateway via the device flow (device-flow-api.ts / Settings → Identity), absorbed from the retired Local-ID service. Google/Gmail tokens are Hive-ID-brokered.",
   },
   "/comms/whatsapp": {
     heading: "WhatsApp channel adapter",
@@ -216,9 +216,9 @@ const ROUTE_NOTES: Record<string, RouteNote | null> = {
     body: "Reads from /api/system/changelog. Built from the in-tree CHANGELOG.md per release.",
   },
   "/system/identity": {
-    heading: "Identity service — Local-ID per-node OAuth/session broker",
+    heading: "Identity — in-gateway (absorbed from the retired Local-ID service)",
     kind: "info",
-    body: "Local-ID lives in aionima-id; Hive-ID is the remote federation hub at id.ai.on. NEVER conflate them.",
+    body: "AGI owns identity, OAuth, and session brokering directly (device-flow-api.ts). Hive-ID remains the remote federation hub for cross-node trust. There is no separate Local-ID service anymore.",
   },
   "/system/incidents": {
     heading: "Security incidents",

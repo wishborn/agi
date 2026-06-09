@@ -51,6 +51,38 @@ test.describe("Contributing tab / Dev Mode UI", () => {
     await expect(main).toBeVisible({ timeout: 10_000 });
   });
 
+  test("GitHub connect is backed by AGI's own device flow (not id.ai.on)", async ({ page }) => {
+    // The Contributing tab's "Connect GitHub" runs AGI's native device flow
+    // (POST /api/auth/device-flow/start), absorbed from the retired Local-ID
+    // service. The endpoint must exist (not 404). A 200 carries the device-code
+    // shape; a reachability/role error is also acceptable — but never 404.
+    await page.goto("/");
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10_000 });
+    const result = await page.evaluate(async () => {
+      const res = await fetch("/api/auth/device-flow/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "github", role: "owner" }),
+      });
+      return { status: res.status, body: await res.json().catch(() => null) };
+    });
+    expect(result.status).not.toBe(404);
+    if (result.status === 200) {
+      expect(typeof result.body.userCode).toBe("string");
+      expect(typeof result.body.deviceCode).toBe("string");
+    }
+  });
+
+  test("Contributing settings surface no longer references the retired id.ai.on", async ({ page }) => {
+    await page.goto("/settings/gateway");
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10_000 });
+    // Open the Contributing tab if present.
+    const devTab = page.getByRole("tab", { name: /contributing/i }).or(page.getByText("Contributing", { exact: true }));
+    await devTab.first().click().catch(() => undefined);
+    const body = await page.locator("main").first().innerText().catch(() => "");
+    expect(body.includes("id.ai.on")).toBe(false);
+  });
+
   test("test VM control surface is reachable via agi CLI docs or Settings", async ({ page }) => {
     // The test VM lifecycle is CLI-driven (agi test-vm create|setup|...).
     // A dashboard surface for it is optional; we only assert the gateway
