@@ -191,4 +191,30 @@ test.describe("Project .agi envelope — UI", () => {
     }
     await expect(card.first()).toBeVisible();
   });
+
+  // Slice 3 (story #207) — Coordinate → Project config/knowledge-state surface.
+  test("Coordinate → Project tab renders the config/knowledge-state panel", async ({ page }) => {
+    await page.goto("/");
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10_000 });
+
+    const projects = await page.evaluate(async () => {
+      const res = await fetch("/api/projects");
+      return res.ok ? res.json() : null;
+    });
+    const first = Array.isArray(projects?.projects)
+      ? projects.projects.find((p: { name?: string }) => p.name && p.name !== "_aionima")
+      : null;
+    if (!first?.name) { test.skip(); return; }
+
+    await page.goto(`/projects/${encodeURIComponent(first.name)}`);
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10_000 });
+
+    const tab = page.getByTestId("project-tab-project");
+    if ((await tab.count()) === 0) { test.skip(); return; }
+    await tab.first().click();
+
+    // Either the upgrade CTA (uninitialized) or the state surface — both carry
+    // the panel heading.
+    await expect(page.getByText("Project config & knowledge state")).toBeVisible({ timeout: 5_000 });
+  });
 });

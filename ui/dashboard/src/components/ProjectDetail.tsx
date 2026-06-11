@@ -30,6 +30,7 @@ import { PmLitePanel } from "./PmLitePanel.js";
 import { PmKanbanPanel } from "./PmKanbanPanel.js";
 import { NotesPanel } from "./NotesPanel.js";
 import { ChannelsPanel } from "./ChannelsPanel.js";
+import { AgiProjectStatePanel } from "./AgiProjectStatePanel.js";
 import { ScheduledJobsTab } from "./ScheduledJobsTab.js";
 import { MCPTab } from "./MCPTab.js";
 import { ProjectActivityTab } from "./ProjectActivityTab.js";
@@ -233,6 +234,8 @@ export function ProjectDetail({
     "taskmaster": "coordinate",
     // Wish #17 / s155 t671 — Plans tab in coordinate mode (PM workflow).
     "plans": "coordinate",
+    // story #207 — Project tab: the .agi envelope config/knowledge-state surface.
+    "project": "coordinate",
     // s152 — Notes tab in coordinate mode (knowledge capture for the project).
     "notes": "coordinate",
     // s139 t538 — PM kanban tab in coordinate mode. Reuses PmKanbanPanel
@@ -453,6 +456,16 @@ export function ProjectDetail({
         })()}
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
         <DevNotes title="Project workspace — dev notes">
+          <DevNotes.Item kind="info" heading="2026-06-10 — Coordinate → Project: .agi config/knowledge-state surface">
+            New <strong>Project</strong> tab in Coordinate mode manages a <code>.agi</code> envelope as a
+            config/knowledge-STATE surface — NOT a repo manager. An upgrade Wizard (git init +{" "}
+            <code>{"{slug}.agi"}</code> remote, with <em>AGI auto-creates</em> OR <em>paste URL</em>)
+            turns a project into an envelope; once wired, the panel shows ahead/behind + a reviewable
+            diff of config/knowledge/submodule changes with <strong>Pull &amp; apply</strong> (runs{" "}
+            <code>git submodule update --init --recursive</code>) and <strong>Push state</strong>. Chats
+            (<code>.ai/chat/</code>), <code>sandbox/</code>, <code>.trash/</code> are excluded from sync.
+            Backend: <code>agi-repo/{"{state,remote,pull,push}"}</code> (v0.4.921–922, story #207).
+          </DevNotes.Item>
           <DevNotes.Item kind="info" heading="2026-06-09 — Knowledge dir renamed k/ → .ai/">
             Every project's knowledge layer (<code>plans/ knowledge/ pm/ memory/ chat/ issues/</code>)
             moved from <code>k/</code> to <code>.ai/</code> to match common AI-workflow conventions
@@ -764,6 +777,9 @@ export function ProjectDetail({
               {tabBelongsToMode("iterative-work")
                 && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
                 <TabsTrigger value="iterative-work" className={SUB_PILL_CLASS} data-testid="project-tab-iterative-work">Scheduled Jobs</TabsTrigger>
+              )}
+              {tabBelongsToMode("project") && !isAionimaContainer && (
+                <TabsTrigger value="project" className={SUB_PILL_CLASS} data-testid="project-tab-project">Project</TabsTrigger>
               )}
               {tabBelongsToMode("plans") && (
                 <TabsTrigger value="plans" className={SUB_PILL_CLASS} data-testid="project-tab-plans">Plans</TabsTrigger>
@@ -1522,6 +1538,11 @@ export function ProjectDetail({
         {/* Wish #17 / s155 t671 — Plans tab (PM-Lite). Always available;
             DONE/CURRENT/NEXT views over the layered PM provider, plus a
             file-based plan list straight from <projectPath>/k/plans/. */}
+        {/* story #207 — .agi envelope config/knowledge-state surface. */}
+        <TabsContent value="project" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          <AgiProjectStatePanel projectPath={project.path} projectName={project.name} />
+        </TabsContent>
+
         <TabsContent value="plans" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <PmLitePanel projectPath={project.path} />
         </TabsContent>
