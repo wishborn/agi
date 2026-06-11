@@ -78,38 +78,57 @@ function isExcludedEnvelope(projectPath: string): boolean {
 // Discovery
 // ---------------------------------------------------------------------------
 
-/** Subdirs of `<projectPath>/repos/` that are themselves git repos. */
+/** Subdirs of `<projectPath>/repos/` that are themselves git repos.
+ *  Defensive: an unreadable `repos/` degrades to [] rather than throwing. */
 function detectRepoGitDirs(projectPath: string): string[] {
   const reposDir = join(projectPath, "repos");
   if (!existsSync(reposDir)) return [];
-  const out: string[] = [];
-  for (const entry of readdirSync(reposDir, { withFileTypes: true })) {
-    if (entry.isDirectory() && isGitRepo(join(reposDir, entry.name))) {
-      out.push(entry.name);
+  try {
+    const out: string[] = [];
+    for (const entry of readdirSync(reposDir, { withFileTypes: true })) {
+      if (entry.isDirectory() && isGitRepo(join(reposDir, entry.name))) {
+        out.push(entry.name);
+      }
     }
+    return out.sort();
+  } catch {
+    return [];
   }
-  return out.sort();
 }
 
-/** Submodule paths listed in `<projectPath>/.gitmodules`. */
+/** Submodule paths listed in `<projectPath>/.gitmodules`.
+ *  Defensive: a malformed/unreadable `.gitmodules` (e.g. it's a directory)
+ *  degrades to [] rather than throwing — the envelope is still "initialized". */
 function readSubmodulePaths(projectPath: string): string[] {
   const modulesFile = join(projectPath, ".gitmodules");
   if (!existsSync(modulesFile)) return [];
-  const text = readFileSync(modulesFile, "utf-8");
-  const paths: string[] = [];
-  for (const line of text.split("\n")) {
-    const m = /^\s*path\s*=\s*(.+?)\s*$/.exec(line);
-    if (m?.[1]) paths.push(m[1]);
+  try {
+    const text = readFileSync(modulesFile, "utf-8");
+    const paths: string[] = [];
+    for (const line of text.split("\n")) {
+      const m = /^\s*path\s*=\s*(.+?)\s*$/.exec(line);
+      if (m?.[1]) paths.push(m[1]);
+    }
+    return paths.sort();
+  } catch {
+    return [];
   }
-  return paths.sort();
 }
 
 export function getAgiRepoStatus(projectPath: string): AgiRepoStatus {
-  const initialized = isGitRepo(projectPath);
-  const submodules = initialized ? readSubmodulePaths(projectPath) : [];
-  const registered = new Set(submodules.map((p) => p.replace(/^repos\//, "")));
-  const unregisteredRepos = detectRepoGitDirs(projectPath).filter((name) => !registered.has(name));
-  return { initialized, submodules, unregisteredRepos };
+  // Defensive: this feeds a GET endpoint the dashboard auto-fires on load, so a
+  // throw here surfaces as a 500 (story #207 — observed on envelopes with an
+  // unreadable repos/ or a malformed .gitmodules). Any failure degrades to the
+  // "not initialized" shape rather than erroring the whole panel.
+  try {
+    const initialized = isGitRepo(projectPath);
+    const submodules = initialized ? readSubmodulePaths(projectPath) : [];
+    const registered = new Set(submodules.map((p) => p.replace(/^repos\//, "")));
+    const unregisteredRepos = detectRepoGitDirs(projectPath).filter((name) => !registered.has(name));
+    return { initialized, submodules, unregisteredRepos };
+  } catch {
+    return { initialized: false, submodules: [], unregisteredRepos: [] };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -135,10 +154,12 @@ export function initAgiRepo(projectPath: string): AgiRepoOpResult {
   const init = git(["init"], projectPath);
   if (!init.ok) return { ok: false, error: `git init failed: ${init.stderr}` };
 
-  // Scratch + soft-delete are envelope-local, never committed.
+  // Scratch + soft-delete are envelope-local, never committed. Chats are local
+  // runtime state too — `.ai/chat/` is excluded so chat sessions never travel
+  // through the envelope's config/knowledge sync (story #207, owner directive).
   const gitignore = join(projectPath, ".gitignore");
   if (!existsSync(gitignore)) {
-    writeFileSync(gitignore, ["sandbox/", ".trash/", "node_modules/", ""].join("\n"), "utf-8");
+    writeFileSync(gitignore, ["sandbox/", ".trash/", `${KNOWLEDGE_DIR}/chat/`, "node_modules/", ""].join("\n"), "utf-8");
   }
 
   // Stage envelope-owned content only (project.json, .ai/, .gitignore). repos/

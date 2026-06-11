@@ -66,6 +66,66 @@ test.describe("Project .agi envelope — API layer", () => {
     // /etc is not inside workspace.projects → 403.
     expect(result.status).toBe(403);
   });
+
+  // Slice 0 — defect hardening (story #207): envelope ≠ repo.
+  test("agi-repo/status never 500s — returns a clean shape for a non-.agi (gitless) project", async ({ page }) => {
+    await page.goto("/");
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10_000 });
+
+    const projects = await page.evaluate(async () => {
+      const res = await fetch("/api/projects");
+      if (!res.ok) return null;
+      return res.json();
+    });
+    const first = Array.isArray(projects?.projects)
+      ? projects.projects.find((p: { path?: string; name?: string }) => p.path && p.name !== "_aionima")
+      : null;
+    if (!first?.path) { test.skip(); return; }
+
+    const status = await page.evaluate(async (path: string) => {
+      const res = await fetch(`/api/projects/agi-repo/status?path=${encodeURIComponent(path)}`);
+      return { status: res.status, body: await res.json().catch(() => null) };
+    }, first.path as string);
+
+    // Must never throw a 500 — even an envelope with no top-level .git resolves cleanly.
+    expect(status.status).toBe(200);
+    expect(status.body).not.toBeNull();
+    expect(typeof status.body.initialized).toBe("boolean");
+  });
+
+  test("read-only git action on a gitless envelope returns 200 {notGitRepo:true}, not 400", async ({ page }) => {
+    await page.goto("/");
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10_000 });
+
+    // Find a project whose envelope is NOT git-initialized (initialized:false).
+    const target = await page.evaluate(async () => {
+      const res = await fetch("/api/projects");
+      if (!res.ok) return null;
+      const { projects } = await res.json();
+      if (!Array.isArray(projects)) return null;
+      for (const p of projects) {
+        if (!p.path || p.name === "_aionima") continue;
+        const s = await fetch(`/api/projects/agi-repo/status?path=${encodeURIComponent(p.path)}`);
+        const body = await s.json().catch(() => null);
+        if (body && body.initialized === false) return p.path as string;
+      }
+      return null;
+    });
+    if (!target) { test.skip(); return; }
+
+    const result = await page.evaluate(async (path: string) => {
+      const res = await fetch("/api/projects/git", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, action: "status" }),
+      });
+      return { status: res.status, body: await res.json().catch(() => null) };
+    }, target);
+
+    // No console-spamming 400 — a clean 200 the dashboard can render as an empty state.
+    expect(result.status).toBe(200);
+    expect(result.body?.notGitRepo).toBe(true);
+  });
 });
 
 test.describe("Project .agi envelope — UI", () => {

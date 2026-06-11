@@ -3654,6 +3654,26 @@ export async function createGatewayRuntimeState(
     }
 
     if (!existsSync(join(targetPath, ".git"))) {
+      // Read-only inspection actions on a non-git dir (e.g. a `.agi` envelope
+      // whose git identity is its config/submodule state, not a working tree —
+      // story #207) return a clean 200 the dashboard renders as an empty state,
+      // NOT a 400 that spams the console on every auto-refresh. Mutating actions
+      // still reject — you can't branch/stash/commit a non-repo.
+      const READ_ONLY_GIT_ACTIONS = new Set([
+        "status", "branch_list", "stash_list", "log", "remote_list", "diff",
+      ]);
+      if (READ_ONLY_GIT_ACTIONS.has(body.action)) {
+        return reply.send({
+          exitCode: 0,
+          notGitRepo: true,
+          branch: null,
+          files: [],
+          branches: [],
+          stashes: [],
+          commits: [],
+          remotes: [],
+        });
+      }
       return reply.code(400).send({ error: "Not a git repository" });
     }
 

@@ -919,6 +919,9 @@ export interface GitActionResult {
   stdout?: string;
   stderr?: string;
   error?: string;
+  /** Read-only git action on a dir with no top-level `.git` (e.g. a `.agi`
+   *  envelope). The dashboard renders an empty state instead of an error. */
+  notGitRepo?: boolean;
 }
 
 export interface GitFileEntry {
