@@ -126,6 +126,41 @@ test.describe("Project .agi envelope — API layer", () => {
     expect(result.status).toBe(200);
     expect(result.body?.notGitRepo).toBe(true);
   });
+
+  // Slice 1 (story #207) — config/knowledge-state endpoints.
+  test("agi-repo/state requires a path", async ({ page }) => {
+    await page.goto("/");
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10_000 });
+    const result = await page.evaluate(async () => {
+      const res = await fetch("/api/projects/agi-repo/state");
+      return { status: res.status };
+    });
+    expect(result.status).toBe(400);
+  });
+
+  test("agi-repo/state returns the config-state shape for a real project", async ({ page }) => {
+    await page.goto("/");
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10_000 });
+    const projects = await page.evaluate(async () => {
+      const res = await fetch("/api/projects");
+      return res.ok ? res.json() : null;
+    });
+    const first = Array.isArray(projects?.projects)
+      ? projects.projects.find((p: { path?: string; name?: string }) => p.path && p.name !== "_aionima")
+      : null;
+    if (!first?.path) { test.skip(); return; }
+
+    const state = await page.evaluate(async (path: string) => {
+      const res = await fetch(`/api/projects/agi-repo/state?path=${encodeURIComponent(path)}`);
+      return { status: res.status, body: await res.json().catch(() => null) };
+    }, first.path as string);
+
+    expect(state.status).toBe(200);
+    expect(typeof state.body.initialized).toBe("boolean");
+    expect(typeof state.body.hasRemote).toBe("boolean");
+    expect(Array.isArray(state.body.incoming)).toBe(true);
+    expect(Array.isArray(state.body.localChanges)).toBe(true);
+  });
 });
 
 test.describe("Project .agi envelope — UI", () => {
