@@ -62,6 +62,7 @@ describe("initAgiRepo — chats excluded from the envelope", () => {
 
     const gitignore = readFileSync(join(proj, ".gitignore"), "utf-8");
     expect(gitignore).toContain(`${KNOWLEDGE_DIR}/chat/`);
+    expect(gitignore).toContain(`${KNOWLEDGE_DIR}/memory/`);
     expect(gitignore).toContain("sandbox/");
     expect(gitignore).toContain(".trash/");
     // The envelope itself became a git repo.
@@ -81,8 +82,9 @@ describe("config-state engine (Slice 1, story #207)", () => {
     expect(classifyEnvelopePath(`${KNOWLEDGE_DIR}/plans/p1.mdc`)).toBe("knowledge");
     expect(classifyEnvelopePath(`${KNOWLEDGE_DIR}/pm/tasks.jsonl`)).toBe("knowledge");
     expect(classifyEnvelopePath("repos/agi")).toBe("submodule");
-    // Local-only runtime state never syncs.
+    // Local-only runtime state never syncs (chats + memory + scratch).
     expect(classifyEnvelopePath(`${KNOWLEDGE_DIR}/chat/s1.json`)).toBe("excluded");
+    expect(classifyEnvelopePath(`${KNOWLEDGE_DIR}/memory/m.md`)).toBe("excluded");
     expect(classifyEnvelopePath("sandbox/tmp.txt")).toBe("excluded");
     expect(classifyEnvelopePath(".trash/old")).toBe("excluded");
   });

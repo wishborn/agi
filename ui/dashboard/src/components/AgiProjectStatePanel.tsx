@@ -119,7 +119,7 @@ export function AgiProjectStatePanel({ projectPath, projectName }: Props) {
               This project isn&apos;t a <code className="text-blue">.agi</code> envelope yet. Upgrade it to
               track its shared <code>project.json</code> config and <code>.ai/</code> knowledge state in
               git — with a <code>{slug}</code> remote so Tynn / Genie can open the same envelope.
-              Chats, <code>sandbox/</code> and <code>.trash/</code> stay local.
+              Chats, memory, <code>sandbox/</code> and <code>.trash/</code> stay local.
             </p>
             <Button size="sm" onClick={() => setWizardOpen(true)} data-testid="agi-upgrade-start">
               Upgrade to .agi envelope…
@@ -148,7 +148,7 @@ export function AgiProjectStatePanel({ projectPath, projectName }: Props) {
             <div className="flex items-center gap-3">
               <Badge variant="secondary" className="text-[10px]">↑ {state.ahead} ahead</Badge>
               <Badge variant="secondary" className="text-[10px]">↓ {state.behind} behind</Badge>
-              <span className="text-[10px] text-muted-foreground">chats excluded from sync</span>
+              <span className="text-[10px] text-muted-foreground">chats &amp; memory excluded from sync</span>
             </div>
 
             <ChangeList title="Incoming (review before applying)" changes={state.incoming} />
@@ -250,7 +250,8 @@ function UpgradeWizard({ open, onClose, projectPath, slug, alreadyInitialized, o
         {step === "init" && (
           <div className="text-xs text-muted-foreground">
             Runs <code>git init</code> + an initial commit of <code>project.json</code> and{" "}
-            <code>.ai/</code>. <code>sandbox/</code>, <code>.trash/</code> and <code>.ai/chat/</code> are gitignored.
+            <code>.ai/</code>. <code>sandbox/</code>, <code>.trash/</code>, <code>.ai/chat/</code> and{" "}
+            <code>.ai/memory/</code> are gitignored.
           </div>
         )}
 

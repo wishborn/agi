@@ -154,12 +154,17 @@ export function initAgiRepo(projectPath: string): AgiRepoOpResult {
   const init = git(["init"], projectPath);
   if (!init.ok) return { ok: false, error: `git init failed: ${init.stderr}` };
 
-  // Scratch + soft-delete are envelope-local, never committed. Chats are local
-  // runtime state too — `.ai/chat/` is excluded so chat sessions never travel
-  // through the envelope's config/knowledge sync (story #207, owner directive).
+  // Scratch + soft-delete are envelope-local, never committed. Chats AND memory
+  // are local runtime state too — `.ai/chat/` + `.ai/memory/` are excluded so
+  // they never travel through the envelope's config/knowledge sync (story #207,
+  // owner directive; memory-exclude pending Genie confirmation on #178).
   const gitignore = join(projectPath, ".gitignore");
   if (!existsSync(gitignore)) {
-    writeFileSync(gitignore, ["sandbox/", ".trash/", `${KNOWLEDGE_DIR}/chat/`, "node_modules/", ""].join("\n"), "utf-8");
+    writeFileSync(
+      gitignore,
+      ["sandbox/", ".trash/", `${KNOWLEDGE_DIR}/chat/`, `${KNOWLEDGE_DIR}/memory/`, "node_modules/", ""].join("\n"),
+      "utf-8",
+    );
   }
 
   // Stage envelope-owned content only (project.json, .ai/, .gitignore). repos/
@@ -268,10 +273,13 @@ export function agiRemoteName(projectPath: string): string {
 export type EnvelopeChangeKind = "config" | "knowledge" | "submodule" | "excluded";
 export function classifyEnvelopePath(relPath: string): EnvelopeChangeKind {
   const p = relPath.replace(/^\.\//, "");
-  // Local-only runtime state — never part of config/knowledge sync.
+  // Local-only runtime state — never part of config/knowledge sync. Chats AND
+  // memory are per-node runtime state (owner directive 2026-06-10, pending Genie
+  // confirmation on #178); sandbox/.trash are scratch.
   if (p === "sandbox" || p.startsWith("sandbox/")) return "excluded";
   if (p === ".trash" || p.startsWith(".trash/")) return "excluded";
   if (p.startsWith(`${KNOWLEDGE_DIR}/chat/`)) return "excluded";
+  if (p.startsWith(`${KNOWLEDGE_DIR}/memory/`)) return "excluded";
   // Shared config.
   if (p === "project.json" || p === ".gitmodules" || p === ".gitignore") return "config";
   // Submodule pins (a repos/<name> entry moves as a gitlink).
@@ -340,7 +348,7 @@ export function getAgiConfigState(projectPath: string): AgiConfigState {
     base.remoteUrl = base.hasRemote ? origin.stdout : null;
 
     // Local uncommitted config/knowledge changes (chats excluded by classify).
-    const localStatus = git(["status", "--porcelain", "--", ".", `:(exclude)${KNOWLEDGE_DIR}/chat`], projectPath);
+    const localStatus = git(["status", "--porcelain", "--", ".", `:(exclude)${KNOWLEDGE_DIR}/chat`, `:(exclude)${KNOWLEDGE_DIR}/memory`], projectPath);
     if (localStatus.ok) {
       for (const line of localStatus.stdout.split("\n")) {
         if (!line.trim()) continue;

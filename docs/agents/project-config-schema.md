@@ -231,10 +231,10 @@ model. Additional endpoints (all `?path=`):
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET …/agi-repo/state` | Classified diff vs upstream: `{ initialized, hasRemote, remoteUrl, ahead, behind, incoming[], localChanges[], submoduleDrift[] }`. Each change is `{ path, kind: config\|knowledge\|submodule, change }`. **Chats (`.ai/chat/`), `sandbox/`, `.trash/` are excluded.** |
+| `GET …/agi-repo/state` | Classified diff vs upstream: `{ initialized, hasRemote, remoteUrl, ahead, behind, incoming[], localChanges[], submoduleDrift[] }`. Each change is `{ path, kind: config\|knowledge\|submodule, change }`. **Chats (`.ai/chat/`), memory (`.ai/memory/`), `sandbox/`, `.trash/` are excluded** (local runtime state — memory-exclude pending Genie confirmation on #178). |
 | `POST …/agi-repo/remote` | Body `{ mode: "auto"\|"url", url? }`. `auto` creates `{slug}.agi` via the owner's connected GitHub token + wires `origin`; `url` wires an existing remote. Records `agiRepo.remoteUrl`. |
 | `POST …/agi-repo/pull` | Fast-forward config/knowledge + `git submodule update --init --recursive`. |
 | `POST …/agi-repo/push` | Commit + push config/knowledge (chats/sandbox/.trash are gitignored, never pushed). |
 
-`initAgiRepo`'s `.gitignore` excludes `sandbox/`, `.trash/`, and **`.ai/chat/`**. Read-only git
-actions on a non-`.agi` (gitless) folder return `200 { notGitRepo: true }`, not 400.
+`initAgiRepo`'s `.gitignore` excludes `sandbox/`, `.trash/`, **`.ai/chat/`** and **`.ai/memory/`**.
+Read-only git actions on a non-`.agi` (gitless) folder return `200 { notGitRepo: true }`, not 400.
