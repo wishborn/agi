@@ -1965,6 +1965,119 @@ export async function createGatewayRuntimeState(
     return reply.send(result);
   });
 
+  // GET /api/projects/agi-repo/state?path= — config/knowledge STATE diff
+  // (story #207). The envelope's git identity is its config + knowledge state +
+  // submodule pins; chats/sandbox/.trash are excluded. Never 500s.
+  fastify.get("/api/projects/agi-repo/state", async (request, reply) => {
+    const targetPath = agiRepoGuard(request, reply);
+    if (!targetPath) return reply;
+    const { getAgiConfigState } = await import("./agi-repo-manager.js");
+    return reply.send(getAgiConfigState(targetPath));
+  });
+
+  // POST /api/projects/agi-repo/remote?path= — configure the {slug}.agi remote.
+  // Body: { mode: "auto" | "url", url? }. "auto" creates wishborn/{slug}.agi via
+  // the owner's connected GitHub token and wires origin; "url" wires an existing
+  // remote the owner pastes.
+  fastify.post("/api/projects/agi-repo/remote", async (request, reply) => {
+    const targetPath = agiRepoGuard(request, reply);
+    if (!targetPath) return reply;
+    const body = (request.body ?? {}) as { mode?: string; url?: string };
+    const { setAgiRemote, agiRemoteName } = await import("./agi-repo-manager.js");
+
+    let remoteUrl: string | null = null;
+
+    if (body.mode === "url") {
+      if (!body.url || typeof body.url !== "string") {
+        return reply.code(400).send({ error: "url is required for mode=url" });
+      }
+      const res = setAgiRemote(targetPath, body.url);
+      if (!res.ok) return reply.code(400).send({ error: res.error });
+      remoteUrl = body.url.trim();
+    } else if (body.mode === "auto") {
+      // Read the owner's GitHub token (connections table) and create the repo.
+      let token: string | null = null;
+      if (deps.db && encryptionKey) {
+        try {
+          const [row] = await deps.db
+            .select({ accessToken: connections.accessToken })
+            .from(connections)
+            .where(and(eq(connections.provider, "github"), eq(connections.role, "owner")))
+            .limit(1);
+          if (row?.accessToken) token = decryptToken(encryptionKey, row.accessToken);
+        } catch { /* fall through to 400 */ }
+      }
+      if (!token) {
+        return reply.code(400).send({ error: "no connected GitHub account — connect one in Settings → Gateway → Contributing, or use mode=url" });
+      }
+      const repoName = agiRemoteName(targetPath);
+      try {
+        const gh = await fetch("https://api.github.com/user/repos", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/vnd.github+json",
+            "Content-Type": "application/json",
+            "User-Agent": "aionima-gateway",
+          },
+          body: JSON.stringify({ name: repoName, private: true, description: "Aionima .agi project envelope (config + knowledge state)" }),
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (gh.status === 422) {
+          // Already exists — reuse it rather than failing.
+          const me = await fetch("https://api.github.com/user", {
+            headers: { Authorization: `Bearer ${token}`, "User-Agent": "aionima-gateway" },
+            signal: AbortSignal.timeout(10_000),
+          });
+          const login = ((await me.json().catch(() => ({}))) as { login?: string }).login;
+          remoteUrl = login ? `https://github.com/${login}/${repoName}.git` : null;
+        } else if (!gh.ok) {
+          const errBody = (await gh.json().catch(() => ({}))) as { message?: string };
+          return reply.code(502).send({ error: `GitHub repo create failed (${String(gh.status)}): ${errBody.message ?? "unknown"}` });
+        } else {
+          const created = (await gh.json()) as { clone_url?: string };
+          remoteUrl = created.clone_url ?? null;
+        }
+      } catch (err) {
+        return reply.code(502).send({ error: `GitHub API error: ${err instanceof Error ? err.message : String(err)}` });
+      }
+      if (!remoteUrl) return reply.code(502).send({ error: "could not resolve the created repo URL" });
+      const res = setAgiRemote(targetPath, remoteUrl);
+      if (!res.ok) return reply.code(400).send({ error: res.error });
+    } else {
+      return reply.code(400).send({ error: "mode must be 'auto' or 'url'" });
+    }
+
+    if (deps.projectConfigManager) {
+      try {
+        await deps.projectConfigManager.update(targetPath, { agiRepo: { initialized: true, remoteUrl } });
+      } catch { /* best-effort */ }
+    }
+    return reply.send({ ok: true, remoteUrl });
+  });
+
+  // POST /api/projects/agi-repo/pull?path= — fast-forward config/knowledge +
+  // `git submodule update --init --recursive`.
+  fastify.post("/api/projects/agi-repo/pull", async (request, reply) => {
+    const targetPath = agiRepoGuard(request, reply);
+    if (!targetPath) return reply;
+    const { applyAgiUpstream } = await import("./agi-repo-manager.js");
+    const result = applyAgiUpstream(targetPath);
+    if (!result.ok) return reply.code(400).send({ error: result.error });
+    return reply.send(result);
+  });
+
+  // POST /api/projects/agi-repo/push?path= — commit + push config/knowledge
+  // (chats/sandbox/.trash are gitignored, never pushed).
+  fastify.post("/api/projects/agi-repo/push", async (request, reply) => {
+    const targetPath = agiRepoGuard(request, reply);
+    if (!targetPath) return reply;
+    const { pushAgiState } = await import("./agi-repo-manager.js");
+    const result = pushAgiState(targetPath);
+    if (!result.ok) return reply.code(400).send({ error: result.error });
+    return reply.send(result);
+  });
+
   // -----------------------------------------------------------------------
   // Companion device pairing (gateway ↔ desktop/mobile companions, e.g. Genie)
   //
@@ -3654,6 +3767,26 @@ export async function createGatewayRuntimeState(
     }
 
     if (!existsSync(join(targetPath, ".git"))) {
+      // Read-only inspection actions on a non-git dir (e.g. a `.agi` envelope
+      // whose git identity is its config/submodule state, not a working tree —
+      // story #207) return a clean 200 the dashboard renders as an empty state,
+      // NOT a 400 that spams the console on every auto-refresh. Mutating actions
+      // still reject — you can't branch/stash/commit a non-repo.
+      const READ_ONLY_GIT_ACTIONS = new Set([
+        "status", "branch_list", "stash_list", "log", "remote_list", "diff",
+      ]);
+      if (READ_ONLY_GIT_ACTIONS.has(body.action)) {
+        return reply.send({
+          exitCode: 0,
+          notGitRepo: true,
+          branch: null,
+          files: [],
+          branches: [],
+          stashes: [],
+          commits: [],
+          remotes: [],
+        });
+      }
       return reply.code(400).send({ error: "Not a git repository" });
     }
 

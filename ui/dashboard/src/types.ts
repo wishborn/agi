@@ -852,6 +852,27 @@ export interface AgiRepoStatus {
   unregisteredRepos: string[];
 }
 
+/** A classified change in a `.agi` envelope's config/knowledge state (story #207). */
+export interface AgiConfigChange {
+  path: string;
+  kind: "config" | "knowledge" | "submodule";
+  change: "added" | "modified" | "deleted";
+}
+
+/** Config/knowledge STATE of a `.agi` envelope vs its upstream. Chats excluded. */
+export interface AgiConfigState {
+  initialized: boolean;
+  hasRemote: boolean;
+  remoteUrl: string | null;
+  ahead: number;
+  behind: number;
+  /** Incoming upstream changes to review. */
+  incoming: AgiConfigChange[];
+  /** Local uncommitted config/knowledge changes. */
+  localChanges: AgiConfigChange[];
+  submoduleDrift: string[];
+}
+
 export interface AgiRepoOpResult {
   ok: boolean;
   initialized?: boolean;
@@ -919,6 +940,9 @@ export interface GitActionResult {
   stdout?: string;
   stderr?: string;
   error?: string;
+  /** Read-only git action on a dir with no top-level `.git` (e.g. a `.agi`
+   *  envelope). The dashboard renders an empty state instead of an error. */
+  notGitRepo?: boolean;
 }
 
 export interface GitFileEntry {

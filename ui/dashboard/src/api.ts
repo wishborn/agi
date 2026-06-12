@@ -535,6 +535,37 @@ export async function fetchProjectInfo(path: string): Promise<ProjectGitInfo> {
   return res.json() as Promise<ProjectGitInfo>;
 }
 
+// --- .agi envelope config/knowledge-state surface (story #207) ---
+
+export async function fetchAgiRepoStatus(path: string): Promise<import("./types.js").AgiRepoStatus> {
+  const res = await fetch(`/api/projects/agi-repo/status?path=${encodeURIComponent(path)}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function fetchAgiConfigState(path: string): Promise<import("./types.js").AgiConfigState> {
+  const res = await fetch(`/api/projects/agi-repo/state?path=${encodeURIComponent(path)}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+  return res.json();
+}
+
+async function postAgiRepo(endpoint: string, path: string, body?: Record<string, unknown>): Promise<{ ok: boolean; remoteUrl?: string | null; summary?: string }> {
+  const res = await fetch(`/api/projects/agi-repo/${endpoint}?path=${encodeURIComponent(path)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return data;
+}
+
+export const initAgiRepo = (path: string) => postAgiRepo("init", path);
+export const configureAgiRemote = (path: string, mode: "auto" | "url", url?: string) =>
+  postAgiRepo("remote", path, { mode, url });
+export const pullAgiState = (path: string) => postAgiRepo("pull", path);
+export const pushAgiState = (path: string) => postAgiRepo("push", path);
+
 // ---------------------------------------------------------------------------
 // Plans API — /api/plans
 // ---------------------------------------------------------------------------

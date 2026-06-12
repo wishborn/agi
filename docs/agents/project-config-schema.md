@@ -222,5 +222,19 @@ is registered as a git **submodule** of the envelope.
 
 Managed by `packages/gateway-core/src/agi-repo-manager.ts` and the endpoints
 `GET/POST /api/projects/agi-repo/{status,init,import}?path=`. The `_aionima` meta-project is
-**excluded** (it keeps its `collection.json` convention). First slice: explicit action only —
-auto-init on `create()`, the Tynn-desktop handshake, and remote auto-creation are deferred.
+**excluded** (it keeps its `collection.json` convention).
+
+**Config/knowledge-state sync (story #207, v0.4.921).** An envelope's git identity is its
+config + knowledge state + submodule pins, *not* a working tree of source — so it is managed as
+a **config/knowledge-state surface** (Coordinate → Project), not via the Repos-tab git-action
+model. Additional endpoints (all `?path=`):
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET …/agi-repo/state` | Classified diff vs upstream: `{ initialized, hasRemote, remoteUrl, ahead, behind, incoming[], localChanges[], submoduleDrift[] }`. Each change is `{ path, kind: config\|knowledge\|submodule, change }`. **Chats (`.ai/chat/`), memory (`.ai/memory/`), `sandbox/`, `.trash/` are excluded** (local runtime state — memory-exclude pending Genie confirmation on #178). |
+| `POST …/agi-repo/remote` | Body `{ mode: "auto"\|"url", url? }`. `auto` creates `{slug}.agi` via the owner's connected GitHub token + wires `origin`; `url` wires an existing remote. Records `agiRepo.remoteUrl`. |
+| `POST …/agi-repo/pull` | Fast-forward config/knowledge + `git submodule update --init --recursive`. |
+| `POST …/agi-repo/push` | Commit + push config/knowledge (chats/sandbox/.trash are gitignored, never pushed). |
+
+`initAgiRepo`'s `.gitignore` excludes `sandbox/`, `.trash/`, **`.ai/chat/`** and **`.ai/memory/`**.
+Read-only git actions on a non-`.agi` (gitless) folder return `200 { notGitRepo: true }`, not 400.
