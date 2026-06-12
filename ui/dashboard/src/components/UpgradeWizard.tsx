@@ -910,8 +910,12 @@ export function UpgradeWizard({
                   </div>
                   {preview.fileDiff ? (
                     <div className="text-[11px] overflow-auto max-h-[420px]">
+                      {/* Read-only comparison — the upgrade preview is informational,
+                          it must NOT carry the accept/reject acceptance UX (fancy-diff
+                          0.2.0 `variant="compare"`, owner directive 2026-06-12). */}
                       <FancyDiff
                         source={{ unified: preview.fileDiff }}
+                        variant="compare"
                         mode="inline"
                       />
                     </div>
