@@ -22,6 +22,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { UpgradeNextStepsPanel } from "@/components/UpgradeNextStepsPanel.js";
+import { computeUpgradeStepRows, normalizeStepStatus } from "@/lib/upgrade-steps.js";
 import { FancyDiff } from "@particle-academy/fancy-diff";
 import {
   fetchForkStatus,
@@ -45,25 +46,9 @@ import type {
 // Fine-step label map (upgrade.sh phase names → human-readable labels)
 // ---------------------------------------------------------------------------
 
-const STEP_LABELS: Record<string, string> = {
-  preflight: "Preflight checks",
-  "origin-agi": "Verify fork origin",
-  "origin-prime": "Verify PRIME origin",
-  "pull-agi": "Pull latest AGI",
-  "pull-prime": "Pull latest PRIME",
-  "pull-marketplace": "Pull Plugin Marketplace",
-  "pull-mapp-marketplace": "Pull MApp Marketplace",
-  submodules: "Initialize submodules",
-  "protocol-check": "Protocol version check",
-  install: "Install dependencies",
-  rebuild: "Rebuild native modules",
-  build: "Build frontend",
-  "build-marketplace": "Build Marketplace",
-  "db-push": "Database migration",
-  systemd: "Update service config",
-  restart: "Restart service",
-  complete: "Complete",
-};
+// The upgrade step list + status vocabulary live in @/lib/upgrade-steps.js,
+// mirrored from scripts/upgrade.sh (story #216). A drift guard test keeps them
+// in sync.
 
 // ---------------------------------------------------------------------------
 // Props
@@ -303,25 +288,9 @@ export function UpgradeWizard({
   const upgradeError = upgradePhase === "error";
 
   // Build ordered step rows for step 3 from accumulated log entries
-  const stepRows = Object.entries(STEP_LABELS).map(([key, label]) => {
-    const entry = seenStepsRef.current.get(key);
-    const status = entry?.status ?? "pending";
-    return { key, label, status };
-  }).filter(({ key }) => {
-    // Only show steps that have been seen or are the next expected one
-    const seen = seenStepsRef.current.has(key);
-    const anyRunning = [...seenStepsRef.current.values()].some(e => e.status === "start");
-    if (seen) return true;
-    // Show the first unseen step as "pending" when something is running
-    if (anyRunning) {
-      const keys = Object.keys(STEP_LABELS);
-      const lastSeen = keys.filter(k => seenStepsRef.current.has(k)).pop();
-      const lastSeenIdx = lastSeen ? keys.indexOf(lastSeen) : -1;
-      const thisIdx = keys.indexOf(key);
-      return thisIdx === lastSeenIdx + 1;
-    }
-    return false;
-  });
+  // The FULL checklist, always — every step renders immediately (pending) and
+  // flips green as upgrade.sh reports `done` for it (story #216). No filtering.
+  const stepRows = computeUpgradeStepRows(seenStepsRef.current);
 
   // ---------------------------------------------------------------------------
   // Render helpers
@@ -554,41 +523,45 @@ export function UpgradeWizard({
   }
 
   // One consistent status language for every step row (both the merge-result
-  // group and the upgrade.sh steps): a green check = done, a muted dash =
-  // skipped (NOT green), a pulsing blue dot = running, a red × = failed, and a
-  // hollow grey ring = pending. Done text is muted (de-emphasised, readable);
-  // ONLY skipped text is struck through.
+  // group and the upgrade.sh steps). The raw status is normalized first so
+  // upgrade.sh's "done"/"warn"/"error" AND the merge rows' "ok"/"start" all map
+  // correctly: green check = done, yellow check = done-with-warning, muted dash
+  // = skipped (NOT green), pulsing blue dot = running, red × = failed, hollow
+  // grey ring = pending. Done text is muted (readable); only skipped is struck.
   function StepStatusIcon({ status }: { status: string }) {
+    const s = normalizeStepStatus(status);
     return (
       <span className="w-3.5 inline-flex items-center justify-center shrink-0 text-[11px] leading-none">
-        {status === "ok" && <span className="text-green font-semibold" aria-label="done">✓</span>}
-        {status === "skip" && <span className="text-muted-foreground/50 font-semibold" aria-label="skipped">–</span>}
-        {status === "start" && <span className="w-2 h-2 rounded-full bg-blue animate-pulse" aria-label="running" />}
-        {status === "fail" && <span className="text-red font-semibold" aria-label="failed">✕</span>}
-        {(status === "pending" || !["ok", "skip", "start", "fail"].includes(status)) && (
-          <span className="w-2 h-2 rounded-full border border-muted-foreground/40" aria-label="pending" />
-        )}
+        {s === "done" && <span className="text-green font-semibold" aria-label="done">✓</span>}
+        {s === "warn" && <span className="text-yellow font-semibold" aria-label="done with warning">✓</span>}
+        {s === "skip" && <span className="text-muted-foreground/50 font-semibold" aria-label="skipped">–</span>}
+        {s === "running" && <span className="w-2 h-2 rounded-full bg-blue animate-pulse" aria-label="running" />}
+        {s === "error" && <span className="text-red font-semibold" aria-label="failed">✕</span>}
+        {s === "pending" && <span className="w-2 h-2 rounded-full border border-muted-foreground/40" aria-label="pending" />}
       </span>
     );
   }
 
   function StepRow({ label, status, first }: { label: string; status: string; first?: boolean }) {
+    const s = normalizeStepStatus(status);
     return (
       <div className={cn("flex items-center gap-2.5 py-1.5", !first && "border-t border-border/50")}>
         <StepStatusIcon status={status} />
         <span className={cn(
           "text-[12px]",
-          status === "ok" ? "text-muted-foreground"
-            : status === "skip" ? "text-muted-foreground line-through decoration-muted-foreground/40"
-            : status === "start" ? "text-foreground font-medium"
-            : status === "fail" ? "text-red font-medium"
+          s === "done" ? "text-muted-foreground"
+            : s === "skip" ? "text-muted-foreground line-through decoration-muted-foreground/40"
+            : s === "running" ? "text-foreground font-medium"
+            : s === "warn" ? "text-foreground"
+            : s === "error" ? "text-red font-medium"
             : "text-muted-foreground/50",
         )}>
           {label}
         </span>
-        {status === "start" && <span className="text-[10px] text-blue ml-auto">running…</span>}
-        {status === "fail" && <span className="text-[10px] text-red ml-auto">failed</span>}
-        {status === "skip" && <span className="text-[10px] text-muted-foreground/60 ml-auto">skipped</span>}
+        {s === "running" && <span className="text-[10px] text-blue ml-auto">running…</span>}
+        {s === "warn" && <span className="text-[10px] text-yellow ml-auto">done · warning</span>}
+        {s === "error" && <span className="text-[10px] text-red ml-auto">failed</span>}
+        {s === "skip" && <span className="text-[10px] text-muted-foreground/60 ml-auto">skipped</span>}
       </div>
     );
   }
