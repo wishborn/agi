@@ -2730,7 +2730,13 @@ export async function startGatewayServer(
   // command/env (stdio), url (http/ws), authToken (env-resolvable via
   // $VAR), autoConnect: bool }.
   const mcpClient = new McpClient();
-  const mcpServersConfig = (config as { mcp?: { servers?: Array<Record<string, unknown>> } }).mcp?.servers ?? [];
+  // Merge baked-in default MCP servers (e.g. Fancy UI) with gateway.json's —
+  // always-on for Aion across all projects + chats; an owner can override or
+  // disable a default by re-declaring its id in gateway.json (story #215).
+  const { mergeDefaultMcpServers } = await import("./mcp-config-store.js");
+  const mcpServersConfig = mergeDefaultMcpServers(
+    (config as { mcp?: { servers?: Array<Record<string, unknown>> } }).mcp?.servers ?? [],
+  );
   // s128 cycle 86 — secret-reference resolver for MCP server config. Handles
   // both $VAR (legacy, reads from process.env) AND vault://<id> (Vault).
   // Vault refs are gateway-scoped here (no projectPath context); per-project
