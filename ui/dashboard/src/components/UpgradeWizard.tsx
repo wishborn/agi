@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { UpgradeNextStepsPanel } from "@/components/UpgradeNextStepsPanel.js";
 import { computeUpgradeStepRows, normalizeStepStatus } from "@/lib/upgrade-steps.js";
+import { useTheme } from "@/lib/theme-provider";
 import { FancyDiff } from "@particle-academy/fancy-diff";
 import {
   fetchForkStatus,
@@ -88,6 +89,12 @@ export function UpgradeWizard({
   doUpgrade,
 }: UpgradeWizardProps) {
   const [step, setStep] = useState<Step>(1);
+
+  // Resolve the dashboard's active light/dark so the diff viewer can be told
+  // explicitly — fancy-diff's `theme="auto"` does NOT actually detect dark mode
+  // (no media-query / .dark-class probe), so we must pass the real value.
+  const { themeId, themes } = useTheme();
+  const isDarkTheme = themes.find((t) => t.id === themeId)?.dark ?? true;
 
   // Step 1 state
   const [forkStatus, setForkStatus] = useState<ForkStatus | null>(null);
@@ -928,6 +935,7 @@ export function UpgradeWizard({
                         source={{ unified: preview.fileDiff }}
                         variant="compare"
                         mode="inline"
+                        theme={isDarkTheme ? "dark" : "light"}
                       />
                     </div>
                   ) : (
