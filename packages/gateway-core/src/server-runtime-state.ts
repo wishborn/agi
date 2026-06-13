@@ -7938,13 +7938,37 @@ export async function createGatewayRuntimeState(
     }
   };
 
-  // GET /api/auth/providers — registered UNCONDITIONALLY (story #212). The
-  // canonical provider list is registry-driven and must load on bare nodes too,
-  // independent of whether identity brokering (identityProvider) is configured.
+  // Identity provider routes — registered UNCONDITIONALLY (story #212). The
+  // canonical provider list is registry-driven, and redirect connect
+  // (Google/Meta/X/Tynn) must work independent of whether federation or
+  // identity brokering (identityProvider) is configured.
   registerIdentityProvidersRoute(fastify, {
     oauthHandler: deps.oauthHandler ?? null,
     db: deps.db,
+    encKey: encryptionKey,
+    logger: deps.logger,
     federationEnabled: readFederationEnabled,
+    // Persist owner OAuth-app creds to gateway.json identity.oauth.<provider>
+    // (read back hot by the oauthHandler thunk — no restart needed).
+    writeOAuthApp: (provider, creds) => {
+      if (!deps.configPath) return false;
+      try {
+        const raw = JSON.parse(readFileSync(deps.configPath, "utf-8")) as Record<string, unknown>;
+        const identity = (raw.identity ?? {}) as { oauth?: Record<string, unknown> };
+        const oauth = (identity.oauth ?? {}) as Record<string, unknown>;
+        if (creds === null) {
+          delete oauth[provider];
+        } else {
+          oauth[provider] = creds;
+        }
+        identity.oauth = oauth;
+        raw.identity = identity;
+        writeFileSync(deps.configPath, JSON.stringify(raw, null, 2) + "\n", "utf-8");
+        return true;
+      } catch {
+        return false;
+      }
+    },
   });
 
   if (deps.identityProvider) {

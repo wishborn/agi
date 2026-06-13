@@ -71,4 +71,16 @@ test.describe("System ▸ Identity (consolidated)", () => {
     // The settings left-nav should not contain an Identity link anymore.
     await expect(page.getByRole("link", { name: "Identity", exact: true })).toHaveCount(0);
   });
+
+  test("a needs-config provider opens an OAuth-app form (clientId + secret + save)", async ({ page }) => {
+    await page.goto("/system/identity");
+    // Google ships unconfigured on a bare node → it has an "Add OAuth app" affordance.
+    const configure = page.getByTestId("identity-configure-google");
+    await expect(configure).toBeVisible({ timeout: 10_000 });
+    await configure.click();
+    await expect(page.getByTestId("identity-app-form-google")).toBeVisible();
+    await expect(page.getByTestId("identity-app-clientid-google")).toBeVisible();
+    await expect(page.getByTestId("identity-app-secret-google")).toBeVisible();
+    await expect(page.getByTestId("identity-app-save-google")).toBeVisible();
+  });
 });

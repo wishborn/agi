@@ -20,7 +20,7 @@ import { Card } from "@/components/ui/card.js";
 import { Input } from "@/components/ui/input.js";
 import { DevNote } from "@/components/ui/dev-notes.js";
 import { cn } from "@/lib/utils";
-import { fetchIdentityProviders } from "@/api.js";
+import { fetchIdentityProviders, configureProviderApp, clearProviderApp } from "@/api.js";
 import { useConfig } from "@/hooks.js";
 import type { AionimaConfig, IdentityProviderView, IdentityProviderStatus } from "@/types.js";
 
@@ -138,11 +138,58 @@ function DeviceFlowPrompt({ flow, onComplete, onCancel }: {
 // Provider card
 // ---------------------------------------------------------------------------
 
-function ProviderCard({ provider, onConnectGitHub, onConnectRedirect, onRemove, activeFlow, onFlowComplete, onFlowCancel, flowError }: {
+function OAuthAppForm({ providerId, onSaved, onCancel }: {
+  providerId: string;
+  onSaved: () => void;
+  onCancel: () => void;
+}) {
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await configureProviderApp(providerId, clientId, clientSecret);
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mt-2 rounded-lg border border-border bg-secondary/30 p-3 space-y-2" data-testid={`identity-app-form-${providerId}`}>
+      <p className="text-[11px] text-muted-foreground">
+        Paste the OAuth app credentials from your {providerId} developer console. The redirect URI is
+        <code className="mx-1 text-[10px]">/api/auth/callback/{providerId}</code>.
+      </p>
+      <Input type="text" placeholder="Client ID" value={clientId} onChange={(e) => setClientId(e.target.value)}
+        className="text-[12px]" data-testid={`identity-app-clientid-${providerId}`} />
+      <Input type="password" placeholder="Client Secret" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)}
+        className="text-[12px]" data-testid={`identity-app-secret-${providerId}`} />
+      {error && <p className="text-[11px] text-destructive">{error}</p>}
+      <div className="flex items-center gap-2">
+        <Button size="sm" onClick={() => void save()} disabled={saving || !clientId.trim() || !clientSecret.trim()}
+          data-testid={`identity-app-save-${providerId}`}>
+          {saving ? "Saving…" : "Save app"}
+        </Button>
+        <button onClick={onCancel} className="text-[11px] text-muted-foreground hover:text-foreground">Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function ProviderCard({ provider, onConnectGitHub, onConnectRedirect, onRemove, onConfigured, onClearApp, activeFlow, onFlowComplete, onFlowCancel, flowError }: {
   provider: IdentityProviderView;
   onConnectGitHub: () => void;
   onConnectRedirect: (id: string) => void;
   onRemove: (id: string) => void;
+  onConfigured: () => void;
+  onClearApp: (id: string) => void;
   activeFlow: DeviceFlowState | null;
   onFlowComplete: () => void;
   onFlowCancel: () => void;
@@ -150,6 +197,7 @@ function ProviderCard({ provider, onConnectGitHub, onConnectRedirect, onRemove, 
 }) {
   const badge = STATUS_BADGE[provider.status];
   const isGitHubFlow = provider.id === "github" && activeFlow;
+  const [showForm, setShowForm] = useState(false);
 
   return (
     <Card className="p-4 flex flex-col gap-3" data-testid={`identity-provider-${provider.id}`}>
@@ -188,15 +236,21 @@ function ProviderCard({ provider, onConnectGitHub, onConnectRedirect, onRemove, 
         )}
 
         {provider.status === "available" && provider.id !== "github" && (
-          <Button variant="outline" size="sm" onClick={() => onConnectRedirect(provider.id)}
-            data-testid={`identity-connect-${provider.id}`}>
-            Connect
-          </Button>
+          <div className="flex items-center gap-3">
+            <Button variant="outline" size="sm" onClick={() => onConnectRedirect(provider.id)}
+              data-testid={`identity-connect-${provider.id}`}>
+              Connect
+            </Button>
+            <button onClick={() => onClearApp(provider.id)} className="text-[10px] text-muted-foreground hover:text-destructive"
+              data-testid={`identity-clearapp-${provider.id}`}>
+              Remove app
+            </button>
+          </div>
         )}
 
-        {provider.status === "needs-config" && (
+        {provider.status === "needs-config" && !showForm && (
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" disabled className="text-xs opacity-60"
+            <Button variant="outline" size="sm" className="text-xs" onClick={() => setShowForm(true)}
               data-testid={`identity-configure-${provider.id}`}>
               Add OAuth app
             </Button>
@@ -210,6 +264,14 @@ function ProviderCard({ provider, onConnectGitHub, onConnectRedirect, onRemove, 
           </span>
         )}
       </div>
+
+      {provider.status === "needs-config" && showForm && (
+        <OAuthAppForm
+          providerId={provider.id}
+          onSaved={() => { setShowForm(false); onConfigured(); }}
+          onCancel={() => setShowForm(false)}
+        />
+      )}
 
       {isGitHubFlow && (
         <DeviceFlowPrompt flow={activeFlow!} onComplete={onFlowComplete} onCancel={onFlowCancel} />
@@ -329,6 +391,7 @@ export default function IdentityServicePage() {
   const [startingFlow, setStartingFlow] = useState(false);
   const [flowError, setFlowError] = useState<string | null>(null);
   const [copiedGeid, setCopiedGeid] = useState(false);
+  const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 
   const loadData = useCallback(async () => {
     const [provRes, entityRes] = await Promise.allSettled([
@@ -381,10 +444,30 @@ export default function IdentityServicePage() {
     await loadData();
   };
 
+  const clearApp = async (provider: string) => {
+    try {
+      await clearProviderApp(provider);
+    } catch { /* surfaced on reload */ }
+    await loadData();
+  };
+
   const handleFlowComplete = async () => {
     setActiveFlow(null);
     await loadData();
   };
+
+  // Banner from the OAuth redirect callback (?connected=… / ?error=…), then
+  // strip the query so a refresh doesn't re-show it.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get("connected");
+    const error = params.get("error");
+    if (connected) setNotice({ kind: "ok", text: `Connected ${connected}.` });
+    else if (error) setNotice({ kind: "error", text: `Connection failed: ${error.replace(/_/g, " ")}` });
+    if (connected || error) {
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
 
   const copyGeid = (geid: string) => {
     void navigator.clipboard.writeText(geid).then(() => {
@@ -396,13 +479,27 @@ export default function IdentityServicePage() {
   return (
     <PageScroll>
       <div className="max-w-4xl space-y-6" data-testid="system-identity-page">
-        <DevNote heading="Cycle — Identity unified into one page (story #212)" kind="info">
-          Identity Management now lives only here. The six canonical providers (GitHub, Google, Meta,
-          X, Tynn.ai, Civicognita) render from a single backend registry. GitHub connects today via
-          device flow; Google/Meta/X/Tynn.ai become connectable once you add their OAuth app (setup
-          ships in Slice 2); Civicognita unlocks when federation is enabled below. Settings ▸ Identity
-          now redirects here, and federation config moved off Settings ▸ Gateway.
+        <DevNote heading="Cycle — Identity unified + provider connect (story #212)" kind="info">
+          Identity Management lives only here. The six canonical providers (GitHub, Google, Meta, X,
+          Tynn.ai, Civicognita) render from a single backend registry. GitHub connects via device
+          flow; Google/Meta/X/Tynn.ai are connectable after you add their OAuth app (clientId/secret →
+          stored hot in gateway.json identity.oauth.*) and run the redirect flow; Civicognita unlocks
+          when federation is enabled below. Settings ▸ Identity redirects here; federation config moved
+          off Settings ▸ Gateway.
         </DevNote>
+
+        {notice && (
+          <div
+            data-testid="identity-notice"
+            className={cn(
+              "rounded-lg border px-3 py-2 text-[12px] flex items-center justify-between gap-3",
+              notice.kind === "ok" ? "border-green/30 bg-green/10 text-green" : "border-destructive/30 bg-destructive/10 text-destructive",
+            )}
+          >
+            <span>{notice.text}</span>
+            <button onClick={() => setNotice(null)} className="text-[11px] opacity-70 hover:opacity-100">Dismiss</button>
+          </div>
+        )}
 
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -477,6 +574,8 @@ export default function IdentityServicePage() {
                     onConnectGitHub={() => void startGitHub()}
                     onConnectRedirect={(id) => void connectRedirect(id)}
                     onRemove={(id) => void removeConnection(id)}
+                    onConfigured={() => void loadData()}
+                    onClearApp={(id) => void clearApp(id)}
                     activeFlow={activeFlow}
                     onFlowComplete={() => void handleFlowComplete()}
                     onFlowCancel={() => setActiveFlow(null)}

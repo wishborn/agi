@@ -64,6 +64,14 @@ export interface IdentityProviderSpec {
   requiresOwnerApp: boolean;
   /** Capability this provider is gated behind (e.g. federation for Civicognita). */
   gatedOn?: IdentityGate;
+  /** Redirect providers that require PKCE (S256) on the authorization-code flow (e.g. X). */
+  usesPkce?: boolean;
+  /**
+   * Token-endpoint client authentication for redirect providers:
+   *   "body"  → client_id/client_secret in the form body (Google, Meta, Tynn)
+   *   "basic" → HTTP Basic `Authorization: Basic base64(id:secret)` header (X)
+   */
+  tokenAuth?: "body" | "basic";
   /** OAuth scopes requested. */
   scopes: string[];
   /** OAuth endpoints (absent for federation-only providers). */
@@ -129,6 +137,8 @@ export const IDENTITY_PROVIDERS: Record<IdentityProviderId, IdentityProviderSpec
     displayName: "X",
     authMode: "redirect",
     requiresOwnerApp: true,
+    usesPkce: true,
+    tokenAuth: "basic",
     scopes: ["users.read", "tweet.read", "offline.access"],
     endpoints: {
       authUrl: "https://twitter.com/i/oauth2/authorize",

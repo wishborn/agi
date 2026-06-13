@@ -577,6 +577,22 @@ export async function fetchIdentityProviders(): Promise<import("./types.js").Ide
   return (await res.json() as { providers: import("./types.js").IdentityProviderView[] }).providers;
 }
 
+/** Store an owner-supplied OAuth app (clientId/secret) for a redirect provider. */
+export async function configureProviderApp(id: string, clientId: string, clientSecret: string): Promise<void> {
+  const res = await fetch(`/api/auth/providers/${encodeURIComponent(id)}/app`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clientId, clientSecret }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+}
+
+/** Clear a redirect provider's stored OAuth app credentials. */
+export async function clearProviderApp(id: string): Promise<void> {
+  const res = await fetch(`/api/auth/providers/${encodeURIComponent(id)}/app`, { method: "DELETE" });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+}
+
 // ---------------------------------------------------------------------------
 // Plans API — /api/plans
 // ---------------------------------------------------------------------------
