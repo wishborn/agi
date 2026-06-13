@@ -247,6 +247,12 @@ export function registerDeviceFlowRoutes(fastify: FastifyInstance, deps: DeviceF
     const deviceCode = (request.query as Record<string, string>).deviceCode;
     if (!deviceCode) return reply.code(400).send({ error: "deviceCode query parameter is required" });
 
+    // Whole-handler guard: ANY throw (DB read, token decrypt/parse, handoff
+    // delete, …) returns {status:"error"} with the real message — never an
+    // unhandled 500 that the frontend poll loop would treat as transient and
+    // spin/blow up on (story #218 follow-up). The surfaced message also tells
+    // us the actual cause.
+    try {
     const [sessionRow] = await db
       .select()
       .from(handoffs)
@@ -259,7 +265,18 @@ export function registerDeviceFlowRoutes(fastify: FastifyInstance, deps: DeviceF
       return reply.send({ status: "expired" });
     }
 
-    const sessionData = JSON.parse(decryptToken(encKey, sessionRow.connectedServices!)) as DeviceSessionData;
+    // Decrypt the session. If the key can't open it (e.g. the encryption key
+    // rotated between start and poll, or the row is corrupt), the session is
+    // unrecoverable — drop it and report expired so the user cleanly restarts,
+    // rather than 500-ing every poll.
+    let sessionData: DeviceSessionData;
+    try {
+      sessionData = JSON.parse(decryptToken(encKey, sessionRow.connectedServices!)) as DeviceSessionData;
+    } catch (err) {
+      log.error(`Device flow: session decrypt failed (unrecoverable) — ${err instanceof Error ? err.message : String(err)}`);
+      await db.delete(handoffs).where(eq(handoffs.id, deviceCode)).catch(() => {});
+      return reply.send({ status: "expired", error: "session_unreadable" });
+    }
     const { provider } = sessionData;
     const providerCfg = PROVIDERS[provider];
 
@@ -330,6 +347,11 @@ export function registerDeviceFlowRoutes(fastify: FastifyInstance, deps: DeviceF
 
     log.info(`Device flow completed: provider=${provider} role=${sessionData.role} user=${accountLabel}`);
     return reply.send({ status: "completed", provider, role: sessionData.role, accountLabel });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error(`Device flow poll failed: ${msg}`);
+      return reply.send({ status: "error", error: `Device flow poll failed: ${msg}` });
+    }
   });
 
   // GET /api/auth/device-flow/status
