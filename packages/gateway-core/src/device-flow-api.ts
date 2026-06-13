@@ -25,14 +25,19 @@ import type { Db } from "@agi/db-schema/client";
 import { encryptToken, decryptToken } from "./crypto-tokens.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
+import { IDENTITY_PROVIDERS } from "./identity-providers.js";
 
 // ---------------------------------------------------------------------------
 // Provider configuration
 // ---------------------------------------------------------------------------
 
-const GITHUB_CLIENT_ID = "Ov23liMC3zFFaNwtg58t";
+// GitHub's public client id + device endpoints come from the canonical identity
+// registry (story #212) — single source of truth, no duplicated constant here.
+const GITHUB_CLIENT_ID = IDENTITY_PROVIDERS.github.hostedClientId!;
 const HIVE_ID_URL = "https://id.aionima.ai";
 
+// `discord` is a *channel* provider (not on the identity page), so it stays in
+// this device-flow-only table alongside the GitHub entry sourced from the SSOT.
 type ProviderName = "github" | "google" | "discord";
 
 const HIVE_BROKERED_PROVIDERS = new Set<ProviderName>(["google", "discord"]);
@@ -44,9 +49,9 @@ const PROVIDERS: Record<ProviderName, {
   grantType: string;
 }> = {
   github: {
-    deviceCodeUrl: "https://github.com/login/device/code",
-    tokenUrl: "https://github.com/login/oauth/access_token",
-    scopes: "repo read:user user:email",
+    deviceCodeUrl: IDENTITY_PROVIDERS.github.endpoints!.deviceCodeUrl!,
+    tokenUrl: IDENTITY_PROVIDERS.github.endpoints!.tokenUrl,
+    scopes: IDENTITY_PROVIDERS.github.scopes.join(" "),
     grantType: "urn:ietf:params:oauth:grant-type:device_code",
   },
   google: {

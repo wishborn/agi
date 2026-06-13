@@ -11,16 +11,14 @@ import { CompanionDevicesCard } from "@/components/CompanionDevicesCard.js";
 import { OwnerSettings } from "@/components/settings/OwnerSettings.js";
 import { DevSettings } from "@/components/settings/DevSettings.js";
 import { GatewayNetworkSettings } from "@/components/settings/GatewayNetworkSettings.js";
-import { IdentitySettings } from "@/components/settings/IdentitySettings.js";
 import { DevNote } from "@/components/ui/dev-notes";
 import { Button } from "@/components/ui/button";
 import type { AionimaConfig } from "../types.js";
 
-type Tab = "general" | "identity" | "dev" | "network";
+type Tab = "general" | "dev" | "network";
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "general", label: "General" },
-  { id: "identity", label: "Federation" },
   { id: "dev", label: "Contributing" },
   { id: "network", label: "Network" },
 ];
@@ -132,6 +130,7 @@ export default function SettingsGatewayPage() {
       {/* Tab content */}
       {activeTab === "general" && (
         <>
+          <OwnerSettings owner={owner} update={update} />
           <GatewayNetworkSettings gateway={gateway} config={draft} update={update} section="general" />
           {/* Upgrade management — always accessible regardless of pending updates */}
           <div className="mt-6 rounded-lg border border-border bg-card p-4 flex items-center justify-between gap-4">
@@ -155,13 +154,6 @@ export default function SettingsGatewayPage() {
           <div className="mt-6">
             <CompanionDevicesCard />
           </div>
-        </>
-      )}
-
-      {activeTab === "identity" && (
-        <>
-          <OwnerSettings owner={owner} update={update} />
-          <IdentitySettings config={draft} update={update} />
         </>
       )}
 

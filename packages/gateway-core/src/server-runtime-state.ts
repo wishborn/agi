@@ -70,7 +70,7 @@ import { DashboardUserStore, hasRole } from "./dashboard-user-store.js";
 import type { IdentityProvider } from "./identity-provider.js";
 import type { OAuthHandler } from "./oauth-handler.js";
 import type { LLMProvider } from "./llm/index.js";
-import { registerIdentityRoutes } from "./identity-api.js";
+import { registerIdentityRoutes, registerIdentityProvidersRoute } from "./identity-api.js";
 import { registerSubUserRoutes } from "./sub-user-api.js";
 import type { VisitorAuthManager } from "./visitor-auth.js";
 import type { FederationNode } from "./federation-node.js";
@@ -7924,6 +7924,53 @@ export async function createGatewayRuntimeState(
   // Federation & Identity routes
   // -----------------------------------------------------------------------
 
+  // Hot read of federation.enabled — gates the Civicognita provider on the
+  // System ▸ Identity page; a config toggle takes effect without restart.
+  const readFederationEnabled = (): boolean => {
+    if (!deps.configPath) return false;
+    try {
+      const raw = JSON.parse(readFileSync(deps.configPath, "utf-8")) as {
+        federation?: { enabled?: boolean };
+      };
+      return raw.federation?.enabled === true;
+    } catch {
+      return false;
+    }
+  };
+
+  // Identity provider routes — registered UNCONDITIONALLY (story #212). The
+  // canonical provider list is registry-driven, and redirect connect
+  // (Google/Meta/X/Tynn) must work independent of whether federation or
+  // identity brokering (identityProvider) is configured.
+  registerIdentityProvidersRoute(fastify, {
+    oauthHandler: deps.oauthHandler ?? null,
+    db: deps.db,
+    encKey: encryptionKey,
+    logger: deps.logger,
+    federationEnabled: readFederationEnabled,
+    // Persist owner OAuth-app creds to gateway.json identity.oauth.<provider>
+    // (read back hot by the oauthHandler thunk — no restart needed).
+    writeOAuthApp: (provider, creds) => {
+      if (!deps.configPath) return false;
+      try {
+        const raw = JSON.parse(readFileSync(deps.configPath, "utf-8")) as Record<string, unknown>;
+        const identity = (raw.identity ?? {}) as { oauth?: Record<string, unknown> };
+        const oauth = (identity.oauth ?? {}) as Record<string, unknown>;
+        if (creds === null) {
+          delete oauth[provider];
+        } else {
+          oauth[provider] = creds;
+        }
+        identity.oauth = oauth;
+        raw.identity = identity;
+        writeFileSync(deps.configPath, JSON.stringify(raw, null, 2) + "\n", "utf-8");
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  });
+
   if (deps.identityProvider) {
     registerIdentityRoutes(fastify, {
       identityProvider: deps.identityProvider,
@@ -7931,6 +7978,7 @@ export async function createGatewayRuntimeState(
       logger: deps.logger,
       db: deps.db,
       encKey: encryptionKey,
+      federationEnabled: readFederationEnabled,
     });
   }
 

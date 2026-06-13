@@ -2662,16 +2662,28 @@ export async function startGatewayServer(
     const sessionSecret = ulid();
     visitorAuth = new VisitorAuthManager({ sessionSecret });
 
-    const identityConfig = (config as Record<string, unknown>).identity as
-      | { oauth?: { google?: { clientId: string; clientSecret: string }; github?: { clientId: string; clientSecret: string } } }
-      | undefined;
-
-    if (identityConfig?.oauth) {
-      const callbackBaseUrl = fedConfig.publicUrl ?? `http://${host}:${port}`;
-      oauthHandler = new OAuthHandler(identityConfig.oauth, callbackBaseUrl);
-    }
-
     log.info("Federation enabled — identity provider active");
+  }
+
+  // OAuth redirect handler — constructed UNCONDITIONALLY (story #212, Slice 2),
+  // independent of federation. Reads owner OAuth-app creds HOT from
+  // gateway.json `identity.oauth.<provider>` so a freshly-pasted app takes
+  // effect without a restart. Redirect connect (Google/Meta/X/Tynn) must work
+  // even when federation/Civicognita is off — only GitHub uses device flow.
+  {
+    const callbackBaseUrl = fedConfig?.publicUrl ?? `http://${host}:${port}`;
+    const configPath = opts?.configPath;
+    oauthHandler = new OAuthHandler(() => {
+      if (!configPath) return {};
+      try {
+        const raw = JSON.parse(readFileSync(configPath, "utf-8")) as {
+          identity?: { oauth?: import("./oauth-handler.js").OAuthConfig };
+        };
+        return raw.identity?.oauth ?? {};
+      } catch {
+        return {};
+      }
+    }, callbackBaseUrl);
   }
 
   // -------------------------------------------------------------------------
