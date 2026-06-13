@@ -512,9 +512,25 @@ export type { IdentityProviderConfig, IssuedIdentity, IdentityBindingResult } fr
 export { OAuthHandler } from "./oauth-handler.js";
 export type { OAuthProviderConfig, OAuthConfig, OAuthUserInfo } from "./oauth-handler.js";
 
+// Identity Providers — canonical registry (SSOT, story #212)
+export {
+  IDENTITY_PROVIDERS,
+  IDENTITY_PROVIDER_ORDER,
+  listIdentityProviders,
+  getIdentityProvider,
+  isKnownIdentityProvider,
+} from "./identity-providers.js";
+export type {
+  IdentityProviderId,
+  IdentityAuthMode,
+  IdentityGate,
+  IdentityProviderSpec,
+  IdentityProviderEndpoints,
+} from "./identity-providers.js";
+
 // Phase 5 — Identity API
-export { registerIdentityRoutes } from "./identity-api.js";
-export type { IdentityApiDeps } from "./identity-api.js";
+export { registerIdentityRoutes, registerIdentityProvidersRoute } from "./identity-api.js";
+export type { IdentityApiDeps, IdentityProvidersRouteDeps } from "./identity-api.js";
 
 // Phase 5 — Visitor Authentication
 export { VisitorAuthManager } from "./visitor-auth.js";

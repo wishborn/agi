@@ -27,6 +27,7 @@ import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
 import type { Db } from "@agi/db-schema/client";
 import { connections, entities as entitiesTable, users } from "@agi/db-schema";
+import { computeIdentityProviderViews } from "./identity-providers.js";
 
 // ---------------------------------------------------------------------------
 // Private-network guard
@@ -68,6 +69,74 @@ export interface IdentityApiDeps {
   logger?: Logger;
   db?: Db;
   encKey?: Buffer;
+  /**
+   * Live signal: is the HIVE federation network online? Gates the Civicognita
+   * provider on the System ▸ Identity page. Read hot (per-request) so a config
+   * toggle takes effect without restart. Defaults to false when omitted.
+   */
+  federationEnabled?: () => boolean;
+}
+
+export interface IdentityProvidersRouteDeps {
+  oauthHandler?: OAuthHandler | null;
+  db?: Db;
+  /** Live federation-online signal (gates Civicognita). Defaults to false. */
+  federationEnabled?: () => boolean;
+}
+
+/**
+ * Register GET /api/auth/providers — the canonical identity-provider list +
+ * live status for the System ▸ Identity page (story #212).
+ *
+ * Registered UNCONDITIONALLY (not gated on identityProvider) because the list
+ * is registry-driven (identity-providers.ts SSOT): it must be available even on
+ * bare nodes with no identity brokering configured. Returns each of the 6
+ * canonical providers as connected | available | needs-config | federation-gated.
+ *
+ * Unguarded by design — it exposes provider metadata + connection status (no
+ * tokens; token retrieval lives behind the guarded device-flow/token route),
+ * and sits behind the dashboard auth gate.
+ */
+export function registerIdentityProvidersRoute(
+  fastify: FastifyInstance,
+  deps: IdentityProvidersRouteDeps,
+): void {
+  fastify.get("/api/auth/providers", async (_request, reply) => {
+    // Existing connections (role-agnostic; prefer the owner-role account label).
+    // A DB hiccup must not blank the whole list — the providers still render.
+    const connectedProviders = new Map<string, string | null>();
+    if (deps.db) {
+      try {
+        const rows = await deps.db
+          .select({
+            provider: connections.provider,
+            accountLabel: connections.accountLabel,
+            role: connections.role,
+          })
+          .from(connections);
+        for (const r of rows) {
+          if (!connectedProviders.has(r.provider) || r.role === "owner") {
+            connectedProviders.set(r.provider, r.accountLabel ?? null);
+          }
+        }
+      } catch {
+        /* no connections available — render providers as unconnected */
+      }
+    }
+
+    // Redirect providers whose owner OAuth-app creds are configured (Slice 2
+    // wires the config endpoints; today this reflects oauthHandler's config).
+    const appConfigured = new Set(deps.oauthHandler?.getAvailableProviders() ?? []);
+    const federationOnline = deps.federationEnabled?.() ?? false;
+
+    const providers = computeIdentityProviderViews({
+      connectedProviders,
+      appConfigured,
+      federationOnline,
+    });
+
+    return reply.send({ providers });
+  });
 }
 
 export function registerIdentityRoutes(
@@ -113,14 +182,9 @@ export function registerIdentityRoutes(
     },
   );
 
-  // -----------------------------------------------------------------------
-  // GET /api/auth/providers — list available OAuth providers
-  // -----------------------------------------------------------------------
-
-  fastify.get("/api/auth/providers", async (_request, reply) => {
-    const providers = oauthHandler?.getAvailableProviders() ?? [];
-    return reply.send({ providers });
-  });
+  // GET /api/auth/providers is registered unconditionally by
+  // registerIdentityProvidersRoute (below) — it is registry-driven and must be
+  // available even when no identity provider is configured (e.g. bare nodes).
 
   // -----------------------------------------------------------------------
   // POST /api/auth/start/:provider — start OAuth flow

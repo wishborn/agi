@@ -42,7 +42,8 @@ export default function SettingsLayout() {
 
   const allItems: SettingsNavItem[] = useMemo(() => [
     { to: "/settings/gateway", label: "Gateway", isBuiltin: true },
-    { to: "/settings/identity", label: "Identity", isBuiltin: true },
+    // Identity moved to System ▸ Identity (story #212) — the single home for
+    // identity management. /settings/identity still resolves but redirects there.
     { to: "/settings/providers", label: "Providers", isBuiltin: true },
     { to: "/settings/channels", label: "Channels", isBuiltin: true },
     { to: "/settings/vault", label: "Vault", isBuiltin: true },

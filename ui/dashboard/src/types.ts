@@ -1405,6 +1405,26 @@ export interface AuthStatus {
   userCount: number;
 }
 
+/** Live status of a canonical identity provider (GET /api/auth/providers, story #212). */
+export type IdentityProviderStatus =
+  | "connected"
+  | "available"
+  | "needs-config"
+  | "federation-gated";
+
+/** One canonical identity provider + its live status, for the System ▸ Identity grid. */
+export interface IdentityProviderView {
+  id: "github" | "google" | "meta" | "x" | "tynn" | "civicognita";
+  displayName: string;
+  authMode: "device" | "redirect" | "federation";
+  requiresOwnerApp: boolean;
+  gatedOn?: "federation";
+  brandHint: string;
+  blurb: string;
+  status: IdentityProviderStatus;
+  connectedLabel: string | null;
+}
+
 /** PRIME corpus source status from GET /api/prime/status. */
 export interface PrimeStatus {
   source: string;

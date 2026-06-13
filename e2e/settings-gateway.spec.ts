@@ -25,14 +25,17 @@ test.describe("Gateway Settings", () => {
   });
 
   // Providers tab removed from /settings/gateway at cycle 135 — lives at /settings/providers.
-  test("tab bar renders four tab buttons (General, Identity, Contributing, Network)", async ({ page }) => {
+  // Federation tab removed (story #212) — identity + federation now live at System ▸ Identity.
+  test("tab bar renders three tab buttons (General, Contributing, Network)", async ({ page }) => {
     await page.goto("/settings/gateway");
     const tablist = page.getByRole("tablist");
     await expect(tablist.getByRole("tab", { name: "General" })).toBeVisible();
-    await expect(tablist.getByRole("tab", { name: "Identity" })).toBeVisible();
     await expect(tablist.getByRole("tab", { name: "Contributing" })).toBeVisible();
     await expect(tablist.getByRole("tab", { name: "Network" })).toBeVisible();
     await expect(tablist.getByRole("tab", { name: "Providers" })).toHaveCount(0);
+    // Federation/Identity tab is gone — moved to System ▸ Identity.
+    await expect(tablist.getByRole("tab", { name: "Federation" })).toHaveCount(0);
+    await expect(tablist.getByRole("tab", { name: "Identity" })).toHaveCount(0);
   });
 
   test("General tab is active by default and shows content", async ({ page }) => {
@@ -55,13 +58,11 @@ test.describe("Gateway Settings", () => {
     await expect(page.getByText(/available providers|cost preference|escalation/i).first()).toBeVisible({ timeout: 10_000 });
   });
 
-  test("Identity tab shows owner settings content", async ({ page }) => {
+  // Story #212: OwnerSettings relocated from the removed Federation tab into General.
+  test("General tab shows owner settings content (relocated from Federation tab)", async ({ page }) => {
     await page.goto("/settings/gateway");
-    await page.getByRole("tablist").getByRole("tab", { name: "Identity" }).click();
-    // OwnerSettings and IdentitySettings are rendered inside the Identity tab
-    // Both exist in the DOM after clicking the tab
+    // General is active by default; OwnerSettings now renders here.
     await expect(page).toHaveURL("/settings/gateway");
-    // At minimum no error overlay should appear
     const errorText = page.getByText(/error|failed/i);
     await expect(errorText).toHaveCount(0);
   });
@@ -82,8 +83,9 @@ test.describe("Gateway Settings", () => {
 
   test("switching between tabs keeps the page at /settings/gateway", async ({ page }) => {
     await page.goto("/settings/gateway");
-    // Providers tab removed at cycle 135; remaining tabs: Identity, Contributing, Network, General
-    const tabSequence = ["Identity", "Contributing", "Network", "General"];
+    // Providers tab removed at cycle 135; Federation/Identity tab removed (story #212).
+    // Remaining tabs: General, Contributing, Network.
+    const tabSequence = ["Contributing", "Network", "General"];
     const tablist = page.getByRole("tablist");
     for (const tabName of tabSequence) {
       await tablist.getByRole("tab", { name: tabName }).click();

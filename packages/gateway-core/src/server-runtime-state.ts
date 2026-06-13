@@ -70,7 +70,7 @@ import { DashboardUserStore, hasRole } from "./dashboard-user-store.js";
 import type { IdentityProvider } from "./identity-provider.js";
 import type { OAuthHandler } from "./oauth-handler.js";
 import type { LLMProvider } from "./llm/index.js";
-import { registerIdentityRoutes } from "./identity-api.js";
+import { registerIdentityRoutes, registerIdentityProvidersRoute } from "./identity-api.js";
 import { registerSubUserRoutes } from "./sub-user-api.js";
 import type { VisitorAuthManager } from "./visitor-auth.js";
 import type { FederationNode } from "./federation-node.js";
@@ -7924,6 +7924,29 @@ export async function createGatewayRuntimeState(
   // Federation & Identity routes
   // -----------------------------------------------------------------------
 
+  // Hot read of federation.enabled — gates the Civicognita provider on the
+  // System ▸ Identity page; a config toggle takes effect without restart.
+  const readFederationEnabled = (): boolean => {
+    if (!deps.configPath) return false;
+    try {
+      const raw = JSON.parse(readFileSync(deps.configPath, "utf-8")) as {
+        federation?: { enabled?: boolean };
+      };
+      return raw.federation?.enabled === true;
+    } catch {
+      return false;
+    }
+  };
+
+  // GET /api/auth/providers — registered UNCONDITIONALLY (story #212). The
+  // canonical provider list is registry-driven and must load on bare nodes too,
+  // independent of whether identity brokering (identityProvider) is configured.
+  registerIdentityProvidersRoute(fastify, {
+    oauthHandler: deps.oauthHandler ?? null,
+    db: deps.db,
+    federationEnabled: readFederationEnabled,
+  });
+
   if (deps.identityProvider) {
     registerIdentityRoutes(fastify, {
       identityProvider: deps.identityProvider,
@@ -7931,6 +7954,7 @@ export async function createGatewayRuntimeState(
       logger: deps.logger,
       db: deps.db,
       encKey: encryptionKey,
+      federationEnabled: readFederationEnabled,
     });
   }
 

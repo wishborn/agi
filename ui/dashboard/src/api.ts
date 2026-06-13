@@ -567,6 +567,17 @@ export const pullAgiState = (path: string) => postAgiRepo("pull", path);
 export const pushAgiState = (path: string) => postAgiRepo("push", path);
 
 // ---------------------------------------------------------------------------
+// Identity providers — /api/auth/providers (story #212)
+// ---------------------------------------------------------------------------
+
+/** Canonical identity providers + live status for the System ▸ Identity grid. */
+export async function fetchIdentityProviders(): Promise<import("./types.js").IdentityProviderView[]> {
+  const res = await fetch("/api/auth/providers");
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+  return (await res.json() as { providers: import("./types.js").IdentityProviderView[] }).providers;
+}
+
+// ---------------------------------------------------------------------------
 // Plans API — /api/plans
 // ---------------------------------------------------------------------------
 
