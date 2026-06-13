@@ -86,6 +86,38 @@ describe("OAuthHandler — registry-driven redirect flow (s212 t778)", () => {
     expect(body.get("grant_type")).toBe("authorization_code");
   });
 
+  it("refreshAccessToken swaps a refresh token for a fresh access token (google)", async () => {
+    const h = new OAuthHandler({ google: APP }, BASE);
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify({ access_token: "fresh", expires_in: 3600, scope: "email" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const out = await h.refreshAccessToken("google", "stored-refresh");
+    expect(out!.accessToken).toBe("fresh");
+    expect(out!.expiresIn).toBe(3600);
+    const body = (fetchMock.mock.calls[0]![1] as RequestInit).body as URLSearchParams;
+    expect(body.get("grant_type")).toBe("refresh_token");
+    expect(body.get("refresh_token")).toBe("stored-refresh");
+    expect(body.get("client_secret")).toBe("secret-xyz");
+  });
+
+  it("refreshAccessToken uses Basic auth for X and returns null for unconfigured providers", async () => {
+    const hX = new OAuthHandler({ x: APP }, BASE);
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify({ access_token: "x-fresh" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await hX.refreshAccessToken("x", "rt");
+    expect(out!.accessToken).toBe("x-fresh");
+    const headers = (fetchMock.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
+    expect(headers.authorization).toMatch(/^Basic /);
+
+    // No app configured → null (no network call)
+    const hNone = new OAuthHandler({}, BASE);
+    expect(await hNone.refreshAccessToken("meta", "rt")).toBeNull();
+  });
+
   it("X token exchange uses HTTP Basic auth + code_verifier (PKCE)", async () => {
     const h = new OAuthHandler({ x: APP }, BASE);
     const { state } = h.startFlow("x")!;

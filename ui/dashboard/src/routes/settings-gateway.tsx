@@ -5,7 +5,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useSettingsContext } from "./settings-layout.js";
-import { useRootContext } from "./root.js";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar.js";
 import { CompanionDevicesCard } from "@/components/CompanionDevicesCard.js";
 import { OwnerSettings } from "@/components/settings/OwnerSettings.js";
@@ -24,8 +23,7 @@ const tabs: { id: Tab; label: string }[] = [
 ];
 
 export default function SettingsGatewayPage() {
-  const { configHook } = useSettingsContext();
-  const { onOpenUpgradeWizard } = useRootContext();
+  const { configHook, onOpenUpgradeWizard } = useSettingsContext();
   const [activeTab, setActiveTab] = useState<Tab>("general");
   const [draft, setDraft] = useState<AionimaConfig>(configHook.data ?? ({} as AionimaConfig));
   const [dirty, setDirty] = useState(false);

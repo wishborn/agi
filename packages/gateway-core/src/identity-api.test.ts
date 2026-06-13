@@ -4,18 +4,51 @@ import { registerIdentityProvidersRoute } from "./identity-api.js";
 import type { OAuthHandler } from "./oauth-handler.js";
 import type { Db } from "@agi/db-schema/client";
 import { IDENTITY_PROVIDER_ORDER, type IdentityProviderView } from "./identity-providers.js";
+import { encryptToken, decryptToken } from "./crypto-tokens.js";
+
+const ENC_KEY = Buffer.alloc(32, 9);
 
 interface ConnRow {
+  userId?: string;
   provider: string;
   accountLabel: string | null;
   role: string;
+  refreshToken?: string | null;
+  scopes?: string | null;
 }
 
-/** Minimal Db stub: select(...).from(table) resolves to the given rows. */
-function fakeDb(rows: ConnRow[]): Db {
-  return {
-    select: () => ({ from: () => Promise.resolve(rows) }),
-  } as unknown as Db;
+interface FakeDb {
+  db: Db;
+  updates: Array<Record<string, unknown>>;
+  inserts: Array<Record<string, unknown>>;
+}
+
+/**
+ * Db stub whose query builder is BOTH awaitable (resolves to all rows) and
+ * chainable via .where().limit() (resolves to the first row) — matching how the
+ * providers route (await from) and the refresh/upsert paths (where→limit) call it.
+ */
+function fakeDb(rows: ConnRow[]): FakeDb {
+  const updates: Array<Record<string, unknown>> = [];
+  const inserts: Array<Record<string, unknown>> = [];
+  const db = {
+    select: () => ({
+      from: () => {
+        // A real Promise (awaitable → all rows) with .where()/.limit() attached
+        // (→ first row). Using a Promise avoids eslint's no-thenable on a literal.
+        const p = Promise.resolve(rows) as Promise<ConnRow[]> & {
+          where: () => typeof p;
+          limit: () => Promise<ConnRow[]>;
+        };
+        p.where = () => p;
+        p.limit = () => Promise.resolve(rows.slice(0, 1));
+        return p;
+      },
+    }),
+    update: () => ({ set: (v: Record<string, unknown>) => ({ where: () => { updates.push(v); return Promise.resolve(); } }) }),
+    insert: () => ({ values: (v: Record<string, unknown>) => { inserts.push(v); return Promise.resolve(); } }),
+  };
+  return { db: db as unknown as Db, updates, inserts };
 }
 
 function makeApp(opts: {
@@ -23,23 +56,28 @@ function makeApp(opts: {
   availableOAuth?: string[];
   federationEnabled?: boolean;
   startFlow?: (provider: string) => { authUrl: string; state: string } | null;
+  refreshAccessToken?: (provider: string, rt: string) => Promise<{ accessToken: string; refreshToken: string | null; expiresIn: number | null; scopes: string | null } | null>;
   writes?: Array<{ provider: string; creds: { clientId: string; clientSecret: string } | null }>;
+  encKey?: Buffer;
 }) {
   const app = Fastify({ logger: false });
   const oauthHandler = {
     getAvailableProviders: () => opts.availableOAuth ?? [],
     startFlow: opts.startFlow ?? (() => null),
+    refreshAccessToken: opts.refreshAccessToken ?? (async () => null),
   } as unknown as OAuthHandler;
+  const fake = fakeDb(opts.rows ?? []);
   registerIdentityProvidersRoute(app, {
     oauthHandler,
-    db: fakeDb(opts.rows ?? []),
+    db: fake.db,
+    encKey: opts.encKey,
     federationEnabled: () => opts.federationEnabled ?? false,
     writeOAuthApp: (provider, creds) => {
       opts.writes?.push({ provider, creds });
       return true;
     },
   });
-  return app;
+  return Object.assign(app, { _fake: fake });
 }
 
 async function getProviders(app: ReturnType<typeof makeApp>): Promise<IdentityProviderView[]> {
@@ -128,5 +166,38 @@ describe("OAuth app credential endpoints (s212 t779)", () => {
     const app = makeApp({ startFlow: () => null });
     const res = await app.inject({ method: "POST", url: "/api/auth/start/meta" });
     expect(res.statusCode).toBe(400);
+  });
+});
+
+describe("POST /api/auth/providers/:id/refresh (s213 t782)", () => {
+  it("400 for a non-redirect provider (github)", async () => {
+    const app = makeApp({ encKey: ENC_KEY });
+    const res = await app.inject({ method: "POST", url: "/api/auth/providers/github/refresh" });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("400 when there is no stored refresh token", async () => {
+    const app = makeApp({ encKey: ENC_KEY, rows: [] });
+    const res = await app.inject({ method: "POST", url: "/api/auth/providers/google/refresh" });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("refreshes a stored token and re-persists the new one", async () => {
+    const app = makeApp({
+      encKey: ENC_KEY,
+      rows: [{ userId: "u1", provider: "google", role: "owner", accountLabel: "a@b.com", refreshToken: encryptToken(ENC_KEY, "stored-rt"), scopes: "email" }],
+      refreshAccessToken: async (_p, rt) => {
+        expect(rt).toBe("stored-rt"); // the route must decrypt before calling
+        return { accessToken: "fresh-access", refreshToken: "rotated-rt", expiresIn: 3600, scopes: "email" };
+      },
+    });
+    const res = await app.inject({ method: "POST", url: "/api/auth/providers/google/refresh" });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { ok: boolean }).ok).toBe(true);
+    // the upsert updated the existing connection with the encrypted fresh token
+    const fake = (app as unknown as { _fake: { updates: Array<Record<string, unknown>> } })._fake;
+    expect(fake.updates).toHaveLength(1);
+    expect(decryptToken(ENC_KEY, fake.updates[0]!.accessToken as string)).toBe("fresh-access");
+    expect(decryptToken(ENC_KEY, fake.updates[0]!.refreshToken as string)).toBe("rotated-rt");
   });
 });

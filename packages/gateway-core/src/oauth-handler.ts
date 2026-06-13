@@ -202,6 +202,48 @@ export class OAuthHandler {
     };
   }
 
+  /**
+   * Exchange a stored refresh token for a fresh access token (story #213).
+   * Returns null if the provider isn't a configured redirect provider or the
+   * exchange fails. Note: some providers (e.g. X) rotate the refresh token, so
+   * the caller must persist `refreshToken` when present.
+   */
+  async refreshAccessToken(
+    provider: string,
+    refreshToken: string,
+  ): Promise<{ accessToken: string; refreshToken: string | null; expiresIn: number | null; scopes: string | null } | null> {
+    const spec = getIdentityProvider(provider);
+    const providerConfig = this.getProviderConfig(provider);
+    if (!spec || spec.authMode !== "redirect" || !spec.endpoints?.tokenUrl || !providerConfig) {
+      return null;
+    }
+
+    const body = new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken });
+    const headers: Record<string, string> = {
+      "content-type": "application/x-www-form-urlencoded",
+      accept: "application/json",
+    };
+    if (spec.tokenAuth === "basic") {
+      const basic = Buffer.from(`${providerConfig.clientId}:${providerConfig.clientSecret}`).toString("base64");
+      headers.authorization = `Basic ${basic}`;
+      body.set("client_id", providerConfig.clientId);
+    } else {
+      body.set("client_id", providerConfig.clientId);
+      body.set("client_secret", providerConfig.clientSecret);
+    }
+
+    const res = await fetch(spec.endpoints.tokenUrl, { method: "POST", headers, body });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { access_token?: string; refresh_token?: string; expires_in?: number; scope?: string };
+    if (!data.access_token) return null;
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token ?? null,
+      expiresIn: data.expires_in ?? null,
+      scopes: data.scope ?? null,
+    };
+  }
+
   // -------------------------------------------------------------------------
   // Provider-specific profile parsing
   // -------------------------------------------------------------------------
