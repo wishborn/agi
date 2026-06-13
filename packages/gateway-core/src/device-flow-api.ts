@@ -16,13 +16,13 @@
  *   POST  /api/auth/device-flow/refresh — refresh Google token (Hive-ID gated)
  */
 
-import { randomBytes } from "node:crypto";
 import { eq, and } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { IncomingMessage } from "node:http";
-import { connections, handoffs, users } from "@agi/db-schema";
+import { connections, handoffs } from "@agi/db-schema";
 import type { Db } from "@agi/db-schema/client";
 import { encryptToken, decryptToken } from "./crypto-tokens.js";
+import { resolveOrCreateOwnerUserId, upsertConnection } from "./oauth-connection-store.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
 import { IDENTITY_PROVIDERS } from "./identity-providers.js";
@@ -107,29 +107,6 @@ function isPrivate(ip: string): boolean {
 
 function getClientIp(req: IncomingMessage & { ip?: string }): string {
   return req.ip ?? req.socket?.remoteAddress ?? "unknown";
-}
-
-/** Resolve or create the local owner user row (FK target for connections). */
-async function resolveOrCreateLocalOwner(db: Db, accountLabelHint: string): Promise<string> {
-  const [firstUser] = await db.select({ id: users.id }).from(users).limit(1);
-  if (firstUser) return firstUser.id;
-
-  const principal = (accountLabelHint?.toLowerCase() || "owner").replace(/[^a-z0-9_-]/g, "") || "owner";
-  const id = randomBytes(16).toString("hex");
-  try {
-    await db.insert(users).values({
-      id,
-      authBackend: "virtual",
-      principal,
-      username: principal,
-      displayName: accountLabelHint || "Owner",
-      dashboardRole: "admin",
-    });
-  } catch {
-    const [again] = await db.select({ id: users.id }).from(users).limit(1);
-    return again?.id ?? id;
-  }
-  return id;
 }
 
 async function fetchAccountLabel(provider: ProviderName, accessToken: string, tokenType: string): Promise<string> {
@@ -319,42 +296,18 @@ export function registerDeviceFlowRoutes(fastify: FastifyInstance, deps: DeviceF
     const expiresIn = data.expires_in as number | undefined;
 
     const accountLabel = await fetchAccountLabel(provider, accessToken, tokenType);
-    const userId = await resolveOrCreateLocalOwner(db, accountLabel);
-    const now = new Date();
-    const tokenExpiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000) : null;
+    const userId = await resolveOrCreateOwnerUserId(db, accountLabel);
 
-    const [existing] = await db
-      .select()
-      .from(connections)
-      .where(and(eq(connections.userId, userId), eq(connections.provider, provider), eq(connections.role, sessionData.role)))
-      .limit(1);
-
-    if (existing) {
-      await db.update(connections)
-        .set({
-          accountLabel,
-          accessToken: encryptToken(encKey, accessToken),
-          refreshToken: refreshToken ? encryptToken(encKey, refreshToken) : null,
-          tokenExpiresAt,
-          scopes: scope ?? null,
-          updatedAt: now,
-        })
-        .where(eq(connections.id, existing.id));
-    } else {
-      await db.insert(connections).values({
-        id: randomBytes(16).toString("hex"),
-        userId,
-        provider,
-        role: sessionData.role,
-        accountLabel,
-        accessToken: encryptToken(encKey, accessToken),
-        refreshToken: refreshToken ? encryptToken(encKey, refreshToken) : null,
-        tokenExpiresAt,
-        scopes: scope ?? null,
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
+    // Shared store (story #213) — single upsert path for both OAuth ingress flows.
+    await upsertConnection(db, encKey, userId, {
+      provider,
+      role: sessionData.role,
+      accountLabel,
+      accessToken,
+      refreshToken: refreshToken ?? null,
+      tokenExpiresAt: expiresIn ? new Date(Date.now() + expiresIn * 1000) : null,
+      scopes: scope ?? null,
+    });
 
     await db.delete(handoffs).where(eq(handoffs.id, deviceCode));
 

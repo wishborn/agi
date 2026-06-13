@@ -27,9 +27,9 @@ import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
 import type { Db } from "@agi/db-schema/client";
 import { connections, entities as entitiesTable, users } from "@agi/db-schema";
-import { randomBytes } from "node:crypto";
 import { computeIdentityProviderViews, getIdentityProvider } from "./identity-providers.js";
-import { encryptToken } from "./crypto-tokens.js";
+import { resolveOrCreateOwnerUserId, upsertConnection } from "./oauth-connection-store.js";
+import { decryptToken } from "./crypto-tokens.js";
 
 // ---------------------------------------------------------------------------
 // Private-network guard
@@ -214,6 +214,57 @@ export function registerIdentityProvidersRoute(
     },
   );
 
+  // POST /api/auth/providers/:id/refresh — swap a stored refresh token for a
+  // fresh access token (story #213). Re-persists via the shared store.
+  fastify.post<{ Params: { id: string } }>(
+    "/api/auth/providers/:id/refresh",
+    async (request, reply) => {
+      const guard = guardPrivate(request.raw);
+      if (guard) return reply.code(403).send({ error: guard });
+      const spec = getIdentityProvider(request.params.id);
+      if (!spec || spec.authMode !== "redirect") {
+        return reply.code(400).send({ error: `Provider does not support refresh: ${request.params.id}` });
+      }
+      if (!deps.oauthHandler || !deps.db || !deps.encKey) {
+        return reply.code(501).send({ error: "Token refresh unavailable on this node" });
+      }
+
+      const provider = spec.id;
+      const [conn] = await deps.db
+        .select({ userId: connections.userId, refreshToken: connections.refreshToken, accountLabel: connections.accountLabel, scopes: connections.scopes })
+        .from(connections)
+        .where(and(eq(connections.provider, provider), eq(connections.role, "owner")))
+        .limit(1);
+      if (!conn?.refreshToken) {
+        return reply.code(400).send({ error: `No stored refresh token for ${provider}` });
+      }
+
+      let refreshToken: string;
+      try {
+        refreshToken = decryptToken(deps.encKey, conn.refreshToken);
+      } catch {
+        return reply.code(500).send({ error: "Stored refresh token is unreadable" });
+      }
+
+      const refreshed = await deps.oauthHandler.refreshAccessToken(provider, refreshToken);
+      if (!refreshed) return reply.code(502).send({ error: `${provider} refused the refresh` });
+
+      const tokenExpiresAt = refreshed.expiresIn ? new Date(Date.now() + refreshed.expiresIn * 1000) : null;
+      await upsertConnection(deps.db, deps.encKey, conn.userId, {
+        provider,
+        role: "owner",
+        accountLabel: conn.accountLabel,
+        accessToken: refreshed.accessToken,
+        // Providers that rotate the refresh token return a new one; otherwise keep the old.
+        refreshToken: refreshed.refreshToken ?? refreshToken,
+        tokenExpiresAt,
+        scopes: refreshed.scopes ?? conn.scopes,
+      });
+      log.info(`OAuth token refreshed: ${provider}`);
+      return reply.send({ ok: true, tokenExpiresAt: tokenExpiresAt?.toISOString() ?? null });
+    },
+  );
+
   // GET /api/auth/callback/:provider — provider redirects back here -----------
   // Persists a connection token (not a federation entity binding) and bounces
   // the browser back to System ▸ Identity.
@@ -231,38 +282,21 @@ export function registerIdentityProvidersRoute(
       const result = await deps.oauthHandler.handleCallback(provider, code, state);
       if (!result) return back(`error=${encodeURIComponent(`${provider}_auth_failed`)}`);
 
-      // Persist the connection (encrypted token) — same shape device-flow uses.
+      // Persist the connection (encrypted token) via the shared store — same
+      // path device-flow uses, so the two can't drift (story #213).
       if (deps.db && deps.encKey) {
         try {
-          const userId = await resolveOwnerUserId(deps.db);
-          const now = new Date();
-          const tokenExpiresAt = result.expiresIn ? new Date(Date.now() + result.expiresIn * 1000) : null;
           const accountLabel = result.displayName ?? result.email ?? null;
-          const [existing] = await deps.db
-            .select({ id: connections.id })
-            .from(connections)
-            .where(and(eq(connections.userId, userId), eq(connections.provider, provider), eq(connections.role, "owner")))
-            .limit(1);
-          const values = {
+          const userId = await resolveOrCreateOwnerUserId(deps.db, accountLabel ?? undefined);
+          await upsertConnection(deps.db, deps.encKey, userId, {
+            provider,
+            role: "owner",
             accountLabel,
-            accessToken: encryptToken(deps.encKey, result.accessToken),
-            refreshToken: result.refreshToken ? encryptToken(deps.encKey, result.refreshToken) : null,
-            tokenExpiresAt,
+            accessToken: result.accessToken,
+            refreshToken: result.refreshToken,
+            tokenExpiresAt: result.expiresIn ? new Date(Date.now() + result.expiresIn * 1000) : null,
             scopes: result.scopes,
-            updatedAt: now,
-          };
-          if (existing) {
-            await deps.db.update(connections).set(values).where(eq(connections.id, existing.id));
-          } else {
-            await deps.db.insert(connections).values({
-              id: randomBytes(16).toString("hex"),
-              userId,
-              provider,
-              role: "owner",
-              createdAt: now,
-              ...values,
-            });
-          }
+          });
           log.info(`OAuth connection stored: ${provider} (${accountLabel ?? "no label"})`);
         } catch (err) {
           log.error(`Failed to persist ${provider} connection: ${err instanceof Error ? err.message : String(err)}`);
@@ -273,27 +307,6 @@ export function registerIdentityProvidersRoute(
       return back(`connected=${encodeURIComponent(provider)}`);
     },
   );
-}
-
-/** Resolve the local owner user row (FK target for connections), creating one if absent. */
-async function resolveOwnerUserId(db: Db): Promise<string> {
-  const [firstUser] = await db.select({ id: users.id }).from(users).limit(1);
-  if (firstUser) return firstUser.id;
-  const id = randomBytes(16).toString("hex");
-  try {
-    await db.insert(users).values({
-      id,
-      authBackend: "virtual",
-      principal: "owner",
-      username: "owner",
-      displayName: "Owner",
-      dashboardRole: "admin",
-    });
-  } catch {
-    const [again] = await db.select({ id: users.id }).from(users).limit(1);
-    return again?.id ?? id;
-  }
-  return id;
 }
 
 export function registerIdentityRoutes(
