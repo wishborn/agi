@@ -110,10 +110,17 @@ function getClientIp(req: IncomingMessage & { ip?: string }): string {
 }
 
 async function fetchAccountLabel(provider: ProviderName, accessToken: string, tokenType: string): Promise<string> {
+  // The account-label lookup hits a DIFFERENT host than the token endpoint
+  // (api.github.com vs github.com). Without a timeout a slow/blocked userinfo
+  // host would hang the whole completion poll indefinitely → the UI sits on
+  // "waiting for approval" forever (story #218). The label is non-critical, so
+  // bound it tightly and fall back to "" on timeout/error.
+  const labelTimeout = AbortSignal.timeout(8000);
   try {
     if (provider === "github") {
       const res = await fetch("https://api.github.com/user", {
         headers: { Authorization: `${tokenType} ${accessToken}`, "User-Agent": "Aionima-Gateway" },
+        signal: labelTimeout,
       });
       const u = await res.json() as { login?: string };
       return u.login ?? "";
@@ -121,6 +128,7 @@ async function fetchAccountLabel(provider: ProviderName, accessToken: string, to
     if (provider === "google") {
       const res = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
         headers: { Authorization: `Bearer ${accessToken}` },
+        signal: labelTimeout,
       });
       const u = await res.json() as { email?: string };
       return u.email ?? "";
@@ -128,6 +136,7 @@ async function fetchAccountLabel(provider: ProviderName, accessToken: string, to
     if (provider === "discord") {
       const res = await fetch("https://discord.com/api/v10/users/@me", {
         headers: { Authorization: `Bearer ${accessToken}` },
+        signal: labelTimeout,
       });
       const u = await res.json() as { global_name?: string; username?: string };
       return u.global_name ?? u.username ?? "";
@@ -296,18 +305,26 @@ export function registerDeviceFlowRoutes(fastify: FastifyInstance, deps: DeviceF
     const expiresIn = data.expires_in as number | undefined;
 
     const accountLabel = await fetchAccountLabel(provider, accessToken, tokenType);
-    const userId = await resolveOrCreateOwnerUserId(db, accountLabel);
 
-    // Shared store (story #213) — single upsert path for both OAuth ingress flows.
-    await upsertConnection(db, encKey, userId, {
-      provider,
-      role: sessionData.role,
-      accountLabel,
-      accessToken,
-      refreshToken: refreshToken ?? null,
-      tokenExpiresAt: expiresIn ? new Date(Date.now() + expiresIn * 1000) : null,
-      scopes: scope ?? null,
-    });
+    // Persist the connection. Any failure here must surface as a clear error —
+    // NOT an unhandled 500, which the frontend poll loop would silently treat
+    // as transient and keep spinning on "waiting" forever (story #218).
+    try {
+      const userId = await resolveOrCreateOwnerUserId(db, accountLabel);
+      // Shared store (story #213) — single upsert path for both OAuth ingress flows.
+      await upsertConnection(db, encKey, userId, {
+        provider,
+        role: sessionData.role,
+        accountLabel,
+        accessToken,
+        refreshToken: refreshToken ?? null,
+        tokenExpiresAt: expiresIn ? new Date(Date.now() + expiresIn * 1000) : null,
+        scopes: scope ?? null,
+      });
+    } catch (err) {
+      log.error(`Device flow: token obtained but persistence failed: ${err instanceof Error ? err.message : String(err)}`);
+      return reply.send({ status: "error", error: `Authorized, but saving the connection failed: ${err instanceof Error ? err.message : String(err)}` });
+    }
 
     await db.delete(handoffs).where(eq(handoffs.id, deviceCode));
 

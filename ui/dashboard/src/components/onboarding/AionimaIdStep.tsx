@@ -190,12 +190,26 @@ function DeviceFlowPrompt({ flow, onComplete, onCancel }: {
   const [pollError, setPollError] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const currentInterval = useRef(flow.interval * 1000);
+  // Consecutive poll failures (non-OK / missing-status / network). After a few,
+  // surface an error instead of spinning on "waiting" forever (story #218).
+  const failuresRef = useRef(0);
+  const MAX_POLL_FAILURES = 5;
 
   useEffect(() => {
+    const fail = (msg: string) => {
+      failuresRef.current += 1;
+      if (failuresRef.current >= MAX_POLL_FAILURES) {
+        clearInterval(intervalRef.current!);
+        setPollStatus("error");
+        setPollError(msg);
+      }
+      // else: tolerate a transient blip and keep polling
+    };
     const poll = async () => {
       try {
         const res = await fetch(`/api/auth/device-flow/poll?deviceCode=${encodeURIComponent(flow.deviceCode)}`);
-        const data = await res.json() as { status: string; interval?: number; error?: string; accountLabel?: string };
+        if (!res.ok) { fail(`Lost contact while waiting (HTTP ${res.status}). Please try again.`); return; }
+        const data = await res.json() as { status?: string; interval?: number; error?: string; accountLabel?: string };
         if (data.status === "completed") {
           clearInterval(intervalRef.current!);
           setPollStatus("completed");
@@ -207,14 +221,21 @@ function DeviceFlowPrompt({ flow, onComplete, onCancel }: {
           clearInterval(intervalRef.current!);
           setPollStatus("error");
           setPollError(data.error ?? "Unknown error");
-        } else if (data.interval && data.interval * 1000 !== currentInterval.current) {
-          // RFC 8628: slow_down — adjust interval
-          clearInterval(intervalRef.current!);
-          currentInterval.current = data.interval * 1000;
-          intervalRef.current = setInterval(() => { void poll(); }, currentInterval.current);
+        } else if (data.status === "pending") {
+          failuresRef.current = 0; // healthy response — reset the failure streak
+          if (data.interval && data.interval * 1000 !== currentInterval.current) {
+            // RFC 8628: slow_down — adjust interval
+            clearInterval(intervalRef.current!);
+            currentInterval.current = data.interval * 1000;
+            intervalRef.current = setInterval(() => { void poll(); }, currentInterval.current);
+          }
+        } else {
+          // Unknown / missing status (e.g. an error body without `status`) —
+          // don't silently spin forever; count it as a failure.
+          fail("Unexpected response while waiting for authorization. Please try again.");
         }
       } catch {
-        // transient — keep polling
+        fail("Lost contact while waiting for authorization. Please try again.");
       }
     };
 
