@@ -83,4 +83,34 @@ test.describe("System ▸ Identity (consolidated)", () => {
     await expect(page.getByTestId("identity-app-secret-google")).toBeVisible();
     await expect(page.getByTestId("identity-app-save-google")).toBeVisible();
   });
+
+  // -------------------------------------------------------------------------
+  // Resilience (story #219): baked-in GitHub + Civicognita must render even
+  // when the providers endpoint fails/empties — they are CORE services, not
+  // data fetched from the server. Mirrors how onboarding hardcodes "Add GitHub".
+  // -------------------------------------------------------------------------
+
+  test("GitHub + Civicognita still render when /api/auth/providers 500s", async ({ page }) => {
+    await page.route("**/api/auth/providers", (route) =>
+      route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "boom" }) }),
+    );
+    await page.goto("/system/identity");
+    await expect(page.getByTestId("identity-provider-grid")).toBeVisible({ timeout: 10_000 });
+    // The grid must NOT be blank — all six baked-in providers render from the seed.
+    for (const id of CANONICAL_PROVIDERS) {
+      await expect(page.getByTestId(`identity-provider-${id}`)).toBeVisible();
+    }
+    // GitHub's device-flow Connect affordance is reachable even with the endpoint down.
+    await expect(page.getByTestId("identity-connect-github")).toBeVisible();
+  });
+
+  test("the grid is never blank when /api/auth/providers returns an empty list", async ({ page }) => {
+    await page.route("**/api/auth/providers", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ providers: [] }) }),
+    );
+    await page.goto("/system/identity");
+    await expect(page.getByTestId("identity-provider-grid")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("identity-provider-github")).toBeVisible();
+    await expect(page.getByTestId("identity-provider-civicognita")).toBeVisible();
+  });
 });

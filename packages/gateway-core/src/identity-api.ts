@@ -115,6 +115,11 @@ export function registerIdentityProvidersRoute(
   const log = createComponentLogger(deps.logger, "identity-providers");
 
   // GET /api/auth/providers — canonical 6 + live status -----------------------
+  // The provider LIST is baked-in (registry SSOT) and must never be empty or
+  // 500 — GitHub + Civicognita are core services the System ▸ Identity page
+  // renders unconditionally. Every enrichment step (connections, OAuth-app
+  // config, federation) is best-effort; any throw degrades to default status
+  // but still returns the full canonical list (story #219).
   fastify.get("/api/auth/providers", async (_request, reply) => {
     // Existing connections (role-agnostic; prefer the owner-role account label).
     // A DB hiccup must not blank the whole list — the providers still render.
@@ -139,9 +144,21 @@ export function registerIdentityProvidersRoute(
     }
 
     // Redirect providers whose owner OAuth-app creds are configured (hot from
-    // gateway.json identity.oauth.<provider> via the oauthHandler thunk).
-    const appConfigured = new Set(deps.oauthHandler?.getAvailableProviders() ?? []);
-    const federationOnline = deps.federationEnabled?.() ?? false;
+    // gateway.json identity.oauth.<provider> via the oauthHandler thunk). The
+    // thunk reads from disk, so guard it — a config-read throw must not 500 the
+    // whole list and blank the grid.
+    let appConfigured = new Set<string>();
+    let federationOnline = false;
+    try {
+      appConfigured = new Set(deps.oauthHandler?.getAvailableProviders() ?? []);
+    } catch (err) {
+      log.warn(`getAvailableProviders failed — rendering providers without app status: ${String(err)}`);
+    }
+    try {
+      federationOnline = deps.federationEnabled?.() ?? false;
+    } catch (err) {
+      log.warn(`federationEnabled check failed — treating federation as offline: ${String(err)}`);
+    }
 
     const providers = computeIdentityProviderViews({
       connectedProviders,
