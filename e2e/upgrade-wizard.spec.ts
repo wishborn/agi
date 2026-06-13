@@ -221,11 +221,12 @@ test.describe("Upgrade Wizard — UI", () => {
 
     // Sources are ALWAYS listed — either as actionable upgrade cards or as
     // non-interactive info rows (up-to-date / behind). At least one of either
-    // must be present.
+    // must be present. fork-status runs several remote git comparisons, so allow
+    // generous time for the source list to populate under parallel test load.
     const anySource = page.locator(
       "[data-testid='upgrade-source-card'], [data-testid='upgrade-source-card-current'], [data-testid='upgrade-source-info']",
     );
-    await expect(anySource.first()).toBeVisible();
+    await expect(anySource.first()).toBeVisible({ timeout: 20_000 });
   });
 
   test("review action only exists when a real upgrade is available", async ({ page }) => {
@@ -247,6 +248,16 @@ test.describe("Upgrade Wizard — UI", () => {
       await expect(page.getByTestId("upgrade-wizard-preview-btn")).toHaveCount(0);
       await expect(page.getByTestId("upgrade-no-upgrades")).toBeVisible();
     }
+  });
+
+  test("up-to-date state surfaces the recent 'what changed' changelog (story #214)", async ({ page }) => {
+    test.skip(await hasRealUpgrade(page), "a real upgrade exists — the empty-state changelog isn't shown");
+    await page.getByTestId("upgrade-wizard-trigger").click();
+    await expect(page.getByTestId("upgrade-wizard-step-1")).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByTestId("upgrade-no-upgrades")).toBeVisible();
+    // Instead of a dead-end, the up-to-date state shows the running changelog.
+    // The VM repo has git history, so fetchChangelog returns commits.
+    await expect(page.getByTestId("upgrade-recent-changelog")).toBeVisible({ timeout: 5_000 });
   });
 
   test("up-to-date and behind sources render as non-interactive info rows", async ({ page }) => {
@@ -311,14 +322,16 @@ test.describe("Upgrade Wizard — UI", () => {
 
   test("History button opens history panel", async ({ page }) => {
     await page.getByTestId("upgrade-wizard-trigger").click();
-    await expect(page.getByTestId("upgrade-wizard-overlay")).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByTestId("upgrade-wizard-overlay")).toBeVisible({ timeout: 10_000 });
 
-    // Click History button
+    // Click History button (in the wizard header, available immediately).
     await page.getByRole("button", { name: "History" }).click();
 
-    // Step wizard should be hidden; history panel visible
-    await expect(page.getByTestId("upgrade-wizard-step-1")).not.toBeVisible({ timeout: 3_000 });
-    await expect(page.getByText("Upgrade History")).toBeVisible();
+    // Step wizard should be hidden; history panel visible (renders even with
+    // zero entries — empty state). Target the panel by testid (the heading text
+    // can appear in more than one node).
+    await expect(page.getByTestId("upgrade-wizard-step-1")).not.toBeVisible({ timeout: 5_000 });
+    await expect(page.getByTestId("upgrade-history-panel")).toBeVisible({ timeout: 10_000 });
   });
 
   test("actionable cards exist only when a real upgrade is available", async ({ page }) => {

@@ -29,6 +29,8 @@ import {
   mergeForkSource,
   fetchUpgradeHistory,
   addUpgradeHistoryNote,
+  fetchChangelog,
+  type ChangelogCommit,
 } from "@/api.js";
 import type {
   ForkStatus,
@@ -122,6 +124,11 @@ export function UpgradeWizard({
   // Merge result to display in step 3
   const [mergeResult, setMergeResult] = useState<{ fastForward: boolean; commits: number } | null>(null);
 
+  // Recent changelog — surfaced in the "up to date" state so the running
+  // changelog (what changed in the last upgrade) is always reachable, not just
+  // in the transient post-upgrade panel.
+  const [recentCommits, setRecentCommits] = useState<ChangelogCommit[]>([]);
+
   // Track already-seen fine steps so the list grows monotonically
   const seenStepsRef = useRef<Map<string, { status: string; message: string }>>(new Map());
 
@@ -180,6 +187,13 @@ export function UpgradeWizard({
         setForkLoading(false);
       });
   }, [open, upgradePhase]);
+
+  // Load the recent changelog on open so the "up to date" state can show what
+  // changed (the running changelog) instead of a dead-end.
+  useEffect(() => {
+    if (!open) return;
+    fetchChangelog(8).then(({ commits }) => setRecentCommits(commits)).catch(() => {});
+  }, [open]);
 
   // Dismiss on Escape
   useEffect(() => {
@@ -539,31 +553,41 @@ export function UpgradeWizard({
     );
   }
 
-  function StepRow({ label, status, first }: { label: string; status: string; first?: boolean }) {
-    const isDone = status === "ok" || status === "skip";
-    const isRunning = status === "start";
-    const isError = status === "fail";
-    const isPending = status === "pending";
+  // One consistent status language for every step row (both the merge-result
+  // group and the upgrade.sh steps): a green check = done, a muted dash =
+  // skipped (NOT green), a pulsing blue dot = running, a red × = failed, and a
+  // hollow grey ring = pending. Done text is muted (de-emphasised, readable);
+  // ONLY skipped text is struck through.
+  function StepStatusIcon({ status }: { status: string }) {
     return (
-      <div className={cn("flex items-center gap-3 py-1.5", !first && "border-t border-border/50")}>
-        <span className={cn(
-          "w-2 h-2 rounded-full shrink-0",
-          isDone ? "bg-green"
-            : isRunning ? "bg-blue animate-pulse"
-            : isError ? "bg-red"
-            : "bg-muted",
-        )} />
+      <span className="w-3.5 inline-flex items-center justify-center shrink-0 text-[11px] leading-none">
+        {status === "ok" && <span className="text-green font-semibold" aria-label="done">✓</span>}
+        {status === "skip" && <span className="text-muted-foreground/50 font-semibold" aria-label="skipped">–</span>}
+        {status === "start" && <span className="w-2 h-2 rounded-full bg-blue animate-pulse" aria-label="running" />}
+        {status === "fail" && <span className="text-red font-semibold" aria-label="failed">✕</span>}
+        {(status === "pending" || !["ok", "skip", "start", "fail"].includes(status)) && (
+          <span className="w-2 h-2 rounded-full border border-muted-foreground/40" aria-label="pending" />
+        )}
+      </span>
+    );
+  }
+
+  function StepRow({ label, status, first }: { label: string; status: string; first?: boolean }) {
+    return (
+      <div className={cn("flex items-center gap-2.5 py-1.5", !first && "border-t border-border/50")}>
+        <StepStatusIcon status={status} />
         <span className={cn(
           "text-[12px]",
-          isDone ? "text-muted-foreground line-through decoration-muted-foreground/40"
-            : isRunning ? "text-foreground font-medium"
-            : isPending ? "text-muted-foreground/50"
-            : "text-foreground",
+          status === "ok" ? "text-muted-foreground"
+            : status === "skip" ? "text-muted-foreground line-through decoration-muted-foreground/40"
+            : status === "start" ? "text-foreground font-medium"
+            : status === "fail" ? "text-red font-medium"
+            : "text-muted-foreground/50",
         )}>
           {label}
         </span>
-        {isRunning && <span className="text-[10px] text-blue ml-auto">running…</span>}
-        {isError && <span className="text-[10px] text-red ml-auto">failed</span>}
+        {status === "start" && <span className="text-[10px] text-blue ml-auto">running…</span>}
+        {status === "fail" && <span className="text-[10px] text-red ml-auto">failed</span>}
         {status === "skip" && <span className="text-[10px] text-muted-foreground/60 ml-auto">skipped</span>}
       </div>
     );
@@ -609,7 +633,7 @@ export function UpgradeWizard({
 
       {/* History panel (replaces step body when toggled) */}
       {showHistory && (
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto" data-testid="upgrade-history-panel">
           <div className="max-w-2xl mx-auto w-full px-5 py-6">
             <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-4">
               Upgrade History
@@ -806,11 +830,25 @@ export function UpgradeWizard({
                 const hasRealUpgrade = forkStatus.sources.some((s) => s.isUpgrade);
                 if (!hasRealUpgrade) {
                   return (
-                    <div
-                      data-testid="upgrade-no-upgrades"
-                      className="flex items-center gap-2 justify-center text-[12px] text-green/80 bg-green/5 border border-green/15 rounded-lg px-3 py-3"
-                    >
-                      <span>✓</span> You're up to date — nothing to review.
+                    <div data-testid="upgrade-no-upgrades" className="flex flex-col gap-3">
+                      <div className="flex items-center gap-2 justify-center text-[12px] text-green/80 bg-green/5 border border-green/15 rounded-lg px-3 py-3">
+                        <span>✓</span> You're up to date — nothing to review.
+                      </div>
+                      {/* Running changelog — what changed in recent upgrades, so this
+                          state is informative rather than a dead-end. */}
+                      {recentCommits.length > 0 && (
+                        <div data-testid="upgrade-recent-changelog" className="rounded-lg border border-border bg-surface1 p-3">
+                          <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">What changed recently</div>
+                          <div className="space-y-1">
+                            {recentCommits.slice(0, 6).map((c) => (
+                              <div key={c.hash} className="flex items-start gap-2 text-[11px]">
+                                <span className="font-mono text-muted-foreground shrink-0">{c.hash.slice(0, 7)}</span>
+                                <span className="text-foreground leading-relaxed">{c.subject}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 }
@@ -1037,24 +1075,16 @@ export function UpgradeWizard({
 
           {step === 3 && (
             <div data-testid="upgrade-wizard-step-3" className="flex flex-col gap-4">
-              {/* Merge + push result */}
+              {/* Merge + push result — same StepRow language as the steps below. */}
               {mergeResult && (
-                <div className="rounded-lg border border-border bg-card divide-y divide-border">
-                  <div className="flex items-center gap-2 px-3 py-2 text-[11px]">
-                    <span className="text-green font-semibold">✓</span>
-                    <span className="text-foreground">
-                      Merged {mergeResult.commits} commit{mergeResult.commits !== 1 ? "s" : ""}
-                      {mergeResult.fastForward ? " (fast-forward)" : " (3-way merge)"}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2 px-3 py-2 text-[11px]">
-                    <span className="text-green font-semibold">✓</span>
-                    <span className="text-foreground">Pushed to origin — fork updated</span>
-                  </div>
-                  <div className="flex items-center gap-2 px-3 py-2 text-[11px]">
-                    <span className="text-blue animate-pulse font-semibold">●</span>
-                    <span className="text-foreground font-medium">Running upgrade.sh</span>
-                  </div>
+                <div className="rounded-lg border border-border bg-card px-3 py-1.5">
+                  <StepRow
+                    first
+                    status="ok"
+                    label={`Merged ${mergeResult.commits} commit${mergeResult.commits !== 1 ? "s" : ""}${mergeResult.fastForward ? " (fast-forward)" : " (3-way merge)"}`}
+                  />
+                  <StepRow status="ok" label="Pushed to origin — fork updated" />
+                  <StepRow status={upgradeComplete ? "ok" : "start"} label="Running upgrade.sh" />
                 </div>
               )}
 
