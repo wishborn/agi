@@ -5472,9 +5472,12 @@ export async function createGatewayRuntimeState(
     const now = Date.now();
     if (now - topProcessesCache.ts < 5000) return topProcessesCache.data;
     try {
+      // `ps aux` (BSD personality) combined with `-o` errors with "conflicting
+      // format options" and breaks the top-processes widget. Use `-eo` (select
+      // all + user-defined format) — one format source, no conflict.
       const out = execFileSync(
         "ps",
-        ["aux", "--sort=-%mem", "--no-headers", "-ww", "-o", "pid,user,%cpu,%mem,rss,comm"],
+        ["-eo", "pid,user,%cpu,%mem,rss,comm", "--sort=-%mem", "--no-headers", "-ww"],
         { timeout: 5000 },
       ).toString();
       const data = out
