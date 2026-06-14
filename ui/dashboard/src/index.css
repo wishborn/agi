@@ -1,7 +1,21 @@
 @import "tailwindcss";
 
-/* Scan react-fancy's compiled output so Tailwind generates its dark: variants */
+/*
+ * Drive `dark:` variants off the app's `.dark` class (toggled by ThemeProvider:
+ * `classList.toggle("dark", theme.dark)`) instead of Tailwind v4's default
+ * OS `prefers-color-scheme`. Without this, `dark:` utilities tracked the OS, not
+ * the in-app theme — so themed components (notably fancy-diff: light line
+ * backgrounds + grey text) failed to render dark when the app was dark but the OS
+ * wasn't. This completes the Tailwind v3→v4 class-dark-mode migration. (s223)
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Scan compiled Fancy packages so Tailwind generates their dark: variants.
+ * fancy-diff ships hardcoded `dark:` Tailwind classes but only an accent var in
+ * its styles.css — its dark utilities must be generated here or the diff renders
+ * its light classes (light lines + grey text) in dark mode. */
 @source "../node_modules/@particle-academy/react-fancy/dist/**/*.js";
+@source "../node_modules/@particle-academy/fancy-diff/dist/**/*.js";
 
 /*
  * Aionima theme system — semantic CSS custom properties.
