@@ -40,7 +40,7 @@ const ROUTE_NOTES: Record<string, RouteNote | null> = {
   "/": {
     heading: "Dashboard root — overview surface",
     kind: "info",
-    body: "Default landing page. Surfaces system pulse + key metrics. Stable surface; no recent agent-side changes this session.",
+    body: "Default landing page. Surfaces system pulse + key metrics. Shell fix (v0.4.943): collapsed Workspace/Chat/Canvas rails now fill full shell height instead of shrinking to label height — AccordionPanel.Trigger now uses display:contents so the rail's h-full resolves against the full-height section.",
   },
 
   // ----- Projects (already has inline DevNotes from cycle 150 wave) -----
