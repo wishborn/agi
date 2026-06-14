@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input.js";
 import { DevNote } from "@/components/ui/dev-notes.js";
 import { cn } from "@/lib/utils";
 import { fetchIdentityProviders, configureProviderApp, clearProviderApp } from "@/api.js";
+import { DEFAULT_IDENTITY_PROVIDERS, resolveIdentityProviders } from "@/lib/identity-providers.js";
 import { useConfig } from "@/hooks.js";
 import type { AionimaConfig, IdentityProviderView, IdentityProviderStatus } from "@/types.js";
 
@@ -404,7 +405,9 @@ function FederationCard() {
 // ---------------------------------------------------------------------------
 
 export default function IdentityServicePage() {
-  const [providers, setProviders] = useState<IdentityProviderView[]>([]);
+  // Seed from the baked-in registry so GitHub + Civicognita (core, baked-in
+  // services) always render even if /api/auth/providers fails — story #219.
+  const [providers, setProviders] = useState<IdentityProviderView[]>(DEFAULT_IDENTITY_PROVIDERS);
   const [entity, setEntity] = useState<OwnerEntityData>({ registered: false });
   const [loading, setLoading] = useState(true);
   const [activeFlow, setActiveFlow] = useState<DeviceFlowState | null>(null);
@@ -418,7 +421,9 @@ export default function IdentityServicePage() {
       fetchIdentityProviders(),
       fetch("/api/onboarding/owner-entity").then((r) => r.json() as Promise<OwnerEntityData>),
     ]);
-    if (provRes.status === "fulfilled") setProviders(provRes.value);
+    // resolveIdentityProviders enriches the baked-in seed with live status; a
+    // failed/empty endpoint keeps the seed so the grid is never blank (#219).
+    if (provRes.status === "fulfilled") setProviders(resolveIdentityProviders(provRes.value));
     if (entityRes.status === "fulfilled") setEntity(entityRes.value);
   }, []);
 
@@ -499,6 +504,15 @@ export default function IdentityServicePage() {
   return (
     <PageScroll>
       <div className="max-w-4xl space-y-6" data-testid="system-identity-page">
+        <DevNote heading="Cycle — Baked-in providers always render (story #219)" kind="warning">
+          GitHub and Civicognita are core, baked-in identity services — the grid now seeds from a
+          client-side registry (DEFAULT_IDENTITY_PROVIDERS) so the canonical 6 always render even if
+          GET /api/auth/providers is empty, 500s, or never responds (e.g. a stale dashboard bundle or
+          a host that upgraded while an older gateway build is still serving). The endpoint only
+          enriches live status now; it can no longer blank the grid or hide GitHub. Backend matches:
+          the handler degrades enrichment on any throw but always returns the registry list. Mirrors
+          how the onboarding step hardcodes "Add GitHub".
+        </DevNote>
         <DevNote heading="Cycle — Identity unified + provider connect (story #212)" kind="info">
           Identity Management lives only here. The six canonical providers (GitHub, Google, Meta, X,
           Tynn.ai, Civicognita) render from a single backend registry. GitHub connects via device

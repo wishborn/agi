@@ -59,10 +59,16 @@ function makeApp(opts: {
   refreshAccessToken?: (provider: string, rt: string) => Promise<{ accessToken: string; refreshToken: string | null; expiresIn: number | null; scopes: string | null } | null>;
   writes?: Array<{ provider: string; creds: { clientId: string; clientSecret: string } | null }>;
   encKey?: Buffer;
+  /** Make getAvailableProviders / federationEnabled throw to test #219 resilience. */
+  oauthThrows?: boolean;
+  federationThrows?: boolean;
 }) {
   const app = Fastify({ logger: false });
   const oauthHandler = {
-    getAvailableProviders: () => opts.availableOAuth ?? [],
+    getAvailableProviders: () => {
+      if (opts.oauthThrows) throw new Error("config read blew up");
+      return opts.availableOAuth ?? [];
+    },
     startFlow: opts.startFlow ?? (() => null),
     refreshAccessToken: opts.refreshAccessToken ?? (async () => null),
   } as unknown as OAuthHandler;
@@ -71,7 +77,10 @@ function makeApp(opts: {
     oauthHandler,
     db: fake.db,
     encKey: opts.encKey,
-    federationEnabled: () => opts.federationEnabled ?? false,
+    federationEnabled: () => {
+      if (opts.federationThrows) throw new Error("federation read blew up");
+      return opts.federationEnabled ?? false;
+    },
     writeOAuthApp: (provider, creds) => {
       opts.writes?.push({ provider, creds });
       return true;
@@ -122,6 +131,25 @@ describe("GET /api/auth/providers — canonical 6 + live status (s212 t774)", ()
     const app = makeApp({ federationEnabled: true });
     const providers = await getProviders(app);
     expect(providers.find((p) => p.id === "civicognita")!.status).toBe("available");
+  });
+
+  // Resilience (story #219): the baked-in list must never 500 or blank — an
+  // enrichment throw degrades status but still returns the canonical 6.
+  it("still returns the canonical 6 (200) when getAvailableProviders throws", async () => {
+    const app = makeApp({ oauthThrows: true });
+    const providers = await getProviders(app); // getProviders asserts 200
+    expect(providers.map((p) => p.id)).toEqual(IDENTITY_PROVIDER_ORDER);
+    // GitHub is unaffected by the OAuth-app read; redirect providers fall back to needs-config.
+    expect(providers.find((p) => p.id === "github")!.status).toBe("available");
+    expect(providers.find((p) => p.id === "google")!.status).toBe("needs-config");
+  });
+
+  it("still returns the canonical 6 (200) when the federation check throws", async () => {
+    const app = makeApp({ federationThrows: true });
+    const providers = await getProviders(app);
+    expect(providers.map((p) => p.id)).toEqual(IDENTITY_PROVIDER_ORDER);
+    // Federation treated as offline → Civicognita stays gated rather than 500-ing.
+    expect(providers.find((p) => p.id === "civicognita")!.status).toBe("federation-gated");
   });
 });
 
