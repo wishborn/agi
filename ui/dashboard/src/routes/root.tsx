@@ -923,7 +923,13 @@ export default function RootLayout() {
               if (panelId === "workspace") {
                 return (
                   <AccordionPanel.Section key="workspace" id="workspace" unstyled className={sectionClass}>
-                    <AccordionPanel.Trigger>
+                    {/* `contents` dissolves react-fancy's Trigger wrapper div from
+                        layout so ShellPanelHeader's button/header acts as a direct
+                        flex child of the full-height (items-stretch) Section. Without
+                        it the wrapper is height:auto and the collapsed rail's `h-full`
+                        resolves to label-content height (ragged strips), not full
+                        shell height. See e2e/comms-collapsed-rail.spec.ts. */}
+                    <AccordionPanel.Trigger className="contents">
                       {(state) => <ShellPanelHeader label={label} state={state} {...headerProps} />}
                     </AccordionPanel.Trigger>
                     <AccordionPanel.Content unstyled className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
@@ -947,7 +953,13 @@ export default function RootLayout() {
               if (panelId === "chat") {
                 return (
                   <AccordionPanel.Section key="chat" id="chat" unstyled className={sectionClass}>
-                    <AccordionPanel.Trigger>
+                    {/* `contents` dissolves react-fancy's Trigger wrapper div from
+                        layout so ShellPanelHeader's button/header acts as a direct
+                        flex child of the full-height (items-stretch) Section. Without
+                        it the wrapper is height:auto and the collapsed rail's `h-full`
+                        resolves to label-content height (ragged strips), not full
+                        shell height. See e2e/comms-collapsed-rail.spec.ts. */}
+                    <AccordionPanel.Trigger className="contents">
                       {(state) => <ShellPanelHeader label={label} state={state} {...headerProps} />}
                     </AccordionPanel.Trigger>
                     <AccordionPanel.Content unstyled className="flex-1 min-h-0 min-w-0">
@@ -972,7 +984,13 @@ export default function RootLayout() {
               if (panelId === "canvas") {
                 return (
                   <AccordionPanel.Section key="canvas" id="canvas" unstyled className={sectionClass}>
-                    <AccordionPanel.Trigger>
+                    {/* `contents` dissolves react-fancy's Trigger wrapper div from
+                        layout so ShellPanelHeader's button/header acts as a direct
+                        flex child of the full-height (items-stretch) Section. Without
+                        it the wrapper is height:auto and the collapsed rail's `h-full`
+                        resolves to label-content height (ragged strips), not full
+                        shell height. See e2e/comms-collapsed-rail.spec.ts. */}
+                    <AccordionPanel.Trigger className="contents">
                       {(state) => <ShellPanelHeader label={label} state={state} {...headerProps} />}
                     </AccordionPanel.Trigger>
                     <AccordionPanel.Content unstyled className="flex-1 min-h-0 min-w-0">
