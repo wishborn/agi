@@ -577,8 +577,8 @@ importers:
         specifier: ^0.5.0
         version: 0.5.0(@particle-academy/react-fancy@4.4.3(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@particle-academy/fancy-diff':
-        specifier: ^0.2.2
-        version: 0.2.2(@particle-academy/fancy-auto-common@0.1.1(react@19.2.4))(@particle-academy/react-fancy@4.4.3(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        specifier: ^0.2.3
+        version: 0.2.3(@particle-academy/fancy-auto-common@0.1.1(react@19.2.4))(@particle-academy/react-fancy@4.4.3(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@particle-academy/fancy-echarts':
         specifier: ^4.0.1
         version: 4.0.1(echarts-gl@2.0.9(echarts@5.6.0))(echarts@5.6.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -2152,7 +2152,7 @@ packages:
 
   '@expo/bunyan@4.0.1':
     resolution: {integrity: sha512-+Lla7nYSiHZirgK+U/uYzsLv/X+HaJienbD5AKX1UQZHYfWaP+9uuQluRB4GrEVWF0GZ7vEVp/jzaOT9k/SQlg==}
-    engines: {'0': node >=0.10.0}
+    engines: {node: '>=0.10.0'}
 
   '@expo/cli@0.22.28':
     resolution: {integrity: sha512-lvt72KNitGuixYD2l3SZmRKVu2G4zJpmg5V7WfUBNpmUU5oODBw/6qmiJ6kSLAlfDozscUk+BBGknBBzxUrwrA==}
@@ -2587,8 +2587,8 @@ packages:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
 
-  '@particle-academy/fancy-diff@0.2.2':
-    resolution: {integrity: sha512-ZX+UQOcVAHj8jimrcU3oZKc+eFqar2hCHDrXrV++bjH9Lt7MKymBYwpBLAqBEHdRo4zqjaC/BUcIw6nByPB8/g==}
+  '@particle-academy/fancy-diff@0.2.3':
+    resolution: {integrity: sha512-bFHToAAV4bHDbqBv0iN+bOTAeyrNjCmv2m61x9TFIkNQTlQ/9b6MOsItElyysg1nMcGbkUGd2o7qiB5YAnjVqA==}
     peerDependencies:
       '@particle-academy/fancy-auto-common': '>=0.1.0'
       '@particle-academy/react-fancy': '>=2'
@@ -11657,7 +11657,7 @@ snapshots:
       react: 19.2.4
       react-dom: 19.2.4(react@19.2.4)
 
-  '@particle-academy/fancy-diff@0.2.2(@particle-academy/fancy-auto-common@0.1.1(react@19.2.4))(@particle-academy/react-fancy@4.4.3(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@particle-academy/fancy-diff@0.2.3(@particle-academy/fancy-auto-common@0.1.1(react@19.2.4))(@particle-academy/react-fancy@4.4.3(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
     dependencies:
       '@particle-academy/react-fancy': 4.4.3(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
       react: 19.2.4
