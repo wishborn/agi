@@ -218,7 +218,7 @@ const ROUTE_NOTES: Record<string, RouteNote | null> = {
   "/system/identity": {
     heading: "Identity — in-gateway (absorbed from the retired Local-ID service)",
     kind: "info",
-    body: "AGI owns identity, OAuth, and session brokering directly (device-flow-api.ts). Hive-ID remains the remote federation hub for cross-node trust. There is no separate Local-ID service anymore.",
+    body: "AGI owns identity, OAuth, and session brokering directly (device-flow-api.ts). Hive-ID remains the remote federation hub for cross-node trust. v0.4.952 (Wave 1): added an Approved & rejected people panel — channel approvals now retain who the person was, so you can edit a person's project access, revoke an approval, or re-review a rejection (previously decisions discarded the person).",
   },
   "/system/incidents": {
     heading: "Security incidents",
