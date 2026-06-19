@@ -15,6 +15,7 @@ import { Card, CardHeader, CardContent } from "@/components/ui/card.js";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
 import { Select } from "@/components/ui/select.js";
+import { InfoPopover } from "@/components/ui/info-popover.js";
 import { cn } from "@/lib/utils";
 import { PageScroll } from "@/components/PageScroll.js";
 import {
@@ -483,7 +484,16 @@ function PromptCard({ system, tone, refuse, temp, maxTurn, onChange }: {
 
 const ROLE_ALLOW_OPTIONS = ["all", "respond", "respond + memory", "monitor", "none"].map((v) => ({ value: v, label: v }));
 
-function RoleOverridesCard({ roles, onChange }: { roles: RoleOverride[]; onChange: (v: RoleOverride[]) => void }) {
+function RoleOverridesCard({ roles, onChange, availableRoles }: {
+  roles: RoleOverride[];
+  onChange: (v: RoleOverride[]) => void;
+  /** Live channel roles to pick from (e.g. Discord guild roles). When present,
+   *  the role field is a dropdown instead of free text (Wave 3b — "don't make
+   *  me type"). */
+  availableRoles?: Array<{ value: string; label: string }>;
+}) {
+  const hasRoleList = availableRoles !== undefined && availableRoles.length > 0;
+  const roleOptions = hasRoleList ? [{ value: "", label: "Select a role…" }, ...availableRoles] : [];
   return (
     <div className="space-y-2">
       {roles.length === 0 && (
@@ -491,13 +501,25 @@ function RoleOverridesCard({ roles, onChange }: { roles: RoleOverride[]; onChang
       )}
       {roles.map((r, i) => (
         <div key={i} className="flex items-center gap-2">
-          <Input
-            size="sm"
-            placeholder="Role name or ID"
-            value={r.role}
-            onChange={(e) => onChange(roles.map((x, j) => j === i ? { ...x, role: e.target.value } : x))}
-            className="flex-1"
-          />
+          {hasRoleList ? (
+            <div className="flex-1">
+              <Select
+                list={roleOptions}
+                value={r.role}
+                onValueChange={(v) => onChange(roles.map((x, j) => j === i ? { ...x, role: v } : x))}
+                size="sm"
+                data-testid="role-override-select"
+              />
+            </div>
+          ) : (
+            <Input
+              size="sm"
+              placeholder="Role name or ID"
+              value={r.role}
+              onChange={(e) => onChange(roles.map((x, j) => j === i ? { ...x, role: e.target.value } : x))}
+              className="flex-1"
+            />
+          )}
           <Select
             list={ROLE_ALLOW_OPTIONS}
             value={r.allow}
@@ -705,6 +727,33 @@ export default function CommsChannelsPage() {
     }
   }, [selectedId, behavior]);
 
+  // Live role list for the selected channel (Discord) → the Role-overrides
+  // picker. Backend /api/channels/discord/state returns guild roles even though
+  // the shared DiscordChannelState type doesn't list them, so read defensively.
+  const [availableRoles, setAvailableRoles] = useState<Array<{ value: string; label: string }>>([]);
+  useEffect(() => {
+    if (selectedId !== "discord") { setAvailableRoles([]); return; }
+    let cancelled = false;
+    void fetch("/api/channels/discord/state")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s: unknown) => {
+        if (cancelled || s === null) return;
+        const guilds = (s as { guilds?: Array<{ roles?: Array<{ id: string; name: string; managed?: boolean }> }> }).guilds ?? [];
+        const seen = new Set<string>();
+        const opts: Array<{ value: string; label: string }> = [];
+        for (const g of guilds) {
+          for (const role of g.roles ?? []) {
+            if (role.managed === true || role.name === "@everyone" || seen.has(role.name)) continue;
+            seen.add(role.name);
+            opts.push({ value: role.name, label: role.name });
+          }
+        }
+        setAvailableRoles(opts);
+      })
+      .catch(() => { /* roles unavailable — picker falls back to text input */ });
+    return () => { cancelled = true; };
+  }, [selectedId]);
+
   const selected = channels.find((c) => c.id === selectedId);
   const channelOptions = channels.map((c) => ({ value: c.id, label: c.name }));
 
@@ -798,8 +847,21 @@ export default function CommsChannelsPage() {
 
           {/* 3-col bottom strip */}
           <div className="px-4 pb-4 grid gap-3" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
-            <ConfigCard title="Role overrides">
-              <RoleOverridesCard roles={behavior.roleOverrides} onChange={(v) => patch("roleOverrides", v)} />
+            <ConfigCard
+              title="Role overrides"
+              right={
+                <InfoPopover title="Role overrides">
+                  Grant or restrict what Aion does for members with a given role. Each row maps a role to an
+                  access level (respond, monitor, none…). Rows are matched top-down; members with no matching
+                  role get the channel default. On Discord, pick from your server's live roles.
+                </InfoPopover>
+              }
+            >
+              <RoleOverridesCard
+                roles={behavior.roleOverrides}
+                onChange={(v) => patch("roleOverrides", v)}
+                availableRoles={availableRoles}
+              />
             </ConfigCard>
             <ConfigCard title="Rate limits">
               <RateLimitsCard value={behavior.rateLimits} onChange={(v) => patch("rateLimits", v)} />

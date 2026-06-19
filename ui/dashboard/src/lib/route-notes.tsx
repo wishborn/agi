@@ -174,6 +174,11 @@ const ROUTE_NOTES: Record<string, RouteNote | null> = {
     kind: "info",
     body: "Telegram, Discord, Signal, Gmail, WhatsApp. Each channel is a plugin-contributed adapter; settings live in their own routes.",
   },
+  "/comms/channels": {
+    heading: "Channel behavior config (Wave 3 redesign in progress)",
+    kind: "info",
+    body: "Per-channel behavior: mode, agent assignment, role overrides, rate limits, memory scope. Wave 3 — role overrides now pick from your live Discord roles (no more typing role names), and adjustable controls carry (i) info popovers explaining what they do.",
+  },
   "/comms/discord": {
     heading: "Discord channel adapter",
     kind: "info",
