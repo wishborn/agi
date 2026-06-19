@@ -23,6 +23,7 @@ import { createInstanceManager } from "@/lib/magic-app-instances.js";
 import { fetchMagicApps } from "@/api.js";
 import type { MagicAppInfo, MagicAppInstance } from "@/types.js";
 import { DnsSetupBanner } from "@/components/DnsSetupBanner.js";
+import { OfflineBanner, InstallBanner, UpdateToast } from "@particle-academy/fancy-pwa";
 import { SafemodeGuard } from "@/lib/safemode-guard.js";
 import { ActivityDot } from "@/components/ActivityDot.js";
 import { ActiveDownloads } from "@/components/ActiveDownloads.js";
@@ -874,6 +875,14 @@ export default function RootLayout() {
 
       {/* Content area — min-h-0 required so flex-1 is constrained to (100vh - header). */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
+
+        {/* PWA affordances (fancy-pwa): offline notice + install nudge inline;
+            update toast floats. Each renders null until relevant. */}
+        <div className="max-w-[1200px] w-full mx-auto px-3 md:px-6 [&:empty]:hidden [&>*]:mt-4">
+          <OfflineBanner />
+          <InstallBanner title="Install Aionima as an app for quick access and offline use." />
+        </div>
+        <UpdateToast title="New version ready" description="Reload to get the latest Aionima." />
 
         {/* DNS setup notice */}
         {hostingHook.status?.dnsmasq?.running && (
