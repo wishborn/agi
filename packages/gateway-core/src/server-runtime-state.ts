@@ -4674,6 +4674,60 @@ export async function createGatewayRuntimeState(
     });
 
     // -----------------------------------------------------------------------
+    // PR comments (Wave 2c) — read + post an incoming PR's conversation.
+    //   GET  /api/dev/incoming/:slug/pr/:number/comments
+    //   POST /api/dev/incoming/:slug/pr/:number/comments  { body }
+    // -----------------------------------------------------------------------
+    fastify.get("/api/dev/incoming/:slug/pr/:number/comments", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) return reply.code(403).send({ error: "Admin role required" });
+      }
+      const { slug, number } = request.params as { slug: string; number: string };
+      const prNumber = Number.parseInt(number, 10);
+      if (!Number.isInteger(prNumber) || prNumber <= 0) return reply.code(400).send({ error: `invalid PR number: ${number}` });
+      const { CORE_REPOS } = await import("./dev-mode-forks.js");
+      const spec = CORE_REPOS.find((s) => s.slug === slug);
+      if (!spec) return reply.code(404).send({ error: `unknown core repo: ${slug}` });
+      const { token } = await readOwnerGithub(deps, encryptionKey);
+      const { listPrComments } = await import("./dev-mode-incoming.js");
+      try {
+        const comments = await listPrComments(spec, prNumber, token ?? "");
+        return reply.send({ comments, count: comments.length });
+      } catch (err) {
+        return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    fastify.post("/api/dev/incoming/:slug/pr/:number/comments", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) return reply.code(403).send({ error: "Admin role required" });
+      }
+      const { slug, number } = request.params as { slug: string; number: string };
+      const prNumber = Number.parseInt(number, 10);
+      if (!Number.isInteger(prNumber) || prNumber <= 0) return reply.code(400).send({ error: `invalid PR number: ${number}` });
+      const commentBody = (request.body as { body?: string } | undefined)?.body;
+      if (commentBody === undefined || commentBody.trim() === "") return reply.code(400).send({ error: "comment body is required" });
+      const { CORE_REPOS } = await import("./dev-mode-forks.js");
+      const spec = CORE_REPOS.find((s) => s.slug === slug);
+      if (!spec) return reply.code(404).send({ error: `unknown core repo: ${slug}` });
+      const { token } = await readOwnerGithub(deps, encryptionKey);
+      if (token === null) return reply.code(400).send({ error: "GitHub not connected — connect on the Contributing page" });
+      const { postPrComment } = await import("./dev-mode-incoming.js");
+      try {
+        const comment = await postPrComment(spec, prNumber, token, commentBody.trim());
+        return reply.send({ ok: true, comment });
+      } catch (err) {
+        return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    // -----------------------------------------------------------------------
     // POST /api/dev/contribute/:slug/pr — open a cross-repo PR to upstream/dev
     // -----------------------------------------------------------------------
     //

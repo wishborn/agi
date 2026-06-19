@@ -4426,3 +4426,33 @@ export async function fetchContributeMetrics(): Promise<ContributeMetrics> {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()) as ContributeMetrics;
 }
+
+// --- Incoming PR comments (Wave 2c) ------------------------------------------
+
+export interface PrComment {
+  id: number;
+  authorLogin: string;
+  authorAvatar: string | null;
+  body: string;
+  createdAt: string;
+  htmlUrl: string;
+}
+
+export async function fetchPrComments(slug: string, prNumber: number): Promise<PrComment[]> {
+  const res = await fetch(`/api/dev/incoming/${encodeURIComponent(slug)}/pr/${String(prNumber)}/comments`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return ((await res.json()) as { comments: PrComment[] }).comments;
+}
+
+export async function postPrComment(slug: string, prNumber: number, body: string): Promise<PrComment> {
+  const res = await fetch(`/api/dev/incoming/${encodeURIComponent(slug)}/pr/${String(prNumber)}/comments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ body }),
+  });
+  if (!res.ok) {
+    const e = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(e.error ?? `HTTP ${res.status}`);
+  }
+  return ((await res.json()) as { comment: PrComment }).comment;
+}
