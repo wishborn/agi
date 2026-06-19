@@ -91,6 +91,13 @@
   --radius-xl: calc(0.625rem * var(--radius-scale));   /* was 1rem — panels/modals */
   --radius-2xl: calc(0.875rem * var(--radius-scale));  /* was TW default 1rem */
 
+  /* Spacing density (Wave 5): Tailwind v4 resolves spacing utilities as
+   * calc(var(--spacing) times n), so scaling this base unit scales ALL spacing
+   * by --space-scale (Compact 0.85, Comfortable 1, Spacious 1.15). Default
+   * scale 1 keeps 0.25rem, byte-identical until the Appearance density control
+   * changes it. Must live in @theme (not :root) for Tailwind to keep it. */
+  --spacing: calc(0.25rem * var(--space-scale));
+
   /* Hearth shell — brand + agent tokens (constant, not theme-switched) */
   --color-seed-ink: #b8960c;  /* brand gold/bronze from SeedMark gradient midpoint */
 }
