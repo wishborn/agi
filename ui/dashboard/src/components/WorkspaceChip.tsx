@@ -15,7 +15,7 @@ import { ChevronsUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   Folders, Inbox, LayoutDashboard, Link as LinkIcon, FileBarChart,
-  Compass, FileText, GitBranch, Store, ScrollText, Rocket,
+  Compass, FileText, GitBranch, GitPullRequest, Store, ScrollText, Rocket,
   SlidersHorizontal, Activity, Blocks, ShieldHalf, ShieldCheck,
   AlertTriangle, Building2, HardDrive, Fingerprint, Sparkles, Cpu,
   Shield, FileSearch, NotebookPen, MessageCircle, Mail,
@@ -72,6 +72,7 @@ const ADMIN_NAV: NavSection[] = [
     { to: "/hf-marketplace",      label: "HF Models", icon: Cpu },
   ]},
   { title: "Gateway", items: [
+    { to: "/contribute",        label: "Contributing", icon: GitPullRequest },
     { to: "/gateway/workflows", label: "Workflows",  icon: GitBranch },
     { to: "/gateway/logs",      label: "Logs",       icon: ScrollText },
     { to: "/gateway/onboarding", label: "Onboarding", icon: Rocket },

@@ -30,6 +30,7 @@ import DocsPage from "./routes/docs.js";
 import NotesPage from "./routes/notes.js";
 import SettingsLayout from "./routes/settings-layout.js";
 import SettingsGatewayPage from "./routes/settings-gateway.js";
+import ContributePage from "./routes/contribute.js";
 import SettingsDynamicPage from "./routes/settings-dynamic.js";
 import { PluginPageResolver } from "./components/PluginPageResolver.js";
 import MarketplacePage from "./routes/marketplace.js";
@@ -84,6 +85,7 @@ export const router = createBrowserRouter([
       { path: "reports/:coaReqId", element: <ReportDetailPage /> },
       { path: "entity/:id", element: <EntityPage /> },
       { path: "projects", element: <ProjectsPage /> },
+      { path: "contribute", element: <ContributePage /> },
 { path: "projects/:slug", element: <ProjectDetailPage /> },
       // MagicApps
       { path: "magic-apps", element: <MagicAppsPage /> },

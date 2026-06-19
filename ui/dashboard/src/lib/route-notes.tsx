@@ -50,6 +50,12 @@ const ROUTE_NOTES: Record<string, RouteNote | null> = {
     body: "Click the notebook icon in the header to see the cycle 134-149 work surfaced as inline notes (tray restructure, Health column, Tynn column, PM-Lite reframe).",
   },
 
+  "/contribute": {
+    heading: "Contributing — its own page (Wave 2, was Settings → Gateway tab)",
+    kind: "info",
+    body: "Outbound (open PRs from your fork), Incoming (PRs to review), and Repos & Mode (contributing-mode toggle + GitHub connect + repo status + test VM) tabs. v0.4.x adds contribution metrics + PR comments. Moved here from the buried Settings → Gateway → Contributing tab.",
+  },
+
   // ----- Aionima collection / PAx (already have inline) -----
   "/aionima": null,
   "/pax": null,
