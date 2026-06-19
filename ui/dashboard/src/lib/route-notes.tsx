@@ -50,6 +50,11 @@ const ROUTE_NOTES: Record<string, RouteNote | null> = {
     body: "Click the notebook icon in the header to see the cycle 134-149 work surfaced as inline notes (tray restructure, Health column, Tynn column, PM-Lite reframe).",
   },
 
+  "/memory": {
+    heading: "Aion's Memory — one shared mind (Wave 4)",
+    kind: "info",
+    body: "Browse Aion's global memory: episodic events (semantic search + project filter) and a Knowledge-docs search over the PRIME corpus + agi docs + per-project knowledge. Memory is app-wide, NOT per-channel — over GET /api/memory/events + /api/memory/search-docs.",
+  },
   "/contribute": {
     heading: "Contributing — its own page (Wave 2, was Settings → Gateway tab)",
     kind: "info",
