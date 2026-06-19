@@ -4412,3 +4412,17 @@ export async function reReviewPerson(channelId: string, channelUserId: string): 
   const res = await fetch(`/api/identity/people/${encodeURIComponent(channelId)}/${encodeURIComponent(channelUserId)}/re-review`, { method: "POST" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
+
+// --- Contribution metrics (Wave 2b) ------------------------------------------
+
+export interface ContributeMetrics {
+  ownerLogin: string | null;
+  repos: Array<{ slug: string; displayName: string; merged: number; open: number; total: number }>;
+  totals: { merged: number; open: number; total: number };
+}
+
+export async function fetchContributeMetrics(): Promise<ContributeMetrics> {
+  const res = await fetch("/api/dev/contribute/metrics");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as ContributeMetrics;
+}

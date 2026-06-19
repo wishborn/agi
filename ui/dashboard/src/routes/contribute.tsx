@@ -17,8 +17,30 @@ import { PageScroll } from "@/components/PageScroll.js";
 import { AionimaContributePanel } from "@/components/AionimaContributePanel.js";
 import { AionimaIncomingPrsPanel } from "@/components/AionimaIncomingPrsPanel.js";
 import { DevSettings } from "@/components/settings/DevSettings.js";
-import { useConfig } from "@/hooks.js";
+import { useConfig, useContributeMetrics } from "@/hooks.js";
+import { cn } from "@/lib/utils";
 import type { AionimaConfig } from "@/types.js";
+
+/** Compact contribution-metrics strip — accepted (merged), open, repos, total. */
+function MetricsStrip() {
+  const { data } = useContributeMetrics();
+  if (!data) return null;
+  const reposWith = data.repos.filter((r) => r.total > 0).length;
+  const stat = (label: string, value: number, cls?: string) => (
+    <div className="flex-1 min-w-[120px] rounded-lg border border-border bg-card px-4 py-2.5">
+      <div className={cn("text-xl font-semibold tabular-nums", cls)}>{value}</div>
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+    </div>
+  );
+  return (
+    <div className="flex flex-wrap gap-3" data-testid="contribute-metrics">
+      {stat("Accepted (merged)", data.totals.merged, "text-green-400")}
+      {stat("Open PRs", data.totals.open, "text-amber-400")}
+      {stat("Repos contributed", reposWith)}
+      {stat("Total PRs", data.totals.total)}
+    </div>
+  );
+}
 
 export default function ContributePage() {
   const cfg = useConfig();
@@ -33,6 +55,8 @@ export default function ContributePage() {
             Send your fork's work upstream, review incoming PRs, and manage contributing mode — in one place.
           </p>
         </div>
+
+        <MetricsStrip />
 
         <Tabs defaultValue="outbound">
           <TabsList>

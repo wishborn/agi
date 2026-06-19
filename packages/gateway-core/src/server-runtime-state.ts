@@ -4554,6 +4554,28 @@ export async function createGatewayRuntimeState(
     });
 
     // -----------------------------------------------------------------------
+    // GET /api/dev/contribute/metrics — contribution metrics (Wave 2b)
+    //   Per core repo: merged PRs (accepted contributions), open PRs, total
+    //   authored, plus rolled-up totals. Informational; zeros without a token.
+    // -----------------------------------------------------------------------
+    fastify.get("/api/dev/contribute/metrics", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      }
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) {
+          return reply.code(403).send({ error: "Admin role required" });
+        }
+      }
+      const { login, token } = await readOwnerGithub(deps, encryptionKey);
+      const { computeContributeMetrics } = await import("./dev-mode-contribute.js");
+      const metrics = await computeContributeMetrics(login, token);
+      return reply.send(metrics);
+    });
+
+    // -----------------------------------------------------------------------
     // GET /api/dev/incoming/status — INBOUND PR review queue
     // -----------------------------------------------------------------------
     //
