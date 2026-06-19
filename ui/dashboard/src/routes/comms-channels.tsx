@@ -505,7 +505,11 @@ function RoleOverridesCard({ roles, onChange, availableRoles }: {
           {hasRoleList ? (
             <div className="flex-1">
               <Select
-                list={roleOptions}
+                list={
+                  r.role !== "" && !roleOptions.some((o) => o.value === r.role)
+                    ? [...roleOptions, { value: r.role, label: `${r.role} (not in server)` }]
+                    : roleOptions
+                }
                 value={r.role}
                 onValueChange={(v) => onChange(roles.map((x, j) => j === i ? { ...x, role: v } : x))}
                 size="sm"
