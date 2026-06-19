@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
 import { Select } from "@/components/ui/select.js";
 import { InfoPopover } from "@/components/ui/info-popover.js";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs.js";
 import { cn } from "@/lib/utils";
 import { PageScroll } from "@/components/PageScroll.js";
 import {
@@ -807,8 +808,17 @@ export default function CommsChannelsPage() {
             <ModePicker current={behavior.mode} onChange={(m) => patch("mode", m)} disabled={!selectedId} />
           </div>
 
-          {/* 2-col config cards */}
-          <div className="p-4 grid gap-3" style={{ gridTemplateColumns: "1fr 1fr" }}>
+          {/* Per-channel config grouped into tabs (Wave 3d — owner: "too many
+              panels, no tabs, content too moshed up"). Mode stays above as the
+              master switch; the rest splits into Behavior / Access & limits. */}
+          <div className="px-4 pb-4">
+            <Tabs defaultValue="behavior">
+              <TabsList>
+                <TabsTrigger value="behavior" data-testid="channel-tab-behavior">Behavior</TabsTrigger>
+                <TabsTrigger value="access" data-testid="channel-tab-access">Access &amp; limits</TabsTrigger>
+              </TabsList>
+              <TabsContent value="behavior">
+                <div className="grid gap-3 pt-3" style={{ gridTemplateColumns: "1fr 1fr" }}>
             <ConfigCard
               title="Agent assignment"
               right={<Badge color="zinc" variant="soft" size="sm">{behavior.agentIds.length} assigned</Badge>}
@@ -879,10 +889,10 @@ export default function CommsChannelsPage() {
                 onChange={(p) => { setBehavior((prev) => ({ ...prev, ...p })); setDirty(true); }}
               />
             </ConfigCard>
-          </div>
-
-          {/* 3-col bottom strip */}
-          <div className="px-4 pb-4 grid gap-3" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+                </div>
+              </TabsContent>
+              <TabsContent value="access">
+                <div className="grid gap-3 pt-3" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
             <ConfigCard
               title="Role overrides"
               right={
@@ -918,6 +928,9 @@ export default function CommsChannelsPage() {
                 Automatic thread tagging routes messages to relevant agents. Topic model training requires channel history.
               </p>
             </ConfigCard>
+                </div>
+              </TabsContent>
+            </Tabs>
           </div>
         </div>
 
