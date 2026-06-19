@@ -79,14 +79,27 @@
   --color-subtext0: var(--color-muted-foreground);
   --color-text: var(--color-foreground);
 
-  /* Structural tokens (constant across themes) */
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
+  /* Structural tokens. Radius reduced to "Subtle" (s227 Wave 0c) — cards ~8px,
+   * panels/modals ~10px, inputs/buttons ~6px; badges/avatars keep rounded-full.
+   * All values scale by --radius-scale (default 1, defined in :root below) so the
+   * Appearance settings page (Wave 5) can offer Sharp/Subtle/Near-square presets
+   * at runtime. react-fancy components inherit this — our Tailwind build emits
+   * `.rounded-*{border-radius:var(--radius-*)}` for every scanned classname. */
+  --radius-sm: calc(0.375rem * var(--radius-scale));   /* ~6px */
+  --radius-md: calc(0.5rem * var(--radius-scale));     /* ~8px */
+  --radius-lg: calc(0.5rem * var(--radius-scale));     /* was 0.75rem — cards */
+  --radius-xl: calc(0.625rem * var(--radius-scale));   /* was 1rem — panels/modals */
+  --radius-2xl: calc(0.875rem * var(--radius-scale));  /* was TW default 1rem */
 
   /* Hearth shell — brand + agent tokens (constant, not theme-switched) */
   --color-seed-ink: #b8960c;  /* brand gold/bronze from SeedMark gradient midpoint */
+}
+
+/* Global corner-roundness multiplier. Defined outside @theme so it does NOT
+ * generate a stray `rounded-scale` utility. The Appearance page (Wave 5) sets
+ * this on documentElement (e.g. 0 = Near-square, 0.6 = Sharp, 1 = Subtle). */
+:root {
+  --radius-scale: 1;
 }
 
 /* Agent highlight tokens — derived from primary so they work across all themes. */
