@@ -34,4 +34,21 @@ test.describe("Appearance settings", () => {
     );
     expect(scale).toBe("0.6");
   });
+
+  test("selecting Spacious density scales --spacing (not a no-op)", async ({ page }) => {
+    await page.goto("/settings/appearance");
+    await expect(page.getByTestId("appearance-density")).toBeVisible({ timeout: 10_000 });
+    await page.getByTestId("appearance-density").getByRole("button", { name: "Spacious" }).click();
+    const { spaceScale, spacingPx } = await page.evaluate(() => {
+      const cs = getComputedStyle(document.documentElement);
+      return {
+        spaceScale: cs.getPropertyValue("--space-scale").trim(),
+        // --spacing resolves to a px length; Spacious (1.15) must exceed the
+        // default 0.25rem == 4px, proving the base unit actually scaled.
+        spacingPx: parseFloat(cs.getPropertyValue("--spacing")),
+      };
+    });
+    expect(spaceScale).toBe("1.15");
+    expect(spacingPx).toBeGreaterThan(4);
+  });
 });

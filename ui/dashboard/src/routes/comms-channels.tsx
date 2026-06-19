@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Switch, Progress, Slider, Textarea, Badge,
-  Avatar,
+  Avatar, useToast,
 } from "@particle-academy/react-fancy";
 import { Card, CardHeader, CardContent } from "@/components/ui/card.js";
 import { Button } from "@/components/ui/button.js";
@@ -505,7 +505,11 @@ function RoleOverridesCard({ roles, onChange, availableRoles }: {
           {hasRoleList ? (
             <div className="flex-1">
               <Select
-                list={roleOptions}
+                list={
+                  r.role !== "" && !roleOptions.some((o) => o.value === r.role)
+                    ? [...roleOptions, { value: r.role, label: `${r.role} (not in server)` }]
+                    : roleOptions
+                }
                 value={r.role}
                 onValueChange={(v) => onChange(roles.map((x, j) => j === i ? { ...x, role: v } : x))}
                 size="sm"
@@ -696,6 +700,7 @@ export default function CommsChannelsPage() {
   const [saving, setSaving]        = useState(false);
   const [dirty, setDirty]          = useState(false);
   const [error, setError]          = useState<string | null>(null);
+  const { toast } = useToast();
 
   useEffect(() => {
     fetchChannels().then((list) => { setChannels(list); if (list.length > 0) setSelectedId((p) => p ?? list[0].id); }).catch(() => {});
@@ -721,12 +726,15 @@ export default function CommsChannelsPage() {
     try {
       await updateChannelConfig(selectedId, { config: serializeBehavior(behavior) });
       setDirty(false);
+      toast({ title: "Channel settings saved", description: "Your changes are live.", variant: "success" });
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      toast({ title: "Save failed", description: msg, variant: "error" });
     } finally {
       setSaving(false);
     }
-  }, [selectedId, behavior]);
+  }, [selectedId, behavior, toast]);
 
   // Live role list for the selected channel (Discord) → the Role-overrides
   // picker. Backend /api/channels/discord/state returns guild roles even though
@@ -818,7 +826,7 @@ export default function CommsChannelsPage() {
                 <TabsTrigger value="access" data-testid="channel-tab-access">Access &amp; limits</TabsTrigger>
               </TabsList>
               <TabsContent value="behavior">
-                <div className="grid gap-3 pt-3" style={{ gridTemplateColumns: "1fr 1fr" }}>
+                <div className="grid gap-4 pt-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
             <ConfigCard
               title="Agent assignment"
               right={<Badge color="zinc" variant="soft" size="sm">{behavior.agentIds.length} assigned</Badge>}
@@ -892,7 +900,7 @@ export default function CommsChannelsPage() {
                 </div>
               </TabsContent>
               <TabsContent value="access">
-                <div className="grid gap-3 pt-3" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+                <div className="grid gap-4 pt-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
             <ConfigCard
               title="Role overrides"
               right={

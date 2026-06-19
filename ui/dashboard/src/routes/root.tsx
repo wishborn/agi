@@ -23,7 +23,7 @@ import { createInstanceManager } from "@/lib/magic-app-instances.js";
 import { fetchMagicApps } from "@/api.js";
 import type { MagicAppInfo, MagicAppInstance } from "@/types.js";
 import { DnsSetupBanner } from "@/components/DnsSetupBanner.js";
-import { OfflineBanner, InstallBanner, UpdateToast } from "@particle-academy/fancy-pwa";
+import { OfflineBanner, InstallBanner } from "@particle-academy/fancy-pwa";
 import { SafemodeGuard } from "@/lib/safemode-guard.js";
 import { ActivityDot } from "@/components/ActivityDot.js";
 import { ActiveDownloads } from "@/components/ActiveDownloads.js";
@@ -878,11 +878,14 @@ export default function RootLayout() {
 
         {/* PWA affordances (fancy-pwa): offline notice + install nudge inline;
             update toast floats. Each renders null until relevant. */}
+        {/* Update prompting is handled by the silent version-aware auto-reload
+            in hooks.ts (reloads once when the gateway reports a new version).
+            We deliberately do NOT also render fancy-pwa's <UpdateToast> — having
+            both produced two competing "reload your page" popups. */}
         <div className="max-w-[1200px] w-full mx-auto px-3 md:px-6 [&:empty]:hidden [&>*]:mt-4">
           <OfflineBanner />
           <InstallBanner title="Install Aionima as an app for quick access and offline use." />
         </div>
-        <UpdateToast title="New version ready" description="Reload to get the latest Aionima." />
 
         {/* DNS setup notice */}
         {hostingHook.status?.dnsmasq?.running && (
