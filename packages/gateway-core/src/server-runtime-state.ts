@@ -2356,6 +2356,67 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // Identity people management (Wave 1 s228) — approved/rejected history.
+  //
+  // GET    /api/identity/people?status=approved|rejected           — list decided people
+  // PATCH  /api/identity/people/:channelId/:channelUserId/projects — edit granted projects
+  // POST   /api/identity/people/:channelId/:channelUserId/revoke   — revoke approval
+  // POST   /api/identity/people/:channelId/:channelUserId/re-review — un-reject (re-review)
+  //
+  // Same private-network + 503-if-no-store guard as /api/identity/pending.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/identity/people", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+    if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
+    const status = (request.query as Record<string, string>)["status"];
+    const filter = status === "approved" || status === "rejected" ? status : undefined;
+    const people = deps.pendingApprovalStore.listDecisions(filter);
+    return reply.send({ people, count: people.length });
+  });
+
+  fastify.patch<{ Params: { channelId: string; channelUserId: string }; Body: { projectPaths?: string[] } }>(
+    "/api/identity/people/:channelId/:channelUserId/projects",
+    async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+      if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
+      const { channelId, channelUserId } = request.params;
+      const projectPaths = (request.body as { projectPaths?: string[] } | undefined)?.projectPaths ?? [];
+      const changed = deps.pendingApprovalStore.updateAssignedProjects(channelId, channelUserId, projectPaths);
+      if (!changed) return reply.code(404).send({ error: "No approved person found for that channel + user" });
+      return reply.send({ ok: true, channelId, channelUserId, projectPaths });
+    },
+  );
+
+  fastify.post<{ Params: { channelId: string; channelUserId: string } }>(
+    "/api/identity/people/:channelId/:channelUserId/revoke",
+    async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+      if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
+      const { channelId, channelUserId } = request.params;
+      const changed = deps.pendingApprovalStore.clearDecision(channelId, channelUserId);
+      if (!changed) return reply.code(404).send({ error: "No decision found for that channel + user" });
+      return reply.send({ ok: true, action: "revoked", channelId, channelUserId });
+    },
+  );
+
+  fastify.post<{ Params: { channelId: string; channelUserId: string } }>(
+    "/api/identity/people/:channelId/:channelUserId/re-review",
+    async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+      if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
+      const { channelId, channelUserId } = request.params;
+      const changed = deps.pendingApprovalStore.clearDecision(channelId, channelUserId);
+      if (!changed) return reply.code(404).send({ error: "No decision found for that channel + user" });
+      return reply.send({ ok: true, action: "re-review", channelId, channelUserId });
+    },
+  );
+
+  // -----------------------------------------------------------------------
   // CHN-F (s167) — channel workflow bindings CRUD (private network only)
   //
   // GET    /api/channels/workflow-bindings                — list all
