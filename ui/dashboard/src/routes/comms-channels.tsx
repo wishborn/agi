@@ -794,7 +794,14 @@ export default function CommsChannelsPage() {
           {/* Mode picker */}
           <div className="px-4 py-3 border-b border-border">
             <div className="mb-2">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Mode</div>
+              <div className="flex items-center gap-1.5">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Mode</div>
+                <InfoPopover title="Channel mode">
+                  Off = Aion ignores this channel entirely. Monitor = reads &amp; remembers but never speaks.
+                  Respond = participates (subject to the @mention + role rules below). This is the master
+                  switch for how visible Aion is here.
+                </InfoPopover>
+              </div>
               <div className="text-[12px] text-muted-foreground mt-0.5">How Aion participates in this channel.</div>
             </div>
             <ModePicker current={behavior.mode} onChange={(m) => patch("mode", m)} disabled={!selectedId} />
@@ -809,15 +816,44 @@ export default function CommsChannelsPage() {
               <AgentAssignment agents={agents} assignedIds={behavior.agentIds} onChange={(ids) => patch("agentIds", ids)} />
             </ConfigCard>
 
-            <ConfigCard title="Memory scope">
+            <ConfigCard
+              title="Memory scope"
+              right={
+                <InfoPopover title="Memory scope">
+                  Which slices of Aion's memory it draws on in this channel. channel = this channel's history;
+                  server = the whole server; user = the speaker's history across channels; thread = the current
+                  thread only. Aion has one shared memory ("one mind") — these toggles only scope what it recalls
+                  here, they don't create separate memories.
+                </InfoPopover>
+              }
+            >
               <MemoryScopeCard value={behavior.memory} onChange={(v) => patch("memory", v)} />
             </ConfigCard>
 
-            <ConfigCard title="Tool access">
+            <ConfigCard
+              title="Tool access"
+              right={
+                <InfoPopover title="Tool access">
+                  Which tools Aion may call when acting in this channel (memory recall/write, web search,
+                  reactions…). Unchecking one disables it here even if it's enabled elsewhere — a per-channel
+                  safety boundary.
+                </InfoPopover>
+              }
+            >
               <ToolAccessCard tools={behavior.tools} onChange={(v) => patch("tools", v)} />
             </ConfigCard>
 
-            <ConfigCard title="Auto-moderation" accent="bg-amber-500">
+            <ConfigCard
+              title="Auto-moderation"
+              accent="bg-amber-500"
+              right={
+                <InfoPopover title="Auto-moderation">
+                  Lets Aion watch this channel and act on policy issues (flag, warn, remove) without being
+                  addressed. Higher sensitivity catches more but risks false positives; off means Aion only
+                  moderates when explicitly asked.
+                </InfoPopover>
+              }
+            >
               <AutoModCard value={behavior.autoMod} onChange={(v) => patch("autoMod", v)} />
             </ConfigCard>
 
@@ -863,7 +899,15 @@ export default function CommsChannelsPage() {
                 availableRoles={availableRoles}
               />
             </ConfigCard>
-            <ConfigCard title="Rate limits">
+            <ConfigCard
+              title="Rate limits"
+              right={
+                <InfoPopover title="Rate limits">
+                  Caps how often Aion replies in this channel (per-minute / per-hour) so it can't flood or run
+                  up cost during a busy thread. Hitting the cap makes Aion go quiet until the window resets.
+                </InfoPopover>
+              }
+            >
               <RateLimitsCard value={behavior.rateLimits} onChange={(v) => patch("rateLimits", v)} />
             </ConfigCard>
             <ConfigCard
