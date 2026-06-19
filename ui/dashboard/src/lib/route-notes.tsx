@@ -65,6 +65,12 @@ const ROUTE_NOTES: Record<string, RouteNote | null> = {
   "/aionima": null,
   "/pax": null,
 
+  "/settings/appearance": {
+    heading: "Appearance — UI customization (Wave 5)",
+    kind: "info",
+    body: "Theme, corner radius (Subtle/Sharp/Near-square → --radius-scale), motion speed + reduce-motion, and spacing density. AppearanceProvider applies CSS vars on documentElement live and persists ui.appearance to gateway.json. The radius scale multiplies every --radius-* (built in Wave 0c).",
+  },
+
   // ----- Settings family -----
   "/settings": {
     heading: "Settings root",

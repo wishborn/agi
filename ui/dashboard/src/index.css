@@ -95,11 +95,36 @@
   --color-seed-ink: #b8960c;  /* brand gold/bronze from SeedMark gradient midpoint */
 }
 
-/* Global corner-roundness multiplier. Defined outside @theme so it does NOT
- * generate a stray `rounded-scale` utility. The Appearance page (Wave 5) sets
- * this on documentElement (e.g. 0 = Near-square, 0.6 = Sharp, 1 = Subtle). */
+/* Runtime UI-customization vars (Wave 5 — set on documentElement by
+ * AppearanceProvider; defaults here so the app renders correctly pre-hydration).
+ * --radius-scale multiplies every --radius-* via calc (Subtle 1 / Sharp 0.6 /
+ * Near-square 0.15). --duration-* drive transition speed; --space-scale is a
+ * density multiplier. Defined outside @theme so --radius-scale/--space-scale
+ * don't generate stray utilities. */
 :root {
   --radius-scale: 1;
+  --space-scale: 1;
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+}
+
+/* Accessibility / Appearance: when reduce-motion is on (toggle or the user's OS
+ * preference), collapse transitions + animations to near-instant. */
+.reduce-motion *,
+.reduce-motion *::before,
+.reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Agent highlight tokens — derived from primary so they work across all themes. */

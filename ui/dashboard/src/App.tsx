@@ -9,6 +9,7 @@ import { Toast } from "@particle-academy/react-fancy";
 import { FancyPwaProvider } from "@particle-academy/fancy-pwa";
 import { queryClient } from "./lib/query-client.js";
 import { ThemeProvider } from "./lib/theme-provider.js";
+import { AppearanceProvider } from "./lib/appearance-provider.js";
 import { router } from "./router.js";
 import { DevNotesProvider } from "./components/ui/dev-notes.js";
 import { isElectron } from "./lib/environment.js";
@@ -21,11 +22,13 @@ export function App() {
     <FancyPwaProvider options={{ register: !isElectron() }}>
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
-          <Toast.Provider position="bottom-right" maxToasts={5}>
-            <DevNotesProvider>
-              <RouterProvider router={router} />
-            </DevNotesProvider>
-          </Toast.Provider>
+          <AppearanceProvider>
+            <Toast.Provider position="bottom-right" maxToasts={5}>
+              <DevNotesProvider>
+                <RouterProvider router={router} />
+              </DevNotesProvider>
+            </Toast.Provider>
+          </AppearanceProvider>
         </ThemeProvider>
       </QueryClientProvider>
     </FancyPwaProvider>
