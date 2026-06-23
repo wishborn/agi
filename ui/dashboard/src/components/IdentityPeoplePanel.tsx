@@ -1,13 +1,17 @@
 /**
  * IdentityPeoplePanel — manage people the owner has APPROVED or REJECTED from
- * channels (Wave 1 s228). Until now there was no way to see who had been decided
- * on; the decision record discarded the person. The store now retains a person
- * snapshot, and these controls let the owner edit project access, revoke an
- * approval, or re-review a rejection.
+ * channels (Wave 1 s228; re-sourced from the entity store in the identity fix).
+ *
+ * APPROVED people are now sourced from the ENTITY STORE (the durable local
+ * identity system) — a verified/sealed entity == an approved person — NOT from
+ * the ephemeral pending-approval decision log, which only held pre-fix
+ * snapshot-less rows and showed nothing. The controls let the owner edit project
+ * access, revoke an approval (drops the entity back to unverified), or re-review
+ * a rejection.
  *
  * Built on react-fancy/PAx primitives (Card, Badge, Button, Popover). Renders
- * nothing until at least one decision exists, so it stays out of the way on a
- * fresh install.
+ * nothing until at least one decided person exists, so it stays out of the way
+ * on a fresh install.
  */
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";

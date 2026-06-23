@@ -377,3 +377,24 @@ describe("PendingApprovalStore — persistence (slice 7)", () => {
     expect(existsSync(persistPath)).toBe(false);
   });
 });
+
+describe("PendingApprovalStore.upsertAssignedProjects", () => {
+  it("updates the existing decision when one is present", () => {
+    const store = new PendingApprovalStore();
+    store.capture({ channelId: "discord", roomId: "r1", channelUserId: "u1", displayName: "Alice", projectPath: "/p", firstMessagePreview: "" });
+    store.approve(pendingApprovalId("discord", "r1", "u1"));
+    expect(store.upsertAssignedProjects("discord", "u1", "Alice", ["/proj/a"])).toBe(true);
+    const found = store.listDecisions("approved").find((d) => d.channelUserId === "u1");
+    expect(found?.assignedProjectPaths).toEqual(["/proj/a"]);
+  });
+
+  it("creates a synthetic approved decision when the person has NO prior decision (entity-sourced approval)", () => {
+    const store = new PendingApprovalStore();
+    // No capture/approve — the approval lives only as a verified entity.
+    expect(store.upsertAssignedProjects("discord", "u2", "Bob", ["/proj/b"])).toBe(true);
+    const found = store.listDecisions("approved").find((d) => d.channelUserId === "u2");
+    expect(found).toBeDefined();
+    expect(found?.displayName).toBe("Bob");
+    expect(found?.assignedProjectPaths).toEqual(["/proj/b"]);
+  });
+});

@@ -396,6 +396,35 @@ export class PendingApprovalStore {
   }
 
   /**
+   * Set a person's assigned projects, creating a synthetic "approved" decision
+   * when none exists. Approved people are now sourced from the entity store, so
+   * many won't have a decision-log entry — this lets the owner assign projects
+   * to them anyway (the decision log is the project-assignment side-store).
+   * Always returns true (the upsert always succeeds).
+   */
+  upsertAssignedProjects(
+    channelId: string,
+    channelUserId: string,
+    displayName: string,
+    projectPaths: string[],
+  ): boolean {
+    if (this.updateAssignedProjects(channelId, channelUserId, projectPaths)) return true;
+    // No existing decision — synthesize one keyed person-level (no room).
+    const synthId = `${channelId}::*::${channelUserId}`;
+    this.decisions.set(synthId, {
+      status: "approved",
+      decidedAt: new Date().toISOString(),
+      channelId,
+      channelUserId,
+      displayName,
+      projectPath: "",
+      assignedProjectPaths: projectPaths,
+    });
+    this.save();
+    return true;
+  }
+
+  /**
    * Remove ALL decisions for a person. Use to revoke an approval (the person
    * returns to unknown — a future message re-captures a pending record) or to
    * re-review a rejection (un-block so they can post again). Returns true if any
