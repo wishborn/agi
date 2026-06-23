@@ -2372,7 +2372,69 @@ export async function createGatewayRuntimeState(
     if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
     const status = (request.query as Record<string, string>)["status"];
     const filter = status === "approved" || status === "rejected" ? status : undefined;
-    const people = deps.pendingApprovalStore.listDecisions(filter);
+
+    // APPROVED people are sourced from the ENTITY STORE (the durable local
+    // identity system) — a verified/sealed tier == approved. This is the fix
+    // for "doesn't remember users / not tied to the identity system": the old
+    // implementation read the ephemeral pending-approval decision log, which
+    // held only pre-Wave-1 snapshot-less rows and showed nothing. The decision
+    // log is now consulted ONLY to enrich each person with assigned projects.
+    const decisionList = deps.pendingApprovalStore.listDecisions();
+    const projectsByPerson = new Map<string, string[]>();
+    for (const d of decisionList) {
+      if (d.channelId !== undefined && d.channelUserId !== undefined && d.assignedProjectPaths !== undefined) {
+        projectsByPerson.set(`${d.channelId}::${d.channelUserId}`, d.assignedProjectPaths);
+      }
+    }
+
+    type DecidedPerson = {
+      status: "approved" | "rejected";
+      channelId: string;
+      channelUserId: string;
+      displayName: string;
+      decidedAt: string;
+      entityId?: string;
+      verificationTier?: string;
+      assignedProjectPaths?: string[];
+    };
+    const people: DecidedPerson[] = [];
+
+    if (deps.entityStore !== undefined && filter !== "rejected") {
+      const channelPeople = await deps.entityStore.listChannelPeople();
+      for (const p of channelPeople) {
+        if (p.verificationTier !== "verified" && p.verificationTier !== "sealed") continue;
+        // The owner (#E0) isn't an "approved person" — they do the approving.
+        if (deps.ownerEntityId !== undefined && p.entityId === deps.ownerEntityId) continue;
+        const projects = projectsByPerson.get(`${p.channel}::${p.channelUserId}`);
+        people.push({
+          status: "approved",
+          channelId: p.channel,
+          channelUserId: p.channelUserId,
+          displayName: p.displayName,
+          decidedAt: p.updatedAt,
+          entityId: p.entityId,
+          verificationTier: p.verificationTier,
+          ...(projects !== undefined ? { assignedProjectPaths: projects } : {}),
+        });
+      }
+    }
+
+    // REJECTED people come from the decision log (a rejection is a drop, not a
+    // durable entity tier). Snapshot-bearing rejected decisions only.
+    if (filter !== "approved") {
+      for (const d of deps.pendingApprovalStore.listDecisions("rejected")) {
+        if (d.channelId === undefined || d.channelUserId === undefined) continue;
+        people.push({
+          status: "rejected",
+          channelId: d.channelId,
+          channelUserId: d.channelUserId,
+          displayName: d.displayName ?? d.channelUserId,
+          decidedAt: d.decidedAt,
+          ...(d.assignedProjectPaths !== undefined ? { assignedProjectPaths: d.assignedProjectPaths } : {}),
+        });
+      }
+    }
+
     return reply.send({ people, count: people.length });
   });
 
@@ -2384,8 +2446,14 @@ export async function createGatewayRuntimeState(
       if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
       const { channelId, channelUserId } = request.params;
       const projectPaths = (request.body as { projectPaths?: string[] } | undefined)?.projectPaths ?? [];
-      const changed = deps.pendingApprovalStore.updateAssignedProjects(channelId, channelUserId, projectPaths);
-      if (!changed) return reply.code(404).send({ error: "No approved person found for that channel + user" });
+      // Upsert: entity-sourced approved people may have no decision-log entry,
+      // so resolve their display name from the entity store and create one.
+      let displayName = channelUserId;
+      if (deps.entityStore !== undefined) {
+        const entity = await deps.entityStore.resolveEntityByChannel(channelId, channelUserId);
+        if (entity !== null) displayName = entity.displayName;
+      }
+      deps.pendingApprovalStore.upsertAssignedProjects(channelId, channelUserId, displayName, projectPaths);
       return reply.send({ ok: true, channelId, channelUserId, projectPaths });
     },
   );
@@ -2397,9 +2465,22 @@ export async function createGatewayRuntimeState(
       if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
       if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
       const { channelId, channelUserId } = request.params;
-      const changed = deps.pendingApprovalStore.clearDecision(channelId, channelUserId);
-      if (!changed) return reply.code(404).send({ error: "No decision found for that channel + user" });
-      return reply.send({ ok: true, action: "revoked", channelId, channelUserId });
+      // Real revoke: drop the entity back to "unverified" (the inbound gate
+      // checks entity.verificationTier, so clearing only the JSON decision would
+      // leave the person fully approved). Then clear any decision-log record.
+      let entityRevoked = false;
+      if (deps.entityStore !== undefined) {
+        const entity = await deps.entityStore.resolveEntityByChannel(channelId, channelUserId);
+        if (entity !== null && (entity.verificationTier === "verified" || entity.verificationTier === "sealed")) {
+          await deps.entityStore.updateEntity(entity.id, { verificationTier: "unverified" });
+          entityRevoked = true;
+        }
+      }
+      const clearedDecision = deps.pendingApprovalStore.clearDecision(channelId, channelUserId);
+      if (!entityRevoked && !clearedDecision) {
+        return reply.code(404).send({ error: "No approved entity or decision found for that channel + user" });
+      }
+      return reply.send({ ok: true, action: "revoked", channelId, channelUserId, entityRevoked });
     },
   );
 
