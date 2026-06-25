@@ -601,8 +601,18 @@ version_after="$(cd "$DEPLOY_DIR" && node -p "require('./package.json').version"
 # Write deployed version so the gateway can detect a new boot and emit system:upgraded.
 echo "$version_after" > "$HOME/.agi/deployed-version.txt"
 
-if [ "$version_before" != "$version_after" ]; then
-  emit "restart" "start" "Version changed: $version_before → $version_after"
+# Restart decision compares the RUNNING PROCESS version (from /health) against the
+# freshly-deployed source version — NOT source-before vs source-after. The old
+# source-vs-source check missed the failure mode where a PRIOR pull already
+# advanced the on-disk source but the process never actually bounced: every
+# subsequent upgrade then saw "no version change" and skipped the restart, so a
+# stale process served old code indefinitely (observed in the wild: a 0.4.937
+# process ran for 9.5 days while the source + dist were 0.4.968). Comparing
+# against the live process is self-correcting — if they ever drift, we bounce.
+version_running="$(curl -s --max-time 3 http://localhost:3100/health 2>/dev/null | grep -oE '"version":"[^"]*"' | head -1 | sed 's/.*:"//;s/"$//')"
+
+if [ "$version_running" != "$version_after" ]; then
+  emit "restart" "start" "Running v${version_running:-unknown/down} != deployed v$version_after — restarting"
   # Sentinel file tells the new server it booted after an upgrade.
   # The new server removes it on startup and appends "restart complete" to the upgrade log.
   touch "$DEPLOY_DIR/.upgrade-pending"
@@ -628,5 +638,5 @@ if [ "$version_before" != "$version_after" ]; then
   fi
   # Do NOT remove .upgrade-pending here — the newly-booted server consumes it.
 else
-  emit "complete" "done" "Deploy complete — no version change (v$version_after)"
+  emit "complete" "done" "Deploy complete — running process already on v$version_after"
 fi
