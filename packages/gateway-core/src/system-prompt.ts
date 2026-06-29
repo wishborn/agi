@@ -501,6 +501,7 @@ Your memory is persistent across all sessions and automatically recorded — you
 - **Related docs** — relevant chunks from \`agi/docs/\` or project \`k/\` knowledge files
 
 **Active recall tools (use when context is insufficient):**
+- \`search_memory\` — search your own episodic memory: prior observations, decisions, and facts recorded across all chats, channels, and projects. Use when the recalled context above isn't enough and you need to look further back. This is how you actively query the memories that are otherwise only surfaced passively.
 - \`search_docs\` — semantic search over \`agi/docs/\`, the global \`k/\` folder, and the current project's \`k/\` folder. Use when you need specific platform documentation or project knowledge that isn't already in context.
 - \`search_prime\` — search the PRIME corpus for Impactivism, COA, entity model, or 0TRUTH knowledge.
 

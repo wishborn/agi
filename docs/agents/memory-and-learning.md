@@ -97,6 +97,21 @@ Trigger sites:
 
 **`search_docs` tool:** always available (no state/tier gate); semantic query over doc chunks.
 
+**`search_memory` tool:** always available (no state/tier gate); active recall over the
+episodic store (`memory_events`) — the same `GraphMemoryAdapter` the dashboard "Aion's Mind"
+browser reads. Before this tool, episodic memory was only injected *passively* at
+prompt-assembly (see Phase 5 below), so the agent could not query its own memories on demand;
+`search_memory` closes that gap. Takes `query` (optional — empty returns most-recent), `limit`,
+`projectPath`, `tags`, `minConfidence`.
+
+> **Capture prerequisite — the prompts must load.** `EpisodeExtractor` loads
+> `prompts/episode-extract.md` + `episode-score.md` at module init; if they fail to resolve,
+> `EXTRACT_PROMPT` is empty and **every** extraction returns null → `memory_events` stays empty
+> forever. The prompts-dir is resolved by walking up from `import.meta.url` (the relative depth
+> differs between the `gateway-core/dist` and `cli/dist` bundles — the gateway runs the cli
+> bundle). On failure the gateway logs `episodic memory DEGRADED` at boot, and the extractor
+> keeps a stored/skipped tally so a silently-empty capture layer is visible in logs.
+
 ---
 
 ## Memory injection into context (Phase 5)

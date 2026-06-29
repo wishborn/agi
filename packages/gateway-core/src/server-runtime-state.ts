@@ -8243,6 +8243,13 @@ export async function createGatewayRuntimeState(
   // safe to serve without the full editor plugin.
 
   const docsRoot = join(deps.selfRepoPath ?? deps.workspaceRoot ?? process.cwd(), "docs");
+  // The PRIME corpus — what the /knowledge "Browse" page is meant to surface
+  // (domains, inputs, the full Aionima knowledge graph). Read-only: PRIME is
+  // read-only at runtime, and the built-in routes never write, so this exposes
+  // a browse/read view of the corpus without the editor plugin. Editing PRIME
+  // stays out-of-band (the editor plugin / git), per the read-only-at-runtime
+  // architecture.
+  const knowledgeRoot = deps.primeDir ?? join(deps.selfRepoPath ?? deps.workspaceRoot ?? process.cwd(), ".aionima");
 
   type FileNode = { name: string; path: string; type: "file" | "dir"; children?: FileNode[]; ext?: string };
 
@@ -8274,9 +8281,15 @@ export async function createGatewayRuntimeState(
 
   fastify.get("/api/files/tree", async (request, reply) => {
     const { root } = request.query as { root?: string };
+    // Knowledge root — read-only browse of the PRIME corpus (the knowledge graph
+    // the /knowledge page surfaces). Returns an empty tree (not 403) when the
+    // corpus isn't present, so the page renders an honest empty state.
+    if (root === "knowledge") {
+      return reply.send({ tree: buildFileTree(knowledgeRoot, "knowledge", true) });
+    }
     // Only allow the docs subtree
     if (root !== "docs") {
-      return reply.code(403).send({ error: "Built-in file tree only serves docs/" });
+      return reply.code(403).send({ error: "Built-in file tree only serves docs/ or knowledge/" });
     }
     const tree = buildFileTree(docsRoot, "docs");
 
@@ -8372,6 +8385,21 @@ export async function createGatewayRuntimeState(
       const content = readFileSync(resolved, "utf-8");
       const size = statSync(resolved).size;
       return reply.send({ content, size });
+    }
+
+    if (filePath.startsWith("knowledge/")) {
+      // Read-only PRIME corpus file. Tree paths are prefixed "knowledge/"; strip
+      // it and resolve within the corpus root, with path-traversal protection.
+      const rel = filePath.slice("knowledge/".length);
+      const resolved = resolvePath(knowledgeRoot, rel);
+      const rootAbsolute = resolvePath(knowledgeRoot);
+      if (!resolved.startsWith(rootAbsolute + "/") && resolved !== rootAbsolute) {
+        return reply.code(403).send({ error: "Path is outside the knowledge corpus" });
+      }
+      if (!existsSync(resolved) || !statSync(resolved).isFile()) {
+        return reply.code(404).send({ error: "File not found" });
+      }
+      return reply.send({ content: readFileSync(resolved, "utf-8"), size: statSync(resolved).size });
     }
 
     // Resolve and validate the path stays within docs/

@@ -1160,7 +1160,13 @@ export async function startGatewayServer(
   const { createLookupDocHandler, LOOKUP_DOC_MANIFEST, LOOKUP_DOC_INPUT_SCHEMA } = await import("./tools/lookup-doc.js");
   const docsDir = join(agiRoot, "docs");
   toolRegistry.register(LOOKUP_DOC_MANIFEST as import("./system-prompt.js").ToolManifestEntry, createLookupDocHandler({ docsDir }), LOOKUP_DOC_INPUT_SCHEMA);
-  log.info("doc indexer initialized + search_docs + lookup_doc tools registered");
+  // search_memory — active recall over episodic memory (memory_events). Closes
+  // the "Aion has memories but no way to search them" gap: previously memories
+  // were only injected passively at prompt-assembly. Same store as the dashboard
+  // memory browser (graphAdapter), so agent + UI read one shared memory.
+  const { createSearchMemoryHandler, SEARCH_MEMORY_MANIFEST, SEARCH_MEMORY_INPUT_SCHEMA } = await import("./tools/search-memory.js");
+  toolRegistry.register(SEARCH_MEMORY_MANIFEST as import("./system-prompt.js").ToolManifestEntry, createSearchMemoryHandler({ graphAdapter: memoryAdapter }), SEARCH_MEMORY_INPUT_SCHEMA);
+  log.info("doc indexer initialized + search_docs + lookup_doc + search_memory tools registered");
 
   // s152 t651 — UserNotes store. Constructed here (before AgentInvoker)
   // so the invoker can read notes per project + global on each turn and
