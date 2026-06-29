@@ -38,7 +38,11 @@ import type { ComponentLogger } from "./logger.js";
  *
  * Order:
  *   - 5 Civicognita-owned cores
- *   - 6 Particle-Academy ADF UI primitives (PAx)
+ *
+ * The Particle-Academy (PAx) ADF UI primitives were REMOVED from this list
+ * (owner directive 2026-06-29) — they are no longer monorepo-resident and must
+ * not be moved into `_aionima/repos/`. Fancy UI lives in the separate Fancy
+ * project (Fancy agent) and is consumed here only as published packages.
  */
 export const AIONIMA_SYSTEM_FORK_NAMES: readonly string[] = Object.freeze([
   "agi",
@@ -46,12 +50,6 @@ export const AIONIMA_SYSTEM_FORK_NAMES: readonly string[] = Object.freeze([
   "id",
   "marketplace",
   "mapp-marketplace",
-  "react-fancy",
-  "fancy-code",
-  "fancy-sheets",
-  "fancy-echarts",
-  "fancy-3d",
-  "fancy-screens",
 ]);
 
 // ---------------------------------------------------------------------------
