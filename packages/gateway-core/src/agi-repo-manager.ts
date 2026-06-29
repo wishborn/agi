@@ -1,19 +1,18 @@
 /**
- * agi-repo-manager — {project}.agi monorepo envelope (Phase 3, first slice).
+ * agi-repo-manager — {slug}.agi monorepo envelope.
  *
- * Formalizes a project folder as a git repository under the hard `{slug}.agi`
- * naming convention. The `.agi` suffix distinguishes the project *envelope*
- * from the actual repos it contains. Each entry under `repos/` that is itself
- * a git repo is registered as a git **submodule** of the envelope; the
- * envelope tracks `project.json`, `k/`, and `.gitmodules` directly while
- * ignoring scratch (`sandbox/`, `.trash/`).
+ * An **AGI Envelope** is the general agentic-workspace primitive: a whole
+ * agentic workspace expressed as a monorepo. The `.agi` suffix distinguishes
+ * the project *envelope* from the actual repos it contains. Each entry under
+ * `repos/` that is itself a git repo is registered as a git **submodule** of
+ * the envelope; the envelope tracks `project.json`, `.ai/`, and `.gitmodules`
+ * directly while ignoring scratch + local-only state (`sandbox/`, `.trash/`,
+ * `.ai/chat/`, `.ai/memory/`).
  *
- * Owner-confirmed mechanics only. Deferred (NOT here): the Tynn-desktop
- * discovery handshake + shared schema convergence, `{slug}.agi` GitHub remote
- * auto-creation, and automatic submodule-pin advancement on upgrade.
- *
- * The `_aionima` meta-project is EXCLUDED — it keeps its `collection.json`
- * convention and is not a `{slug}.agi` project.
+ * General by design — ANY project folder can become an envelope (owner directive
+ * 2026-06-29). `_aionima` itself was converted to the `aionima.agi` envelope; it
+ * is no longer a special-cased exclusion. `.agi` envelope repos are almost always
+ * PRIVATE and are CREATED (not forked) for the user.
  *
  * All git invocations go through spawnSync with array args (no shell), so a
  * malicious path or URL cannot inject a command.
@@ -67,11 +66,6 @@ function git(args: string[], cwd: string): { ok: boolean; stdout: string; stderr
 
 function isGitRepo(dir: string): boolean {
   return existsSync(join(dir, ".git"));
-}
-
-/** A project is the `_aionima` meta-project — excluded from the .agi model. */
-function isExcludedEnvelope(projectPath: string): boolean {
-  return basename(projectPath) === "_aionima";
 }
 
 // ---------------------------------------------------------------------------
@@ -141,9 +135,6 @@ export function getAgiRepoStatus(projectPath: string): AgiRepoStatus {
  * Idempotent: a no-op when the envelope is already a git repo.
  */
 export function initAgiRepo(projectPath: string): AgiRepoOpResult {
-  if (isExcludedEnvelope(projectPath)) {
-    return { ok: false, error: "_aionima is a collection, not a {slug}.agi project" };
-  }
   if (!existsSync(projectPath)) {
     return { ok: false, error: `project path does not exist: ${projectPath}` };
   }
@@ -224,10 +215,6 @@ export function addRepoSubmodule(
  * list of newly-registered submodule paths.
  */
 export function importAgiRepo(projectPath: string): AgiRepoOpResult {
-  if (isExcludedEnvelope(projectPath)) {
-    return { ok: false, error: "_aionima is a collection, not a {slug}.agi project" };
-  }
-
   if (!isGitRepo(projectPath)) {
     const init = initAgiRepo(projectPath);
     if (!init.ok) return init;
