@@ -1983,7 +1983,7 @@ export async function createGatewayRuntimeState(
     const targetPath = agiRepoGuard(request, reply);
     if (!targetPath) return reply;
     const body = (request.body ?? {}) as { mode?: string; url?: string };
-    const { setAgiRemote, agiRemoteName } = await import("./agi-repo-manager.js");
+    const { setAgiRemote, createPrivateAgiRemote } = await import("./agi-repo-manager.js");
 
     let remoteUrl: string | null = null;
 
@@ -2010,40 +2010,9 @@ export async function createGatewayRuntimeState(
       if (!token) {
         return reply.code(400).send({ error: "no connected GitHub account — connect one in Settings → Gateway → Contributing, or use mode=url" });
       }
-      const repoName = agiRemoteName(targetPath);
-      try {
-        const gh = await fetch("https://api.github.com/user/repos", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: "application/vnd.github+json",
-            "Content-Type": "application/json",
-            "User-Agent": "aionima-gateway",
-          },
-          body: JSON.stringify({ name: repoName, private: true, description: "Aionima .agi project envelope (config + knowledge state)" }),
-          signal: AbortSignal.timeout(15_000),
-        });
-        if (gh.status === 422) {
-          // Already exists — reuse it rather than failing.
-          const me = await fetch("https://api.github.com/user", {
-            headers: { Authorization: `Bearer ${token}`, "User-Agent": "aionima-gateway" },
-            signal: AbortSignal.timeout(10_000),
-          });
-          const login = ((await me.json().catch(() => ({}))) as { login?: string }).login;
-          remoteUrl = login ? `https://github.com/${login}/${repoName}.git` : null;
-        } else if (!gh.ok) {
-          const errBody = (await gh.json().catch(() => ({}))) as { message?: string };
-          return reply.code(502).send({ error: `GitHub repo create failed (${String(gh.status)}): ${errBody.message ?? "unknown"}` });
-        } else {
-          const created = (await gh.json()) as { clone_url?: string };
-          remoteUrl = created.clone_url ?? null;
-        }
-      } catch (err) {
-        return reply.code(502).send({ error: `GitHub API error: ${err instanceof Error ? err.message : String(err)}` });
-      }
-      if (!remoteUrl) return reply.code(502).send({ error: "could not resolve the created repo URL" });
-      const res = setAgiRemote(targetPath, remoteUrl);
-      if (!res.ok) return reply.code(400).send({ error: res.error });
+      const created = await createPrivateAgiRemote(targetPath, token);
+      if (!created.ok) return reply.code(502).send({ error: created.error });
+      remoteUrl = created.remoteUrl ?? null;
     } else {
       return reply.code(400).send({ error: "mode must be 'auto' or 'url'" });
     }
@@ -5200,6 +5169,36 @@ export async function createGatewayRuntimeState(
                 log.warn(`dev: failed to provision ${repo.slug}: ${reason}`);
                 provisionFailures.push({ slug: repo.slug, reason });
               }
+            }
+
+            // After provisioning the core forks, formalize the collection as a
+            // private {slug}.agi envelope (owner directive 2026-06-29): git init
+            // + register the forks as submodules + create the PRIVATE {slug}.agi
+            // GitHub repo (created, NOT forked — .agi envelopes are private).
+            // Contributing Mode creates the .agi monorepo for the user, not just
+            // the forks. Best-effort + idempotent — failures are logged, never
+            // block the toggle.
+            try {
+              const { importAgiRepo, createPrivateAgiRemote, agiRemoteName } = await import("./agi-repo-manager.js");
+              const imp = importAgiRepo(coreCollectionDir);
+              if (imp.ok) {
+                log.info(`dev: envelope ${agiRemoteName(coreCollectionDir)} initialized (${String((imp.registered ?? []).length)} submodule(s))`);
+                if (cloneAccessToken) {
+                  const remote = await createPrivateAgiRemote(coreCollectionDir, cloneAccessToken);
+                  if (remote.ok) {
+                    log.info(`dev: private envelope remote → ${remote.remoteUrl ?? "?"}`);
+                    if (deps.projectConfigManager) {
+                      try { await deps.projectConfigManager.update(coreCollectionDir, { agiRepo: { initialized: true, remoteUrl: remote.remoteUrl ?? null } }); } catch { /* best-effort */ }
+                    }
+                  } else {
+                    log.warn(`dev: envelope remote create skipped: ${remote.error ?? "unknown"}`);
+                  }
+                }
+              } else {
+                log.warn(`dev: envelope init failed: ${imp.error ?? "unknown"}`);
+              }
+            } catch (envErr) {
+              log.warn(`dev: envelope provisioning error: ${envErr instanceof Error ? envErr.message : String(envErr)}`);
             }
           }
 

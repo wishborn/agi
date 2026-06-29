@@ -252,7 +252,11 @@ export function importAgiRepo(projectPath: string): AgiRepoOpResult {
 
 /** The canonical `{slug}.agi` remote repo name for an envelope folder. */
 export function agiRemoteName(projectPath: string): string {
-  const base = basename(projectPath);
+  // Strip LEADING underscores: collection/workspace dirs are underscore-prefixed
+  // to hide them from hosting discovery (e.g. `_aionima`), but the envelope slug
+  // and its `{slug}.agi` remote drop the prefix (`aionima.agi`). Internal
+  // underscores are part of the name and preserved.
+  const base = basename(projectPath).replace(/^_+/, "");
   return base.endsWith(".agi") ? base : `${base}.agi`;
 }
 
@@ -397,6 +401,55 @@ export function setAgiRemote(projectPath: string, url: string): AgiSyncResult {
     : git(["remote", "add", "origin", trimmed], projectPath);
   if (!res.ok) return { ok: false, error: `git remote failed: ${res.stderr}` };
   return { ok: true, summary: `origin → ${trimmed}` };
+}
+
+/**
+ * Create the envelope's `{slug}.agi` GitHub repo as a PRIVATE repo (created, NOT
+ * forked — `.agi` envelopes are almost always private) and wire it as `origin`.
+ * Idempotent: an existing repo (HTTP 422) is reused. Used by both the
+ * agi-repo/remote endpoint and the Contributing-Mode provisioning flow so the
+ * "create the {slug}.agi monorepo for the user" behavior lives in one place.
+ */
+export async function createPrivateAgiRemote(
+  projectPath: string,
+  token: string,
+): Promise<{ ok: boolean; remoteUrl?: string; error?: string }> {
+  const repoName = agiRemoteName(projectPath);
+  let remoteUrl: string | null = null;
+  try {
+    const gh = await fetch("https://api.github.com/user/repos", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "User-Agent": "aionima-gateway",
+      },
+      body: JSON.stringify({ name: repoName, private: true, description: "Aionima .agi project envelope (config + knowledge state)" }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (gh.status === 422) {
+      // Already exists — reuse it rather than failing.
+      const me = await fetch("https://api.github.com/user", {
+        headers: { Authorization: `Bearer ${token}`, "User-Agent": "aionima-gateway" },
+        signal: AbortSignal.timeout(10_000),
+      });
+      const login = ((await me.json().catch(() => ({}))) as { login?: string }).login;
+      remoteUrl = login ? `https://github.com/${login}/${repoName}.git` : null;
+    } else if (!gh.ok) {
+      const errBody = (await gh.json().catch(() => ({}))) as { message?: string };
+      return { ok: false, error: `GitHub repo create failed (${String(gh.status)}): ${errBody.message ?? "unknown"}` };
+    } else {
+      const created = (await gh.json()) as { clone_url?: string };
+      remoteUrl = created.clone_url ?? null;
+    }
+  } catch (err) {
+    return { ok: false, error: `GitHub API error: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  if (!remoteUrl) return { ok: false, error: "could not resolve the created repo URL" };
+  const res = setAgiRemote(projectPath, remoteUrl);
+  if (!res.ok) return { ok: false, error: res.error };
+  return { ok: true, remoteUrl };
 }
 
 /**

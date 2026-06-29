@@ -5,11 +5,12 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, rmSync, existsSync, writeFileSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import {
-  getAgiRepoStatus, initAgiRepo,
+  getAgiRepoStatus, initAgiRepo, importAgiRepo,
   agiRemoteName, classifyEnvelopePath, getAgiConfigState, setAgiRemote,
 } from "./agi-repo-manager.js";
 import { KNOWLEDGE_DIR } from "./project-config-path.js";
@@ -76,6 +77,16 @@ describe("config-state engine (Slice 1, story #207)", () => {
     expect(agiRemoteName("/x/foo.agi")).toBe("foo.agi");
   });
 
+  it("agiRemoteName strips LEADING underscores (collection dirs), keeps internal ones", () => {
+    // The workspace collection dir is `_aionima` (underscore-prefixed to hide it
+    // from hosting discovery), but the envelope slug/remote is `aionima.agi`.
+    expect(agiRemoteName("/x/_aionima")).toBe("aionima.agi");
+    expect(agiRemoteName("/x/__aionima")).toBe("aionima.agi");
+    // internal underscores are part of the name and must be preserved
+    expect(agiRemoteName("/x/civicognita_web")).toBe("civicognita_web.agi");
+    expect(agiRemoteName("/x/_my_workspace")).toBe("my_workspace.agi");
+  });
+
   it("classifyEnvelopePath separates config / knowledge / submodule and EXCLUDES chats+scratch", () => {
     expect(classifyEnvelopePath("project.json")).toBe("config");
     expect(classifyEnvelopePath(".gitmodules")).toBe("config");
@@ -138,3 +149,38 @@ describe("config-state engine (Slice 1, story #207)", () => {
     expect(getAgiConfigState(proj).initialized).toBe(false);
   });
 });
+
+describe("importAgiRepo — adopt existing repos/ clones as submodules (Dev-Mode provisioning op)", () => {
+  function initFakeFork(collectionDir: string, name: string, originUrl: string): void {
+    const dir = join(collectionDir, "repos", name);
+    mkdirSync(dir, { recursive: true });
+    const g = (args: string[]) => execFileSync("git", args, { cwd: dir, stdio: "pipe" });
+    g(["init", "-q"]);
+    g(["remote", "add", "origin", originUrl]);
+    writeFileSync(join(dir, "README.md"), `# ${name}\n`);
+    g(["add", "-A"]);
+    g(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"]);
+  }
+
+  it("inits the envelope and registers each repos/<name> as a submodule from its origin", () => {
+    const proj = join(tmp, "_aionima");
+    mkdirSync(proj, { recursive: true });
+    writeFileSync(join(proj, "project.json"), "{}\n");
+    initFakeFork(proj, "agi", "https://github.com/wishborn/agi.git");
+    initFakeFork(proj, "prime", "https://github.com/wishborn/aionima.git");
+
+    const res = importAgiRepo(proj);
+    expect(res.ok).toBe(true);
+    expect(res.initialized).toBe(true);
+    expect([...(res.registered ?? [])].sort()).toEqual(["repos/agi", "repos/prime"]);
+
+    const status = getAgiRepoStatus(proj);
+    expect(status.initialized).toBe(true);
+    expect([...status.submodules].sort()).toEqual(["repos/agi", "repos/prime"]);
+    expect(status.unregisteredRepos).toEqual([]);
+
+    const mods = readFileSync(join(proj, ".gitmodules"), "utf-8");
+    expect(mods).toContain("url = https://github.com/wishborn/agi.git");
+    expect(mods).toContain("url = https://github.com/wishborn/aionima.git");
+  });
+})
