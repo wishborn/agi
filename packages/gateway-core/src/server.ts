@@ -1136,6 +1136,11 @@ export async function startGatewayServer(
     accumulator: _accumulator,
     consolidationEngine,
     logger: log,
+    // s234 — owner cascade-up policy, read live from gateway.json (hot-swappable).
+    getCascadePolicy: () =>
+      (systemConfigService?.read() ?? config).memory?.cascade as
+        | import("./memory-scope.js").CascadePolicy
+        | undefined,
   });
   log.info("episodic memory pipeline initialized (extractor + accumulator)");
 

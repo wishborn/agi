@@ -157,6 +157,72 @@ export function isReadOnlyScope(scope: MemoryScope): boolean {
   return scopeLayer(scope) === "prime";
 }
 
+// ---------------------------------------------------------------------------
+// Owner cascade-up policy (s234 P4)
+// ---------------------------------------------------------------------------
+
+/** A target layer a memory may be promoted up to. Never 'prime' (read-only). */
+export type CascadeCeiling = "gestalt" | "project" | "provider";
+
+/**
+ * Owner-configurable upward promotion (gateway.json → memory.cascade). Default
+ * (absent) = confined: every memory stays at its write scope. A per-layer
+ * `reachUpTo` lets new memories of that layer surface at a broader scope.
+ */
+export interface CascadePolicy {
+  room?: { reachUpTo?: CascadeCeiling };
+  provider?: { reachUpTo?: CascadeCeiling };
+  project?: { reachUpTo?: CascadeCeiling };
+}
+
+/** Reconstruct the scope at a target layer from the request context, or null if unavailable. */
+export function scopeAtLayer(ctx: ScopeContext, layer: ScopeLayer): MemoryScope | null {
+  const channelId = ctx.channelId ?? undefined;
+  const roomId = ctx.roomId ?? undefined;
+  const projectPath = ctx.projectPath ?? undefined;
+  switch (layer) {
+    case "room":
+      return channelId && roomId ? roomScope(channelId, roomId) : null;
+    case "provider":
+      return channelId ? providerScope(channelId) : null;
+    case "project":
+      return projectPath ? projectScope(projectPath) : null;
+    case "gestalt":
+      return SCOPE_GESTALT;
+    case "prime":
+      return null; // never a write/promotion target
+  }
+}
+
+/**
+ * The scope a new memory is stored at, after applying the owner cascade-up
+ * policy. Starts from the most-specific writable scope and promotes it UP to
+ * the configured ceiling for that layer (broader = lower layer order). Promotion
+ * never crosses into 'prime' and never moves to a narrower scope.
+ */
+export function resolveWriteScopeWithPolicy(
+  ctx: ScopeContext,
+  policy?: CascadePolicy,
+): MemoryScope {
+  const base = resolveWriteScope(ctx);
+  if (!policy) return base;
+
+  const baseLayer = scopeLayer(base);
+  const rule =
+    baseLayer === "room" ? policy.room
+    : baseLayer === "provider" ? policy.provider
+    : baseLayer === "project" ? policy.project
+    : undefined;
+
+  const ceiling = rule?.reachUpTo;
+  if (!ceiling) return base;
+
+  // Promote only if the ceiling is strictly broader (lower order) than the base.
+  if (SCOPE_LAYER_ORDER[ceiling] >= SCOPE_LAYER_ORDER[baseLayer]) return base;
+
+  return scopeAtLayer(ctx, ceiling) ?? base;
+}
+
 /**
  * Prompt-injection category label for a recalled memory, keyed off its scope
  * layer. Drives the per-locality headings in the system prompt's ## Memory

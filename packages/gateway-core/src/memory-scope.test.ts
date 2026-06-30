@@ -17,6 +17,8 @@ import {
   resolveWriteScope,
   isReadOnlyScope,
   memoryCategoryForScope,
+  scopeAtLayer,
+  resolveWriteScopeWithPolicy,
 } from "./memory-scope.js";
 
 describe("memory-scope — constructors + parsing", () => {
@@ -172,5 +174,56 @@ describe("memory-scope — memoryCategoryForScope (prompt labels)", () => {
     expect(memoryCategoryForScope(null)).toBe("memory");
     expect(memoryCategoryForScope(undefined)).toBe("memory");
     expect(memoryCategoryForScope("global")).toBe("memory"); // pre-s234 legacy value
+  });
+});
+
+describe("memory-scope — cascade-up policy (owner promotion)", () => {
+  const roomCtx = { channelId: "discord", roomId: "guild-1:bugs", projectPath: "/p/j" };
+
+  it("default (no policy) keeps every memory confined", () => {
+    expect(resolveWriteScopeWithPolicy(roomCtx)).toBe("room:discord:guild-1:bugs");
+    expect(resolveWriteScopeWithPolicy({ projectPath: "/p/j" })).toBe("project:/p/j");
+    expect(resolveWriteScopeWithPolicy({})).toBe("gestalt");
+  });
+
+  it("promotes a room memory up to provider", () => {
+    expect(resolveWriteScopeWithPolicy(roomCtx, { room: { reachUpTo: "provider" } }))
+      .toBe("provider:discord");
+  });
+
+  it("promotes a room memory all the way to gestalt", () => {
+    expect(resolveWriteScopeWithPolicy(roomCtx, { room: { reachUpTo: "gestalt" } }))
+      .toBe("gestalt");
+  });
+
+  it("promotes a provider memory to gestalt", () => {
+    expect(resolveWriteScopeWithPolicy({ channelId: "discord" }, { provider: { reachUpTo: "gestalt" } }))
+      .toBe("gestalt");
+  });
+
+  it("promotes a project memory to gestalt", () => {
+    expect(resolveWriteScopeWithPolicy({ projectPath: "/p/j" }, { project: { reachUpTo: "gestalt" } }))
+      .toBe("gestalt");
+  });
+
+  it("ignores a ceiling that is not strictly broader than the base", () => {
+    // provider rule doesn't apply to a room-scoped base; room→room is a no-op.
+    expect(resolveWriteScopeWithPolicy(roomCtx, { provider: { reachUpTo: "gestalt" } }))
+      .toBe("room:discord:guild-1:bugs");
+  });
+
+  it("falls back to the base scope when the ceiling layer is unavailable in context", () => {
+    // room memory told to reach up to project, but there is no projectPath.
+    expect(resolveWriteScopeWithPolicy({ channelId: "discord", roomId: "r" }, { room: { reachUpTo: "project" } }))
+      .toBe("room:discord:r");
+  });
+
+  it("scopeAtLayer reconstructs scopes from context", () => {
+    expect(scopeAtLayer(roomCtx, "room")).toBe("room:discord:guild-1:bugs");
+    expect(scopeAtLayer(roomCtx, "provider")).toBe("provider:discord");
+    expect(scopeAtLayer(roomCtx, "project")).toBe("project:/p/j");
+    expect(scopeAtLayer(roomCtx, "gestalt")).toBe("gestalt");
+    expect(scopeAtLayer(roomCtx, "prime")).toBeNull();
+    expect(scopeAtLayer({}, "provider")).toBeNull();
   });
 });

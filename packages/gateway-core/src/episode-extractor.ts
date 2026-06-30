@@ -30,7 +30,7 @@ import { canonicalEpisodicHash, NoopAnchor, episodicToAnchor } from "@agi/memory
 import type { CandidateDatasetAccumulator } from "@agi/memory";
 import type { AlignmentScorer } from "./prime-alignment-scorer.js";
 import type { ComponentLogger } from "./logger.js";
-import { resolveWriteScope } from "./memory-scope.js";
+import { resolveWriteScopeWithPolicy, type CascadePolicy } from "./memory-scope.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -54,6 +54,8 @@ export interface EpisodeExtractorOptions {
   logger?: ComponentLogger;
   /** Timeout for the full extract+score+store cycle, ms. Default 45_000. */
   timeoutMs?: number;
+  /** s234 — live reader for the owner cascade-up policy (gateway.json memory.cascade). Hot. */
+  getCascadePolicy?: () => CascadePolicy | undefined;
 }
 
 export interface ExtractionInput {
@@ -135,6 +137,7 @@ export class EpisodeExtractor {
   private readonly consolidationEngine?: EpisodeExtractorOptions["consolidationEngine"];
   private readonly logger?: ComponentLogger;
   private readonly timeoutMs: number;
+  private readonly getCascadePolicy?: () => CascadePolicy | undefined;
   private readonly anchor = new NoopAnchor();
   // Running tallies so a 100%-failing capture layer is visible in logs instead
   // of silently writing 0 rows forever. The whole pipeline is fire-and-forget,
@@ -153,6 +156,7 @@ export class EpisodeExtractor {
     this.consolidationEngine = opts.consolidationEngine;
     this.logger = opts.logger;
     this.timeoutMs = opts.timeoutMs ?? 45_000;
+    this.getCascadePolicy = opts.getCascadePolicy;
     // Boot-time loud failure: if the prompts didn't load, episodic memory can
     // NEVER record (every _extract returns null). Surface it once, loudly.
     if (!EXTRACT_PROMPT || !SCORE_PROMPT) {
@@ -190,11 +194,11 @@ export class EpisodeExtractor {
       const timestamp = new Date().toISOString();
       // s234 — locality scope from the turn's channel/project context. Channel
       // turns confine to room:<channelId>:<roomId>; otherwise project, else gestalt.
-      const scope = resolveWriteScope({
-        channelId: input.channelId,
-        roomId: input.roomId,
-        projectPath: input.projectPath,
-      });
+      // The owner cascade-up policy (read live, hot) may promote it to a broader scope.
+      const scope = resolveWriteScopeWithPolicy(
+        { channelId: input.channelId, roomId: input.roomId, projectPath: input.projectPath },
+        this.getCascadePolicy?.(),
+      );
       const recordBase = {
         id: ulid(),
         timestamp,
