@@ -300,7 +300,8 @@ export class GraphMemoryAdapter implements MemoryProvider {
         objectEntityId: rel.objectEntityId ?? null,
         objectLiteral: rel.objectLiteral ?? null,
         projectPath: rel.projectPath ?? null,
-        scope: rel.scope ?? "gestalt",
+        // s234 — PRIME is read-only; never persist a prime-scoped relationship.
+        scope: rel.scope && rel.scope !== "prime" ? rel.scope : "gestalt",
         validFrom: rel.validFrom,
         validUntil: rel.validUntil ?? null,
         confidence: rel.confidence,
@@ -555,7 +556,8 @@ export class GraphMemoryAdapter implements MemoryProvider {
         hash: r.hash,
         coaFingerprint: r.coaFingerprint,
         modelVersion: r.modelVersion ?? null,
-        scope: r.scope ?? "gestalt",
+        // s234 — PRIME is read-only; never persist a prime-scoped write (defensive).
+        scope: r.scope && r.scope !== "prime" ? r.scope : "gestalt",
         createdAt: r.createdAt,
         consolidatedAt: r.consolidatedAt ?? null,
         embedding: r.embedding ? Array.from(r.embedding) : null,
