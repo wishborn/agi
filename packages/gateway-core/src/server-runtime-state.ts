@@ -8545,13 +8545,14 @@ export async function createGatewayRuntimeState(
   // GET /api/memory/events — episodic events for the memory browser
   fastify.get("/api/memory/events", async (request, reply) => {
     if (!deps.graphAdapter) return reply.code(503).send({ error: "Memory adapter unavailable" });
-    const q = request.query as { q?: string; projectPath?: string; entityId?: string; limit?: string };
+    const q = request.query as { q?: string; projectPath?: string; entityId?: string; scope?: string; limit?: string };
     const limit = Math.min(parseInt(q.limit ?? "50", 10) || 50, 200);
     const projectPath = q.projectPath === "null" ? null : q.projectPath;
     try {
       const events = await deps.graphAdapter.queryGraphEvents({
         entityId: q.entityId,
         projectPath,
+        scopes: q.scope ? [q.scope] : undefined, // s234 — optional locality filter
         semantic: q.q,
         limit,
       });
@@ -8563,6 +8564,7 @@ export async function createGatewayRuntimeState(
           confidence: e.confidence,
           createdAt: String(e.createdAt),
           projectPath: e.projectPath ?? null,
+          scope: e.scope ?? null, // s234 locality scope
           coaFingerprint: e.coaFingerprint,
         })),
       });
