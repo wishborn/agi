@@ -149,11 +149,24 @@ export function initAgiRepo(projectPath: string): AgiRepoOpResult {
   // are local runtime state too — `.ai/chat/` + `.ai/memory/` are excluded so
   // they never travel through the envelope's config/knowledge sync (story #207,
   // owner directive; memory-exclude pending Genie confirmation on #178).
+  // MCP config (`.mcp.json`, `.cursor/mcp.json`) is dev-environment-specific —
+  // it carries a per-dev Tynn bearer token + per-session Genie URL. AGI
+  // envelopes are shareable among teams, but this file is unique to each dev's
+  // machine, so it must NEVER be committed (owner directive 2026-06-29).
   const gitignore = join(projectPath, ".gitignore");
   if (!existsSync(gitignore)) {
     writeFileSync(
       gitignore,
-      ["sandbox/", ".trash/", `${KNOWLEDGE_DIR}/chat/`, `${KNOWLEDGE_DIR}/memory/`, "node_modules/", ""].join("\n"),
+      [
+        "sandbox/",
+        ".trash/",
+        `${KNOWLEDGE_DIR}/chat/`,
+        `${KNOWLEDGE_DIR}/memory/`,
+        "node_modules/",
+        ".mcp.json",
+        ".cursor/mcp.json",
+        "",
+      ].join("\n"),
       "utf-8",
     );
   }

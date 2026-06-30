@@ -52,8 +52,8 @@ describe("getAgiRepoStatus — never throws (no 500)", () => {
   });
 });
 
-describe("initAgiRepo — chats excluded from the envelope", () => {
-  it("writes a .gitignore that excludes the knowledge chat dir, sandbox and .trash", () => {
+describe("initAgiRepo — chats + dev-env MCP config excluded from the envelope", () => {
+  it("writes a .gitignore that excludes the knowledge chat dir, sandbox, .trash, and MCP config", () => {
     const proj = join(tmp, "init-me");
     mkdirSync(proj, { recursive: true });
     writeFileSync(join(proj, "project.json"), "{}", "utf-8");
@@ -62,10 +62,15 @@ describe("initAgiRepo — chats excluded from the envelope", () => {
     expect(result.ok).toBe(true);
 
     const gitignore = readFileSync(join(proj, ".gitignore"), "utf-8");
+    const lines = gitignore.split("\n");
     expect(gitignore).toContain(`${KNOWLEDGE_DIR}/chat/`);
     expect(gitignore).toContain(`${KNOWLEDGE_DIR}/memory/`);
     expect(gitignore).toContain("sandbox/");
     expect(gitignore).toContain(".trash/");
+    // MCP config is unique per dev (Tynn token + per-session Genie URL) — a shared
+    // envelope must never carry it. Exact-line match so a substring can't pass.
+    expect(lines).toContain(".mcp.json");
+    expect(lines).toContain(".cursor/mcp.json");
     // The envelope itself became a git repo.
     expect(existsSync(join(proj, ".git"))).toBe(true);
   });
