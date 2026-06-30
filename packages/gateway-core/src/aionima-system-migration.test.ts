@@ -36,19 +36,17 @@ function makeFakeFork(forkName: string): string {
 }
 
 describe("AIONIMA_SYSTEM_FORK_NAMES (s119 t703)", () => {
-  it("contains the 5 Civicognita cores + 6 PAx packages", () => {
+  it("contains the 5 Civicognita cores only — PAx removed (owner directive 2026-06-29)", () => {
     expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("agi");
     expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("prime");
     expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("id");
     expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("marketplace");
     expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("mapp-marketplace");
-    expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("react-fancy");
-    expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("fancy-code");
-    expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("fancy-sheets");
-    expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("fancy-echarts");
-    expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("fancy-3d");
-    expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("fancy-screens");
-    expect(AIONIMA_SYSTEM_FORK_NAMES).toHaveLength(11);
+    expect(AIONIMA_SYSTEM_FORK_NAMES).toHaveLength(5);
+    // PAx repos are no longer monorepo-resident — migration must not move them.
+    for (const pax of ["react-fancy", "fancy-code", "fancy-sheets", "fancy-echarts", "fancy-3d", "fancy-screens"]) {
+      expect(AIONIMA_SYSTEM_FORK_NAMES).not.toContain(pax);
+    }
   });
 });
 
