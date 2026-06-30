@@ -594,6 +594,7 @@ export class GraphMemoryAdapter implements MemoryProvider {
     const conditions = [sql`${memoryEvents.confidence} >= ${minConfidence}`];
     if (entityId) conditions.push(eq(memoryEvents.entityId, entityId));
     this.addProjectPathCondition(conditions, memoryEvents, params);
+    this.addScopeCondition(conditions, memoryEvents, params.scopes);
 
     if (tags && tags.length > 0) {
       const tagChecks = tags.map((t) => sql`${memoryEvents.tags} LIKE ${"%" + JSON.stringify(t).slice(1, -1) + "%"}`);

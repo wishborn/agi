@@ -141,6 +141,24 @@ CREATE INDEX IF NOT EXISTS idx_memory_rel_project ON memory_relationships USING 
 ALTER TABLE memory_relationships ADD COLUMN IF NOT EXISTS scope text DEFAULT 'gestalt' NOT NULL;
 UPDATE memory_relationships SET scope = 'project:' || project_path WHERE project_path IS NOT NULL AND scope = 'gestalt';
 CREATE INDEX IF NOT EXISTS idx_memory_rel_scope ON memory_relationships USING btree (subject_entity_id, scope, valid_until);
+
+-- s234: additive locality scope on memory_events + doc-chunk vocabulary. These are
+-- pure column/value changes, INDEPENDENT of pgvector, so they live in the core
+-- (always-run) block — not the gated vector block where memory_events is created.
+-- Guarded by table existence so a fresh DB (vector block creates memory_events WITH
+-- scope) is a clean no-op; an existing install gets scope even if the vector block
+-- is skipped.
+DO $do$
+BEGIN
+  IF to_regclass('public.memory_events') IS NOT NULL THEN
+    ALTER TABLE memory_events ADD COLUMN IF NOT EXISTS scope text DEFAULT 'gestalt' NOT NULL;
+    UPDATE memory_events SET scope = 'project:' || project_path WHERE project_path IS NOT NULL AND scope = 'gestalt';
+  END IF;
+  IF to_regclass('public.memory_doc_chunks') IS NOT NULL THEN
+    UPDATE memory_doc_chunks SET scope = 'gestalt' WHERE scope = 'global';
+  END IF;
+END
+$do$;
 SQL
 
 # Vector-backed s112 memory tables — embedding columns are vector(768), so they
@@ -185,14 +203,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_events_entity ON memory_events USING btree
 CREATE INDEX IF NOT EXISTS idx_memory_events_project ON memory_events USING btree (entity_id, project_path);
 CREATE INDEX IF NOT EXISTS idx_memory_events_created ON memory_events USING btree (created_at);
 CREATE INDEX IF NOT EXISTS idx_memory_events_unconsolidated ON memory_events USING btree (entity_id, consolidated_at);
-
--- s234: locality scope on existing memory_events rows.
-ALTER TABLE memory_events ADD COLUMN IF NOT EXISTS scope text DEFAULT 'gestalt' NOT NULL;
-UPDATE memory_events SET scope = 'project:' || project_path WHERE project_path IS NOT NULL AND scope = 'gestalt';
 CREATE INDEX IF NOT EXISTS idx_memory_events_scope ON memory_events USING btree (scope, created_at);
-
--- s234: unify the doc-chunk 'global' scope into the gestalt layer vocabulary.
-UPDATE memory_doc_chunks SET scope = 'gestalt' WHERE scope = 'global';
 SQL
 
 # --- Apply core (additive, no special privileges) ---------------------------
