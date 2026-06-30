@@ -30,6 +30,7 @@ import { canonicalEpisodicHash, NoopAnchor, episodicToAnchor } from "@agi/memory
 import type { CandidateDatasetAccumulator } from "@agi/memory";
 import type { AlignmentScorer } from "./prime-alignment-scorer.js";
 import type { ComponentLogger } from "./logger.js";
+import { resolveWriteScope } from "./memory-scope.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -49,7 +50,7 @@ export interface EpisodeExtractorOptions {
   /** Optional dataset accumulator. Runs 4-gate pipeline on each stored record. */
   accumulator?: CandidateDatasetAccumulator;
   /** Optional consolidation engine — triggered at session boundaries. */
-  consolidationEngine?: { maybeConsolidate(opts: { entityId: string; projectPath?: string | null; trigger: "session_close" | "job_complete" | "idle" }): Promise<unknown> };
+  consolidationEngine?: { maybeConsolidate(opts: { entityId: string; projectPath?: string | null; scope?: string | null; trigger: "session_close" | "job_complete" | "idle" }): Promise<unknown> };
   logger?: ComponentLogger;
   /** Timeout for the full extract+score+store cycle, ms. Default 45_000. */
   timeoutMs?: number;
@@ -64,6 +65,10 @@ export interface ExtractionInput {
   sessionKey: string;
   /** Project path for project-scoped memory tagging (optional). */
   projectPath?: string | null;
+  /** s234 — channel adapter id (e.g. "discord") when the turn came from a channel. */
+  channelId?: string | null;
+  /** s234 — room/thread id within the channel. With channelId, scopes the memory to that room. */
+  roomId?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -183,6 +188,13 @@ export class EpisodeExtractor {
       const scored = await this._score(extracted, input.toolsUsed, deadline);
 
       const timestamp = new Date().toISOString();
+      // s234 — locality scope from the turn's channel/project context. Channel
+      // turns confine to room:<channelId>:<roomId>; otherwise project, else gestalt.
+      const scope = resolveWriteScope({
+        channelId: input.channelId,
+        roomId: input.roomId,
+        projectPath: input.projectPath,
+      });
       const recordBase = {
         id: ulid(),
         timestamp,
@@ -195,6 +207,7 @@ export class EpisodeExtractor {
         modelVersion: input.model,
         // projectPath is carried through for graph-adapter project-scoped storage
         projectPath: input.projectPath ?? null,
+        scope,
       };
 
       // Step 3: Compute canonical hash (includes all stable fields)
@@ -245,6 +258,7 @@ export class EpisodeExtractor {
           .maybeConsolidate({
             entityId: this.entityId,
             projectPath: input.projectPath ?? null,
+            scope,
             trigger: "session_close",
           })
           .catch(() => { /* consolidation failure is non-fatal */ });

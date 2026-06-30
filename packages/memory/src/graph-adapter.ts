@@ -44,6 +44,8 @@ export interface GraphEventRecord {
   id: string;
   entityId: string;
   projectPath?: string | null;
+  /** s234 locality scope — prime|gestalt|project:<path>|provider:<id>|room:<channelId>:<roomId>. */
+  scope?: string | null;
   sessionId?: string | null;
   summary: string;
   tags: string[];
@@ -66,6 +68,8 @@ export interface RelationshipRecord {
   objectEntityId?: string | null;
   objectLiteral?: string | null;
   projectPath?: string | null;
+  /** s234 locality scope — same grammar as GraphEventRecord.scope. */
+  scope?: string | null;
   validFrom: number; // Unix ms
   validUntil?: number | null;
   confidence: number;
@@ -90,6 +94,8 @@ export interface DocChunkRecord {
 export interface EventQuery {
   entityId?: string;
   projectPath?: string | null; // null = global only; undefined = entity-wide
+  /** s234 locality scope-stack — WHERE scope = ANY(scopes). Confines + cascades. */
+  scopes?: string[];
   timeRange?: { from: Date; to?: Date };
   semantic?: string;
   tags?: string[];
@@ -101,6 +107,8 @@ export interface EventQuery {
 export interface RelationshipQuery {
   subjectEntityId?: string;
   projectPath?: string | null;
+  /** s234 locality scope-stack — WHERE scope = ANY(scopes). */
+  scopes?: string[];
   predicate?: string;
   validAt?: Date;
   limit?: number;
@@ -109,6 +117,8 @@ export interface RelationshipQuery {
 /** Doc chunk keyword / semantic query. */
 export interface DocQuery {
   scope?: string;
+  /** s234 locality scope-stack — WHERE scope = ANY(scopes). Takes precedence over `scope`. */
+  scopes?: string[];
   semantic?: string;
   limit?: number;
   queryEmbedding?: Float32Array;
@@ -160,7 +170,8 @@ export class GraphMemoryAdapter implements MemoryProvider {
       await this.insertEvent({
         id: ep.id,
         entityId: ep.actor.entityId,
-        projectPath: null,
+        projectPath: ep.projectPath ?? null,
+        scope: ep.scope ?? "gestalt",
         sessionId: ep.sourceLinks?.[0] ?? null,
         summary: ep.summary,
         tags: ep.tags ?? [],
@@ -289,6 +300,7 @@ export class GraphMemoryAdapter implements MemoryProvider {
         objectEntityId: rel.objectEntityId ?? null,
         objectLiteral: rel.objectLiteral ?? null,
         projectPath: rel.projectPath ?? null,
+        scope: rel.scope ?? "gestalt",
         validFrom: rel.validFrom,
         validUntil: rel.validUntil ?? null,
         confidence: rel.confidence,
@@ -344,6 +356,9 @@ export class GraphMemoryAdapter implements MemoryProvider {
       } else if (params.projectPath !== undefined) {
         conditions.push(eq(memoryRelationships.projectPath, params.projectPath));
       }
+    }
+    if (params.scopes && params.scopes.length > 0) {
+      conditions.push(inArray(memoryRelationships.scope, params.scopes));
     }
     if (params.validAt) {
       const ts = params.validAt.getTime();
@@ -486,7 +501,8 @@ export class GraphMemoryAdapter implements MemoryProvider {
       const tsVector = sql`to_tsvector('english', ${memoryDocChunks.content} || ' ' || coalesce(${memoryDocChunks.heading}, ''))`;
 
       const conditions = [sql`${tsVector} @@ ${tsQuery}`];
-      if (params.scope) conditions.push(eq(memoryDocChunks.scope, params.scope));
+      if (params.scopes && params.scopes.length > 0) conditions.push(inArray(memoryDocChunks.scope, params.scopes));
+      else if (params.scope) conditions.push(eq(memoryDocChunks.scope, params.scope));
 
       const candidates = await this.db
         .select()
@@ -502,7 +518,12 @@ export class GraphMemoryAdapter implements MemoryProvider {
     }
 
     // No query — recency order
-    const conditions = params.scope ? [eq(memoryDocChunks.scope, params.scope)] : [];
+    const conditions =
+      params.scopes && params.scopes.length > 0
+        ? [inArray(memoryDocChunks.scope, params.scopes)]
+        : params.scope
+          ? [eq(memoryDocChunks.scope, params.scope)]
+          : [];
     const rows = await this.db
       .select()
       .from(memoryDocChunks)
@@ -534,6 +555,7 @@ export class GraphMemoryAdapter implements MemoryProvider {
         hash: r.hash,
         coaFingerprint: r.coaFingerprint,
         modelVersion: r.modelVersion ?? null,
+        scope: r.scope ?? "gestalt",
         createdAt: r.createdAt,
         consolidatedAt: r.consolidatedAt ?? null,
         embedding: r.embedding ? Array.from(r.embedding) : null,
@@ -556,6 +578,7 @@ export class GraphMemoryAdapter implements MemoryProvider {
       ];
       if (entityId) conditions.push(eq(memoryEvents.entityId, entityId));
       this.addProjectPathCondition(conditions, memoryEvents, params);
+      this.addScopeCondition(conditions, memoryEvents, params.scopes);
 
       return this.db
         .select()
@@ -597,6 +620,15 @@ export class GraphMemoryAdapter implements MemoryProvider {
       } else if (params.projectPath !== undefined) {
         conditions.push(eq(table.projectPath, params.projectPath));
       }
+    }
+  }
+
+  // s234 — confine recall to the request's scope-stack. Empty/absent = no filter
+  // (entity-wide), preserving pre-s234 behaviour for callers that don't pass scopes.
+  // biome-ignore lint/suspicious/noExplicitAny: drizzle table type is complex
+  private addScopeCondition(conditions: ReturnType<typeof sql>[], table: any, scopes?: string[]): void {
+    if (scopes && scopes.length > 0) {
+      conditions.push(inArray(table.scope, scopes));
     }
   }
 
@@ -680,6 +712,7 @@ function eventRowToGraphEvent(row: EventRow): GraphEventRecord {
     id: row.id,
     entityId: row.entityId,
     projectPath: row.projectPath ?? null,
+    scope: row.scope ?? null,
     sessionId: row.sessionId ?? null,
     summary: row.summary,
     tags: parseJson<string[]>(row.tags, []),
@@ -703,6 +736,7 @@ function relRowToRelationship(row: RelRow): RelationshipRecord {
     objectEntityId: row.objectEntityId ?? null,
     objectLiteral: row.objectLiteral ?? null,
     projectPath: row.projectPath ?? null,
+    scope: row.scope ?? null,
     validFrom: row.validFrom,
     validUntil: row.validUntil ?? null,
     confidence: row.confidence,
@@ -780,6 +814,8 @@ interface EpisodicRecordLike {
   confidence: number;
   primeAlignment?: number | null;
   sourceLinks: string[];
+  projectPath?: string | null;
+  scope?: string | null;
   hash: string;
   coaFingerprint: string;
   modelVersion?: string | null;

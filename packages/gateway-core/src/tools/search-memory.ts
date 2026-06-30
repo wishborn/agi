@@ -18,6 +18,7 @@ export interface MemoryEventQuerier {
   queryGraphEvents(params: {
     entityId?: string;
     projectPath?: string | null;
+    scopes?: string[];
     semantic?: string;
     tags?: string[];
     minConfidence?: number;
@@ -29,6 +30,7 @@ export interface MemoryEventQuerier {
     confidence: number;
     createdAt: number | Date | string;
     projectPath?: string | null;
+    scope?: string | null;
     coaFingerprint: string;
   }>>;
 }
@@ -53,11 +55,18 @@ export function createSearchMemoryHandler(config: SearchMemoryConfig): ToolHandl
       : undefined;
     const tags = Array.isArray(input.tags) ? input.tags.map(String) : undefined;
     const minConfidence = typeof input.minConfidence === "number" ? input.minConfidence : undefined;
+    // s234 — optional locality filter: a single `scope` or an array `scopes`.
+    const scopes = Array.isArray(input.scopes)
+      ? input.scopes.map(String)
+      : typeof input.scope === "string" && input.scope.length > 0
+        ? [input.scope]
+        : undefined;
 
     try {
       const events = await config.graphAdapter.queryGraphEvents({
         semantic: query.length > 0 ? query : undefined,
         projectPath,
+        scopes,
         tags,
         minConfidence,
         limit,
@@ -69,6 +78,7 @@ export function createSearchMemoryHandler(config: SearchMemoryConfig): ToolHandl
         confidence: e.confidence,
         createdAt: isoOf(e.createdAt),
         projectPath: e.projectPath ?? null,
+        scope: e.scope ?? null,
       }));
 
       return JSON.stringify({ results, count: results.length, query: query || null });
@@ -92,6 +102,8 @@ export const SEARCH_MEMORY_INPUT_SCHEMA = {
     query: { type: "string", description: "Natural-language query — what to recall. Empty returns the most recent memories." },
     limit: { type: "number", description: "Maximum results (default: 5, max: 20)" },
     projectPath: { type: "string", description: "Absolute project path — scope recall to one project's memories" },
+    scope: { type: "string", description: "Filter to one locality scope: 'gestalt', 'project:<path>', 'provider:<channelId>', or 'room:<channelId>:<roomId>'" },
+    scopes: { type: "array", items: { type: "string" }, description: "Filter to any of these locality scopes (the recall scope-stack)" },
     tags: { type: "array", items: { type: "string" }, description: "Filter to memories carrying any of these tags" },
     minConfidence: { type: "number", description: "Only return memories at or above this confidence (0..1)" },
   },

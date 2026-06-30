@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS memory_relationships (
   object_entity_id text,
   object_literal text,
   project_path text,
+  scope text DEFAULT 'gestalt' NOT NULL,
   valid_from bigint NOT NULL,
   valid_until bigint,
   confidence real DEFAULT 1 NOT NULL,
@@ -135,6 +136,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS mapp_scripts_name_uniq ON mapp_scripts USING b
 CREATE INDEX IF NOT EXISTS mapp_scripts_packer_idx ON mapp_scripts USING btree (mapp_id, is_packer, enabled);
 CREATE INDEX IF NOT EXISTS idx_memory_rel_subject ON memory_relationships USING btree (subject_entity_id, valid_until);
 CREATE INDEX IF NOT EXISTS idx_memory_rel_project ON memory_relationships USING btree (subject_entity_id, project_path, valid_until);
+
+-- s234: locality scope on existing memory_relationships rows.
+ALTER TABLE memory_relationships ADD COLUMN IF NOT EXISTS scope text DEFAULT 'gestalt' NOT NULL;
+UPDATE memory_relationships SET scope = 'project:' || project_path WHERE project_path IS NOT NULL AND scope = 'gestalt';
+CREATE INDEX IF NOT EXISTS idx_memory_rel_scope ON memory_relationships USING btree (subject_entity_id, scope, valid_until);
 SQL
 
 # Vector-backed s112 memory tables — embedding columns are vector(768), so they
@@ -166,6 +172,7 @@ CREATE TABLE IF NOT EXISTS memory_events (
   hash text NOT NULL,
   coa_fingerprint text DEFAULT 'legacy' NOT NULL,
   model_version text,
+  scope text DEFAULT 'gestalt' NOT NULL,
   created_at bigint NOT NULL,
   consolidated_at bigint,
   embedding vector(768),
@@ -178,6 +185,14 @@ CREATE INDEX IF NOT EXISTS idx_memory_events_entity ON memory_events USING btree
 CREATE INDEX IF NOT EXISTS idx_memory_events_project ON memory_events USING btree (entity_id, project_path);
 CREATE INDEX IF NOT EXISTS idx_memory_events_created ON memory_events USING btree (created_at);
 CREATE INDEX IF NOT EXISTS idx_memory_events_unconsolidated ON memory_events USING btree (entity_id, consolidated_at);
+
+-- s234: locality scope on existing memory_events rows.
+ALTER TABLE memory_events ADD COLUMN IF NOT EXISTS scope text DEFAULT 'gestalt' NOT NULL;
+UPDATE memory_events SET scope = 'project:' || project_path WHERE project_path IS NOT NULL AND scope = 'gestalt';
+CREATE INDEX IF NOT EXISTS idx_memory_events_scope ON memory_events USING btree (scope, created_at);
+
+-- s234: unify the doc-chunk 'global' scope into the gestalt layer vocabulary.
+UPDATE memory_doc_chunks SET scope = 'gestalt' WHERE scope = 'global';
 SQL
 
 # --- Apply core (additive, no special privileges) ---------------------------

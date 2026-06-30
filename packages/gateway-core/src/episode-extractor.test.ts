@@ -195,6 +195,32 @@ describe("EpisodeExtractor — accumulator wiring (s112 end-to-end)", () => {
   });
 });
 
+describe("s234 — locality scope on capture", () => {
+  it("confines a channel turn to its room scope", async () => {
+    const stored: Array<{ scope?: string }> = [];
+    const extractor = makeExtractor({
+      memoryAdapter: { store: vi.fn(async (r) => { stored.push(r as { scope?: string }); }) },
+    });
+    const record = await extractor.extractAndStore(
+      makeInput({ channelId: "discord", roomId: "guild-1:bugs", projectPath: "/p/j" }),
+    );
+    expect(record?.scope).toBe("room:discord:guild-1:bugs");
+    expect(stored[0]?.scope).toBe("room:discord:guild-1:bugs");
+  });
+
+  it("a project chat (no channel) writes at project scope", async () => {
+    const extractor = makeExtractor();
+    const record = await extractor.extractAndStore(makeInput({ projectPath: "/p/j" }));
+    expect(record?.scope).toBe("project:/p/j");
+  });
+
+  it("a bare chat falls to the gestalt floor", async () => {
+    const extractor = makeExtractor();
+    const record = await extractor.extractAndStore(makeInput());
+    expect(record?.scope).toBe("gestalt");
+  });
+});
+
 describe("episodic prompt loading (regression guard)", () => {
   it("resolves and loads both episodic prompts (else memory records 0 rows)", () => {
     // The prompts-dir resolver must find prompts/episode-extract.md +
