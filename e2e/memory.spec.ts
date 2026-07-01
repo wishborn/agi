@@ -29,6 +29,32 @@ test.describe("Memory browser", () => {
     await expect(scopes).toHaveCount(2);
     await expect(scopes.filter({ hasText: "machine-wide" })).toHaveCount(1);
     await expect(scopes.filter({ hasText: "room · discord" })).toHaveCount(1);
+    // Regression: createdAt must render as a real date, never "Invalid Date".
+    const dates = page.getByTestId("memory-event-date");
+    await expect(dates).toHaveCount(2);
+    await expect(dates.filter({ hasText: "Invalid Date" })).toHaveCount(0);
+    await expect(dates.first()).not.toHaveText("—");
+  });
+
+  test("renders — (not 'Invalid Date') if the API returns an unparseable createdAt", async ({ page }) => {
+    // Guards the exact bug: the endpoint used to emit String(epochMs) = a numeric
+    // string, which `new Date()` can't parse. The row must degrade to "—".
+    await page.route("**/api/memory/events**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          events: [
+            { id: "m1", summary: "Row with a legacy numeric-string timestamp.", tags: [], confidence: 0.5, createdAt: "1719792000000", projectPath: null, scope: "gestalt", coaFingerprint: "x1" },
+          ],
+        }),
+      }),
+    );
+    await page.goto("/memory");
+    await expect(page.getByTestId("memory-event-row")).toHaveCount(1);
+    const date = page.getByTestId("memory-event-date");
+    await expect(date).toHaveText("—");
+    await expect(date.filter({ hasText: "Invalid Date" })).toHaveCount(0);
   });
 
   test("empty state when no memories match", async ({ page }) => {

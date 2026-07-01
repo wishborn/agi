@@ -60,6 +60,19 @@ export interface GraphEventRecord {
   embedding?: Float32Array | null;
 }
 
+/**
+ * Serialize a Unix-ms epoch (as stored in memory_events.created_at, a bigint) to
+ * an ISO-8601 string for API/JSON transport. The dashboard renders createdAt via
+ * `new Date(str)`, which parses ISO strings but NOT numeric strings —
+ * `new Date("1719792000000")` is "Invalid Date", whereas `new Date("2024-06-…Z")`
+ * is correct. Callers must NOT `String(epochMs)` the raw number. Guards a
+ * non-finite epoch so the endpoint never emits an unparseable value (falls back
+ * to the Unix epoch, a visible sentinel rather than a crash).
+ */
+export function epochMsToIso(epochMs: number): string {
+  return Number.isFinite(epochMs) ? new Date(epochMs).toISOString() : new Date(0).toISOString();
+}
+
 /** A consolidated semantic relationship between entities. */
 export interface RelationshipRecord {
   id: string;

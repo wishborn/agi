@@ -31,6 +31,7 @@ import { GatewayWebSocketServer } from "./ws-server.js";
 import { handlePlanRequest } from "./plan-api.js";
 import { readProjectMcpServers, setDotMcpServer, removeDotMcpServer } from "./mcp-config-store.js";
 import type { EntityStore, CommsLog, NotificationStore } from "@agi/entity-model";
+import { epochMsToIso } from "@agi/memory";
 import { injectTokenIntoCloneUrl } from "./dev-mode-auth.js";
 import { eq, and } from "drizzle-orm";
 import { connections } from "@agi/db-schema";
@@ -8562,7 +8563,7 @@ export async function createGatewayRuntimeState(
           summary: e.summary,
           tags: e.tags,
           confidence: e.confidence,
-          createdAt: String(e.createdAt),
+          createdAt: epochMsToIso(e.createdAt), // Unix-ms epoch → ISO-8601 (dashboard new Date() can't parse a numeric string)
           projectPath: e.projectPath ?? null,
           scope: e.scope ?? null, // s234 locality scope
           coaFingerprint: e.coaFingerprint,

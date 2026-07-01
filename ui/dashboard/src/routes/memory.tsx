@@ -14,6 +14,12 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs.j
 import { DevNote } from "@/components/ui/dev-notes.js";
 import { fetchMemoryEvents, searchMemoryDocs, type MemoryEvent, type MemoryDocChunk } from "@/api.js";
 
+/** Render a createdAt value safely — an unparseable/empty value shows "—", never "Invalid Date". */
+function formatCreatedAt(createdAt: string): string {
+  const d = new Date(createdAt);
+  return isNaN(d.getTime()) ? "—" : d.toLocaleString();
+}
+
 /** s234 — turn a locality scope string into a readable, colour-coded badge label. */
 function localityBadge(scope: string | null): { label: string; cls: string } {
   if (scope === null || scope === "gestalt") return { label: "machine-wide", cls: "bg-zinc-500/15 text-zinc-300" };
@@ -92,7 +98,7 @@ function EventsTab() {
                   </div>
                 </div>
                 <div className="shrink-0 text-right">
-                  <div className="text-[10px] text-muted-foreground">{new Date(ev.createdAt).toLocaleString()}</div>
+                  <div className="text-[10px] text-muted-foreground" data-testid="memory-event-date">{formatCreatedAt(ev.createdAt)}</div>
                   <div className="text-[10px] text-muted-foreground/60">conf {Math.round(ev.confidence * 100)}%</div>
                 </div>
               </div>
