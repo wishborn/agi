@@ -3,19 +3,22 @@ import { test, expect } from "@playwright/test";
 /**
  * /identity/pending — pending approval queue (s166 CHN-E).
  *
- * Verifies the approval-queue UX shipped in v0.4.707+:
+ * Verifies the approval-queue UX (v0.4.911+ — one card per person):
  *   - The page renders with heading + Refresh button
- *   - After load, either the empty-state or project-grouped entries appear
+ *   - After load, either the empty-state or per-PERSON entry cards appear
+ *     (each person collapses all the rooms they messaged from)
  *   - Each entry (if present) shows Approve + Reject buttons
  *
  * **Pre-conditions:**
  *   - Test VM running with the gateway up (services-start)
  *
  * **What this spec does NOT cover:**
- *   - End-to-end approve flow that verifies Local-ID promotion
- *     (requires a live Discord bot posting as an unknown user + Local-ID
- *     promotion sequence; deferred to a manual integration test).
+ *   - End-to-end approve flow that verifies entity-tier promotion
+ *     (requires a live channel adapter posting as an unknown user; deferred
+ *     to a manual integration test).
  *   - End-to-end reject flow that verifies flagging.
+ *   - The person-grouping/cascade logic itself — unit-tested in
+ *     pending-approval-store.test.ts (cascade) + identity-pending render.
  */
 
 test.describe("/identity/pending — CHN-E approval queue (s166)", () => {
@@ -41,21 +44,21 @@ test.describe("/identity/pending — CHN-E approval queue (s166)", () => {
     await expect(page.getByTestId("identity-pending-refresh")).toBeVisible();
   });
 
-  test("shows empty-state OR project entries after load", async ({ page }) => {
+  test("shows empty-state OR per-person entries after load", async ({ page }) => {
     await openPendingPage(page);
 
-    // Either the empty card or at least one project-grouped card renders.
+    // Either the empty card or at least one per-person entry card renders.
     const empty = page.getByTestId("identity-pending-empty");
-    // Project cards use dynamic testids; match any of them with regex.
-    const projectCards = page.getByTestId(/^identity-pending-project-/);
+    // Person cards use dynamic testids (identity-pending-entry-<channel>__<user>).
+    const personCards = page.getByTestId(/^identity-pending-entry-/);
 
     const emptyCount = await empty.count();
-    const projectCount = await projectCards.count();
+    const personCount = await personCards.count();
 
     // No error should be visible
     await expect(page.getByTestId("identity-pending-error")).not.toBeVisible();
 
-    expect(emptyCount + projectCount).toBeGreaterThanOrEqual(1);
+    expect(emptyCount + personCount).toBeGreaterThanOrEqual(1);
   });
 
   test("each entry (if any) has Approve + Reject buttons", async ({ page }) => {

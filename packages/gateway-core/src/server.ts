@@ -146,6 +146,7 @@ import { buildTynnSyncPrompt } from "./plan-tynn-mapper.js";
 import { aionimaSystemProjectPath, ensureAionimaSystemProject, ensureWorkspaceSkeleton, projectConfigPath } from "./project-config-path.js";
 import { migrateAionimaSystemForks } from "./aionima-system-migration.js";
 import { migrateAionimaMemoryDir } from "./aionima-memory-migration.js";
+import { migrateAllKnowledgeDirs } from "./knowledge-dir-migration.js";
 import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
 import { ChannelEventDispatcher } from "./channel-event-dispatcher.js";
@@ -183,6 +184,16 @@ import { registerReportsApi } from "./reports-api.js";
 import { registerWorkerApi } from "./worker-api.js";
 import { registerUsageRoutes } from "./usage-api.js";
 import { appendUpgradeLog } from "./upgrade-log.js";
+import {
+  importPendingSteps,
+  readDeployedVersion,
+  readSeenVersion,
+  writeSeenVersion,
+  readLastMigratedVersion,
+  hasPendingRequiredSteps,
+  listUpgradeNextSteps,
+} from "./upgrade-next-steps.js";
+import { runPendingMigrations } from "./migration-runner.js";
 import { EventEmitter } from "node:events";
 import { HardwareProfiler } from "./machine/hardware-profiler.js";
 import {
@@ -1125,6 +1136,11 @@ export async function startGatewayServer(
     accumulator: _accumulator,
     consolidationEngine,
     logger: log,
+    // s234 — owner cascade-up policy, read live from gateway.json (hot-swappable).
+    getCascadePolicy: () =>
+      (systemConfigService?.read() ?? config).memory?.cascade as
+        | import("./memory-scope.js").CascadePolicy
+        | undefined,
   });
   log.info("episodic memory pipeline initialized (extractor + accumulator)");
 
@@ -1149,7 +1165,13 @@ export async function startGatewayServer(
   const { createLookupDocHandler, LOOKUP_DOC_MANIFEST, LOOKUP_DOC_INPUT_SCHEMA } = await import("./tools/lookup-doc.js");
   const docsDir = join(agiRoot, "docs");
   toolRegistry.register(LOOKUP_DOC_MANIFEST as import("./system-prompt.js").ToolManifestEntry, createLookupDocHandler({ docsDir }), LOOKUP_DOC_INPUT_SCHEMA);
-  log.info("doc indexer initialized + search_docs + lookup_doc tools registered");
+  // search_memory — active recall over episodic memory (memory_events). Closes
+  // the "Aion has memories but no way to search them" gap: previously memories
+  // were only injected passively at prompt-assembly. Same store as the dashboard
+  // memory browser (graphAdapter), so agent + UI read one shared memory.
+  const { createSearchMemoryHandler, SEARCH_MEMORY_MANIFEST, SEARCH_MEMORY_INPUT_SCHEMA } = await import("./tools/search-memory.js");
+  toolRegistry.register(SEARCH_MEMORY_MANIFEST as import("./system-prompt.js").ToolManifestEntry, createSearchMemoryHandler({ graphAdapter: memoryAdapter }), SEARCH_MEMORY_INPUT_SCHEMA);
+  log.info("doc indexer initialized + search_docs + lookup_doc + search_memory tools registered");
 
   // s152 t651 — UserNotes store. Constructed here (before AgentInvoker)
   // so the invoker can read notes per project + global on each turn and
@@ -1539,7 +1561,13 @@ export async function startGatewayServer(
                 channelId,
                 channelUserId,
                 entityId,
-                content: { type: "text", text: outcome.text },
+                content: {
+                  type: "text",
+                  text: outcome.text,
+                  // Reasoning rides along separated from the reply; channels that
+                  // support it (Discord) render it as a de-emphasized embed.
+                  ...(outcome.thinking !== undefined ? { thinking: outcome.thinking } : {}),
+                },
               });
               queueLog.info("response sent");
             } else {
@@ -2153,6 +2181,31 @@ export async function startGatewayServer(
 
   hostingManager.regenerateSystemDomains();
 
+  // Owner directive 2026-06-09 — rename each project's knowledge dir k/ → .ai/
+  // (KNOWLEDGE_DIR). MUST run BEFORE every scaffolder + data migration below:
+  // those now target .ai/ via KNOWLEDGE_DIR, so renaming first prevents a fresh
+  // empty .ai/ from being created alongside an un-migrated k/ (which would
+  // strand the real data and trip the never-clobber conflict guard). Walks all
+  // immediate child dirs of each collection — incl `.new` skeleton + `_aionima`
+  // meta-project. Idempotent + non-fatal.
+  try {
+    const r = migrateAllKnowledgeDirs(projectPaths, createComponentLogger(logger, "migrate-knowledge-dir"));
+    if (r.renamed > 0 || r.conflicts > 0 || r.errors.length > 0) {
+      logger.info(
+        "migrate",
+        `boot-time knowledge-dir sweep (k/ → .ai/): scanned=${String(r.scanned)} renamed=${String(r.renamed)} conflicts=${String(r.conflicts)} errors=${String(r.errors.length)}`,
+      );
+      for (const e of r.errors) {
+        logger.warn("migrate", `knowledge-dir migration error [${e.dir}]: ${e.reason}`);
+      }
+    }
+  } catch (err) {
+    logger.warn(
+      "migrate",
+      `boot-time knowledge-dir sweep failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   // s150 t633 — workspace-owned project skeleton. Seeds <workspaceRoot>/.new/
   // from the agi-shipped templates on first boot, then registers each
   // workspace root so subsequent scaffolds prefer the workspace copy. After
@@ -2626,16 +2679,28 @@ export async function startGatewayServer(
     const sessionSecret = ulid();
     visitorAuth = new VisitorAuthManager({ sessionSecret });
 
-    const identityConfig = (config as Record<string, unknown>).identity as
-      | { oauth?: { google?: { clientId: string; clientSecret: string }; github?: { clientId: string; clientSecret: string } } }
-      | undefined;
-
-    if (identityConfig?.oauth) {
-      const callbackBaseUrl = fedConfig.publicUrl ?? `http://${host}:${port}`;
-      oauthHandler = new OAuthHandler(identityConfig.oauth, callbackBaseUrl);
-    }
-
     log.info("Federation enabled — identity provider active");
+  }
+
+  // OAuth redirect handler — constructed UNCONDITIONALLY (story #212, Slice 2),
+  // independent of federation. Reads owner OAuth-app creds HOT from
+  // gateway.json `identity.oauth.<provider>` so a freshly-pasted app takes
+  // effect without a restart. Redirect connect (Google/Meta/X/Tynn) must work
+  // even when federation/Civicognita is off — only GitHub uses device flow.
+  {
+    const callbackBaseUrl = fedConfig?.publicUrl ?? `http://${host}:${port}`;
+    const configPath = opts?.configPath;
+    oauthHandler = new OAuthHandler(() => {
+      if (!configPath) return {};
+      try {
+        const raw = JSON.parse(readFileSync(configPath, "utf-8")) as {
+          identity?: { oauth?: import("./oauth-handler.js").OAuthConfig };
+        };
+        return raw.identity?.oauth ?? {};
+      } catch {
+        return {};
+      }
+    }, callbackBaseUrl);
   }
 
   // -------------------------------------------------------------------------
@@ -2682,7 +2747,13 @@ export async function startGatewayServer(
   // command/env (stdio), url (http/ws), authToken (env-resolvable via
   // $VAR), autoConnect: bool }.
   const mcpClient = new McpClient();
-  const mcpServersConfig = (config as { mcp?: { servers?: Array<Record<string, unknown>> } }).mcp?.servers ?? [];
+  // Merge baked-in default MCP servers (e.g. Fancy UI) with gateway.json's —
+  // always-on for Aion across all projects + chats; an owner can override or
+  // disable a default by re-declaring its id in gateway.json (story #215).
+  const { mergeDefaultMcpServers } = await import("./mcp-config-store.js");
+  const mcpServersConfig = mergeDefaultMcpServers(
+    (config as { mcp?: { servers?: Array<Record<string, unknown>> } }).mcp?.servers ?? [],
+  );
   // s128 cycle 86 — secret-reference resolver for MCP server config. Handles
   // both $VAR (legacy, reads from process.env) AND vault://<id> (Vault).
   // Vault refs are gateway-scoped here (no projectPath context); per-project
@@ -3728,6 +3799,7 @@ export async function startGatewayServer(
 
   // -------------------------------------------------------------------------
   // Post-upgrade boot detection — if upgrade.sh restarted the service, finalize the upgrade log
+  // and emit a system:upgraded WS event so the dashboard can show the post-upgrade panel.
   // -------------------------------------------------------------------------
   const selfRepoPath = config.workspace?.selfRepo;
   if (selfRepoPath) {
@@ -3740,6 +3812,19 @@ export async function startGatewayServer(
       log.info("upgrade: post-restart cleanup complete");
     }
   }
+
+  // UpgradeNextSteps boot sequence:
+  // 1. Import pending steps written by upgrade.sh (bash→gateway handoff)
+  // 2. Run all TypeScript migrations between last-migrated and current version
+  // The actual system:upgraded broadcast happens in Step 8 once the WS broadcaster is ready.
+  importPendingSteps();
+  const _currentVersion: string = (() => {
+    try { return (require(join(selfRepoPath ?? process.cwd(), "package.json")) as { version: string }).version; } catch { return "0.0.0"; }
+  })();
+  const _lastMigrated = readLastMigratedVersion();
+  void runPendingMigrations(_lastMigrated, _currentVersion).catch((err: unknown) => {
+    log.warn(`migration-runner: boot-time error: ${err instanceof Error ? err.message : String(err)}`);
+  });
 
   // -------------------------------------------------------------------------
   // Step 6b: Log streaming — push log entries to subscribed dashboard clients
@@ -5058,6 +5143,27 @@ export async function startGatewayServer(
 
   // Populate the late-bound ref so the chat:send handler can emit project activity.
   dashboardBroadcasterRef = dashboardBroadcaster;
+
+  // Emit system:upgraded if this boot follows a new version deploy.
+  // importPendingSteps() was called earlier (boot sequence); broadcaster is now ready.
+  try {
+    const deployed = readDeployedVersion();
+    const toVersion = deployed ?? _currentVersion;
+    const seen = readSeenVersion();
+    if (toVersion !== seen) {
+      writeSeenVersion(toVersion);
+      const pending = listUpgradeNextSteps("pending");
+      dashboardBroadcaster?.emitSystemUpgraded({
+        toVersion,
+        fromVersion: seen,
+        pendingSteps: pending.length,
+        hasRequired: hasPendingRequiredSteps(),
+      });
+      log.info(`upgrade: system:upgraded — ${seen ?? "initial"} → ${toVersion}, ${String(pending.length)} pending steps`);
+    }
+  } catch (err) {
+    log.warn(`upgrade: system:upgraded broadcast failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   /**
    * Autonomous Aion turn triggered by a TaskMaster completion/handoff event

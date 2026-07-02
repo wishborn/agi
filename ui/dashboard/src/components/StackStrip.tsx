@@ -29,7 +29,7 @@ export function StackStrip({ projectPath, projectActivity }: StackStripProps) {
     >
       <Orb size={12} pulse={activity !== null && activity !== undefined} className="shrink-0" />
       <span className="truncate">
-        {summary ?? "Aion's iterative-work + plan reasoning reads from here ↑"}
+        {summary ?? "No active tasks"}
       </span>
     </div>
   );

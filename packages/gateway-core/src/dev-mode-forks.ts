@@ -29,6 +29,9 @@
  * a default for legacy specs that don't set the field.
  */
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 /** GitHub org that owns the canonical upstream. */
 export type UpstreamOrg = "Civicognita" | "Particle-Academy";
 
@@ -47,7 +50,10 @@ export interface CoreRepoSpec {
     | "fancy-3d"
     | "fancy-screens"
     | "fancy-whiteboard"
-    | "agent-integrations";
+    | "agent-integrations"
+    | "fancy-artboard"
+    | "fancy-slides"
+    | "fancy-flow";
   /** Repo name on GitHub (NOT the slug — sometimes diverges, e.g. prime
    *  → aionima, id → agi-local-id). */
   upstream: string;
@@ -70,7 +76,10 @@ export interface CoreRepoSpec {
     | "fancy3dRepo"
     | "fancyScreensRepo"
     | "fancyWhiteboardRepo"
-    | "agentIntegrationsRepo";
+    | "agentIntegrationsRepo"
+    | "fancyArtboardRepo"
+    | "fancySlidesRepo"
+    | "fancyFlowRepo";
 }
 
 export const CORE_REPOS: readonly CoreRepoSpec[] = Object.freeze([
@@ -86,32 +95,15 @@ export const CORE_REPOS: readonly CoreRepoSpec[] = Object.freeze([
   { slug: "marketplace",      upstream: "agi-marketplace",      displayName: "Marketplace",      configKey: "marketplaceRepo" },
   { slug: "mapp-marketplace", upstream: "agi-mapp-marketplace", displayName: "MApp Marketplace", configKey: "mappMarketplaceRepo" },
 
-  // Particle-Academy (PAx) ADF UI primitives — workspace-resident per
-  // CLAUDE.md § 1.5. Same provisioning flow as the core five; different
-  // upstream org. Forks live at wishborn/<slug>; lookupFork is
-  // idempotent so existing forks (created manually in cycle 88) are
-  // reused without re-creating.
-  { slug: "react-fancy",   upstream: "react-fancy",   upstreamOrg: "Particle-Academy", displayName: "react-fancy",   configKey: "reactFancyRepo" },
-  { slug: "fancy-code",    upstream: "fancy-code",    upstreamOrg: "Particle-Academy", displayName: "fancy-code",    configKey: "fancyCodeRepo" },
-  { slug: "fancy-sheets",  upstream: "fancy-sheets",  upstreamOrg: "Particle-Academy", displayName: "fancy-sheets",  configKey: "fancySheetsRepo" },
-  { slug: "fancy-echarts", upstream: "fancy-echarts", upstreamOrg: "Particle-Academy", displayName: "fancy-echarts", configKey: "fancyEchartsRepo" },
-  { slug: "fancy-3d",      upstream: "fancy-3d",      upstreamOrg: "Particle-Academy", displayName: "fancy-3d",      configKey: "fancy3dRepo" },
-  // s146 t604 cycle 199 — fancy-screens added to PAx (6th package).
-  // Owner-confirmed 2026-05-03: @particle-academy/fancy-screens@0.2.0
-  // is the Screen primitive MApps compose against. Containerized
-  // application surface with scoped state, typed ports, hibernation,
-  // schema-driven rendering, agent-introspectable registry.
-  { slug: "fancy-screens", upstream: "fancy-screens", upstreamOrg: "Particle-Academy", displayName: "fancy-screens", configKey: "fancyScreensRepo" },
-
-  // s157 cycle 197 — fancy-whiteboard + agent-integrations added to PAx
-  // (8 packages total). Owner-confirmed 2026-05-11: s157 Phase 2 (whiteboard
-  // mode for UserNotes) builds on @particle-academy/fancy-whiteboard's
-  // canvas primitives + sticky-notes + diagramming + freeform drawing +
-  // presence cursors. agent-integrations provides per-session micro-MCP
-  // bridges so Aion can participate in shared whiteboard sessions through
-  // the same channels other collaborators use (panel + on-canvas cursor).
-  { slug: "fancy-whiteboard",   upstream: "fancy-whiteboard",   upstreamOrg: "Particle-Academy", displayName: "fancy-whiteboard",   configKey: "fancyWhiteboardRepo" },
-  { slug: "agent-integrations", upstream: "agent-integrations", upstreamOrg: "Particle-Academy", displayName: "agent-integrations", configKey: "agentIntegrationsRepo" },
+  // NOTE: the Particle-Academy (PAx) ADF UI primitives (react-fancy, fancy-code,
+  // fancy-sheets, fancy-echarts, fancy-3d, fancy-screens, fancy-whiteboard,
+  // agent-integrations, fancy-artboard, fancy-slides, fancy-flow) were REMOVED
+  // from CORE_REPOS (owner directive 2026-06-29). They are no longer monorepo-
+  // resident workspace forks — Contributing Mode must NOT provision or clone them.
+  // Fancy UI is developed in the separate Fancy project (managed by the Fancy
+  // agent) and consumed here ONLY as published `@particle-academy/*` npm packages.
+  // The upstreamOrg/Particle-Academy machinery below is retained for any future
+  // non-core PAx use, but no PAx repo is a core workspace fork.
 ] as const);
 
 export interface ForkResolveResult {
@@ -143,6 +135,29 @@ export function upstreamRemoteUrl(spec: CoreRepoSpec): string {
 }
 
 /**
+ * Resolve the on-disk directory for a core fork inside its collection dir.
+ *
+ * **Layout history:** the meta-project restructure (CLAUDE.md § 8, 2026-05-13)
+ * moved every fork from a flat `_aionima/<slug>/` into `_aionima/repos/<slug>/`.
+ * Helpers that hardcoded `join(collectionDir, slug)` silently reported every
+ * fork as "not provisioned" after the move (the Aionima project page's Repos +
+ * Contribute panels and the upgrade-wizard fork list all went blank).
+ *
+ * This resolver is the single source of truth: it prefers the new
+ * `repos/<slug>` location and falls back to the legacy flat `<slug>` only if a
+ * `.git` exists there — so a pre-restructure install keeps working and a
+ * post-restructure install resolves correctly. Returns the `repos/<slug>` path
+ * when neither exists yet (the canonical target for new clones).
+ */
+export function coreForkDir(collectionDir: string, slug: string): string {
+  const nested = join(collectionDir, "repos", slug);
+  if (existsSync(join(nested, ".git"))) return nested;
+  const flat = join(collectionDir, slug);
+  if (existsSync(join(flat, ".git"))) return flat;
+  return nested;
+}
+
+/**
  * Resolve (or create) the owner's fork for every core repo.
  */
 export async function resolveOrCreateForks(
@@ -153,7 +168,7 @@ export async function resolveOrCreateForks(
   for (const spec of CORE_REPOS) {
     const upstreamUrl = upstreamRemoteUrl(spec);
     try {
-      const existing = await lookupFork(ownerToken, ownerLogin, spec.upstream);
+      const existing = await lookupFork(ownerToken, ownerLogin, spec.upstream, specUpstreamOrg(spec));
       if (existing) {
         results.push({ slug: spec.slug, cloneUrl: existing, upstreamUrl, created: false });
         continue;
@@ -183,14 +198,18 @@ export async function resolveOrCreateForks(
 }
 
 /**
- * HEAD the owner's fork. Returns its `clone_url` if it exists, null if
- * it 404s. Any other non-2xx response is thrown as an error so the
- * caller can report it.
+ * HEAD the owner's fork. Returns its `clone_url` if it exists AND is a
+ * verified fork of the expected upstream. Returns null if the repo doesn't
+ * exist (caller should then create a proper fork). Throws if the repo
+ * exists but is not a fork of the expected upstream — that is a name
+ * collision that requires manual resolution, not a fork-creation attempt
+ * (which would also fail with a 422 from GitHub).
  */
 async function lookupFork(
   token: string,
   ownerLogin: string,
   upstream: string,
+  expectedUpstreamOrg: string,
 ): Promise<string | null> {
   const url = `https://api.github.com/repos/${ownerLogin}/${upstream}`;
   const res = await fetch(url, {
@@ -201,7 +220,24 @@ async function lookupFork(
   if (!res.ok) {
     throw new Error(`GET ${url} → ${String(res.status)} ${res.statusText}`);
   }
-  const body = (await res.json()) as { clone_url?: string; html_url?: string };
+  const body = (await res.json()) as {
+    clone_url?: string;
+    html_url?: string;
+    fork?: boolean;
+    parent?: { full_name?: string };
+  };
+
+  // Verify this is a genuine fork of the correct upstream — not just any
+  // repo with the same name in the owner's account.
+  const expectedFullName = `${expectedUpstreamOrg}/${upstream}`;
+  if (!body.fork || body.parent?.full_name !== expectedFullName) {
+    throw new Error(
+      `${ownerLogin}/${upstream} exists but is not a fork of ${expectedFullName} ` +
+      `(fork=${String(!!body.fork)}, parent=${body.parent?.full_name ?? "none"}). ` +
+      `Rename or delete the existing repo to let Contributing Mode create a proper fork.`,
+    );
+  }
+
   return body.clone_url ?? (body.html_url ? `${body.html_url}.git` : null);
 }
 
@@ -233,7 +269,7 @@ async function createFork(
   return body.clone_url ?? (body.html_url ? `${body.html_url}.git` : null);
 }
 
-function githubHeaders(token: string): Record<string, string> {
+export function githubHeaders(token: string): Record<string, string> {
   return {
     Authorization: `Bearer ${token}`,
     Accept: "application/vnd.github+json",

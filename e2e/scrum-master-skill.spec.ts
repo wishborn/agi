@@ -49,12 +49,7 @@ test.describe("Scrum-master skill infrastructure (s168 CHN-G)", () => {
     await page.goto("/projects/sample-monorepo", { waitUntil: "domcontentloaded" });
     await expect(page).toHaveURL(/\/projects\/sample-monorepo(\?|#|$)/, { timeout: 10_000 });
 
-    // Open the global chat flyout via the header button
-    const chatButton = page.getByTestId("header-chat-button");
-    await expect(chatButton).toBeVisible({ timeout: 8_000 });
-    await chatButton.click();
-
-    // Chat flyout mounts — shows "Click + to start a new chat" before a session exists.
+    // Chat is always visible in the shell — no header button click needed.
     await expect(page.getByTestId("chat-flyout")).toBeVisible({ timeout: 8_000 });
 
     // Click + to start a new chat session

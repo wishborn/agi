@@ -15,13 +15,9 @@ import { useCoreForkStatus } from "../hooks.js";
 import { fetchProjectFileTree } from "../api.js";
 import type { FileNode } from "../api.js";
 
-const FORK_LABELS: Record<string, string> = {
-  agi: "AGI — gateway",
-  prime: "PRIME — corpus",
-  id: "Local-ID",
-  marketplace: "Plugin Marketplace",
-  "mapp-marketplace": "MApp Marketplace",
-};
+// Display labels come from the API's `displayName` (sourced from CORE_REPOS in
+// gateway-core) — the single source of truth. A hardcoded map here drifted:
+// it listed the deprecated `id`/Local-ID and omitted all six PAx repos.
 
 export interface AionimaSystemReposPanelProps {
   projectPath: string;
@@ -58,7 +54,12 @@ export function AionimaSystemReposPanel({
     <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex items-center justify-between">
-        <span className="text-sm font-semibold text-foreground">Core Forks</span>
+        <div className="flex flex-col">
+          <span className="text-sm font-semibold text-foreground">Personal forks</span>
+          <span className="text-[11px] text-muted-foreground">
+            tracked against Upstream (Civicognita)
+          </span>
+        </div>
         <div className="flex gap-2">
           <Button
             size="sm"
@@ -112,7 +113,7 @@ export function AionimaSystemReposPanel({
             >
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-foreground leading-tight">
-                  {FORK_LABELS[fork.slug] ?? fork.displayName}
+                  {fork.displayName}
                 </p>
                 <p className="text-[11px] text-muted-foreground font-mono">
                   {fork.slug} · {fork.branch}

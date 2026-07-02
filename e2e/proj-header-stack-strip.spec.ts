@@ -17,7 +17,7 @@ test.describe("ProjHeader + StackStrip", () => {
     const cards = page.getByTestId("project-card");
     if (await cards.count() === 0) return false;
     await cards.first().click();
-    await expect(page).toHaveURL(/\/projects\/[a-z0-9_\-]+/);
+    await expect(page).toHaveURL(/\/projects\/[a-z0-9_-]+/);
     return true;
   }
 
@@ -35,10 +35,9 @@ test.describe("ProjHeader + StackStrip", () => {
     expect(name?.trim().length).toBeGreaterThan(0);
   });
 
-  test("ProjHeader Chat button is clickable (no crash)", async ({ page }) => {
+  test("ProjHeader has no Chat button (chat is in the global shell)", async ({ page }) => {
     if (!await navigateToFirstProject(page)) { test.skip(); return; }
-    await page.getByTestId("proj-header-chat-button").click();
-    await expect(page.getByRole("heading", { name: /error/i })).toHaveCount(0);
+    await expect(page.getByTestId("proj-header-chat-button")).toHaveCount(0);
   });
 
   test("StackStrip renders between ProjHeader and mode picker", async ({ page }) => {

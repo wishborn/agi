@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { DevNote } from "@/components/ui/dev-notes";
 import { PageScroll } from "@/components/PageScroll";
 import {
   fetchPendingApprovals,
@@ -45,6 +46,22 @@ function relativeTime(iso: string): string {
   if (ago < 3_600_000) return `${Math.floor(ago / 60_000)}m ago`;
   if (ago < 86_400_000) return `${Math.floor(ago / 3_600_000)}h ago`;
   return `${Math.floor(ago / 86_400_000)}d ago`;
+}
+
+/** A person's pending approval, collapsing all the rooms they appeared in. */
+interface PersonGroup {
+  /** `${channelId}::${channelUserId}` — stable per-person key. */
+  key: string;
+  channelId: string;
+  channelUserId: string;
+  displayName: string;
+  /** Earliest first-seen timestamp across the person's rooms. */
+  createdAt: string;
+  registrationData?: PendingApproval["registrationData"];
+  /** Every room this person posted in (each is a backend pending record). */
+  rooms: { id: string; roomId: string; projectPath: string; firstMessagePreview: string }[];
+  /** Representative record id for approve/reject (the store cascades the rest). */
+  recordId: string;
 }
 
 interface ProjectSelectorProps {
@@ -116,12 +133,15 @@ export default function IdentityPendingPage(): JSX.Element {
     return () => clearInterval(interval);
   }, [load]);
 
-  const handleApprove = useCallback(async (id: string) => {
-    setBusyId(id);
+  // Approve/reject act on the PERSON: the backend cascades across all the
+  // rooms that (channelId, channelUserId) appeared in, so we only need a single
+  // representative record id. busyId + selectedProjects are keyed by personKey.
+  const handleApprove = useCallback(async (personKey: string, recordId: string) => {
+    setBusyId(personKey);
     setError(null);
     try {
-      await approvePendingApproval(id, { projectPaths: selectedProjects[id] ?? [] });
-      setSelectedProjects((prev) => { const n = { ...prev }; delete n[id]; return n; });
+      await approvePendingApproval(recordId, { projectPaths: selectedProjects[personKey] ?? [] });
+      setSelectedProjects((prev) => { const n = { ...prev }; delete n[personKey]; return n; });
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -130,12 +150,12 @@ export default function IdentityPendingPage(): JSX.Element {
     }
   }, [load, selectedProjects]);
 
-  const handleReject = useCallback(async (id: string) => {
-    setBusyId(id);
+  const handleReject = useCallback(async (personKey: string, recordId: string) => {
+    setBusyId(personKey);
     setError(null);
     try {
-      await rejectPendingApproval(id);
-      setSelectedProjects((prev) => { const n = { ...prev }; delete n[id]; return n; });
+      await rejectPendingApproval(recordId);
+      setSelectedProjects((prev) => { const n = { ...prev }; delete n[personKey]; return n; });
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -144,19 +164,50 @@ export default function IdentityPendingPage(): JSX.Element {
     }
   }, [load]);
 
-  const byProject = useMemo(() => {
-    const out: Record<string, PendingApproval[]> = {};
+  // One card per PERSON (channelId, channelUserId). A single human who posted in
+  // several rooms previously rendered as several "duplicate" approval cards;
+  // now their rooms are collapsed into one card and one approve/reject resolves
+  // them all (the store cascades). Sorted oldest-first by first-seen time.
+  const people = useMemo(() => {
+    const map = new Map<string, PersonGroup>();
     for (const p of pending) {
-      const key = p.projectPath;
-      if (!out[key]) out[key] = [];
-      out[key]!.push(p);
+      const key = `${p.channelId}::${p.channelUserId}`;
+      const room = { id: p.id, roomId: p.roomId, projectPath: p.projectPath, firstMessagePreview: p.firstMessagePreview };
+      const existing = map.get(key);
+      if (existing) {
+        existing.rooms.push(room);
+        if (p.createdAt < existing.createdAt) existing.createdAt = p.createdAt;
+        if (p.registrationData !== undefined && existing.registrationData === undefined) {
+          existing.registrationData = p.registrationData;
+        }
+      } else {
+        map.set(key, {
+          key,
+          channelId: p.channelId,
+          channelUserId: p.channelUserId,
+          displayName: p.displayName,
+          createdAt: p.createdAt,
+          registrationData: p.registrationData,
+          rooms: [room],
+          recordId: p.id,
+        });
+      }
     }
-    return out;
+    return [...map.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }, [pending]);
 
   return (
     <PageScroll>
       <div className="max-w-4xl mx-auto p-6">
+        <DevNote heading="2026-06-08 — One card per person + live again" kind="info" scope="identity/pending">
+          This page now shows ONE card per person (channel + user), collapsing all the rooms they
+          messaged from into a single card — previously the same human appeared as multiple
+          "duplicate" cards (one per room). Approve/Reject act on the person: the backend cascades
+          across all their rooms in one click. The list also stopped updating because the legacy
+          Discord pairing-code gate intercepted messages BEFORE the pending-approval capture ran;
+          that gate was retired (channel identity is dashboard-only now), so new contacts appear here
+          again.
+        </DevNote>
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold text-foreground">Pending Identity Approvals</h1>
@@ -184,101 +235,107 @@ export default function IdentityPendingPage(): JSX.Element {
           </Card>
         )}
 
-        {Object.entries(byProject).map(([projectPath, entries]) => (
-          <Card key={projectPath || "__unbound__"} className="p-4 mb-4" data-testid={`identity-pending-project-${(projectPath || "unbound").replace(/[^a-zA-Z0-9]/g, "_")}`}>
-            <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border">
-              <span className="text-[13px] font-semibold text-card-foreground truncate">
-                {projectPath || "Unbound Channels"}
-              </span>
-              <span className="text-[10px] text-muted-foreground">
-                · {entries.length} pending
-                {!projectPath && " · bind a room to a project to enable gating"}
-              </span>
-            </div>
-            <div className="space-y-3">
-              {entries.map((entry) => (
-                <div
-                  key={entry.id}
-                  className="p-3 rounded border border-border/60 hover:border-border transition-colors"
-                  data-testid={`identity-pending-entry-${entry.id.replace(/[^a-zA-Z0-9]/g, "_")}`}
-                >
-                  <div className="flex items-start gap-3">
-                    <span className="text-[18px] shrink-0 mt-0.5" aria-hidden>
-                      {channelEmoji(entry.channelId)}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[13px] font-medium text-foreground truncate">
-                          {entry.displayName}
-                        </span>
-                        <span className="text-[10px] text-muted-foreground">
-                          · {entry.channelId} · {relativeTime(entry.createdAt)}
-                        </span>
-                      </div>
-                      <div className="text-[10px] text-muted-foreground font-mono mt-0.5 truncate">
-                        room: {entry.roomId} · user: {entry.channelUserId}
-                      </div>
-                      {entry.firstMessagePreview.length > 0 && (
-                        <div className="text-[11px] text-foreground/80 mt-1.5 italic line-clamp-2">
-                          "{entry.firstMessagePreview}"
-                        </div>
-                      )}
-
-                      {/* s195 — registration data collected during DM flow */}
-                      {entry.registrationData !== undefined && (
-                        <div className="mt-2 p-2 rounded bg-muted/40 border border-border/40 space-y-0.5">
-                          <div className="text-[10px] font-medium text-muted-foreground mb-1">Registration data</div>
-                          {entry.registrationData.name !== undefined && (
-                            <div className="text-[11px] text-foreground font-mono">Name: {entry.registrationData.name}</div>
-                          )}
-                          {entry.registrationData.email !== undefined && (
-                            <div className="text-[11px] text-foreground font-mono">Email: {entry.registrationData.email}</div>
-                          )}
-                          {entry.registrationData.birthdate !== undefined && (
-                            <div className="text-[11px] text-foreground font-mono">Birthdate: {entry.registrationData.birthdate}</div>
-                          )}
-                          {entry.registrationData.pronouns !== undefined && (
-                            <div className="text-[11px] text-foreground font-mono">Pronouns: {entry.registrationData.pronouns}</div>
-                          )}
-                          {entry.registrationData.discordHandle !== undefined && (
-                            <div className="text-[11px] text-foreground font-mono">Discord: @{entry.registrationData.discordHandle}</div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* s195 — project assignment before approving */}
-                      <ProjectSelector
-                        projects={projects}
-                        selected={selectedProjects[entry.id] ?? []}
-                        onChange={(paths) => setSelectedProjects((prev) => ({ ...prev, [entry.id]: paths }))}
-                      />
+        <div className="space-y-3">
+          {people.map((person) => {
+            const sanitizedKey = person.key.replace(/[^a-zA-Z0-9]/g, "_");
+            const previewRoom = person.rooms.find((r) => r.firstMessagePreview.length > 0) ?? person.rooms[0];
+            const isBusy = busyId === person.key;
+            return (
+              <Card
+                key={person.key}
+                className="p-4"
+                data-testid={`identity-pending-entry-${sanitizedKey}`}
+              >
+                <div className="flex items-start gap-3">
+                  <span className="text-[18px] shrink-0 mt-0.5" aria-hidden>
+                    {channelEmoji(person.channelId)}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[13px] font-medium text-foreground truncate">
+                        {person.displayName}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        · {person.channelId} · {relativeTime(person.createdAt)}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground font-mono mt-0.5 truncate">
+                      user: {person.channelUserId}
                     </div>
 
-                    <div className="flex flex-col gap-1.5 shrink-0">
-                      <Button
-                        size="xs"
-                        onClick={() => void handleApprove(entry.id)}
-                        disabled={busyId === entry.id}
-                        data-testid={`identity-pending-approve-${entry.id.replace(/[^a-zA-Z0-9]/g, "_")}`}
-                      >
-                        {busyId === entry.id ? "…" : "Approve"}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="xs"
-                        onClick={() => void handleReject(entry.id)}
-                        disabled={busyId === entry.id}
-                        data-testid={`identity-pending-reject-${entry.id.replace(/[^a-zA-Z0-9]/g, "_")}`}
-                      >
-                        Reject
-                      </Button>
+                    {/* Rooms this person appeared in — collapsed from N per-room
+                        records into one card so the same human isn't a duplicate. */}
+                    <div className="mt-1.5 space-y-0.5" data-testid={`identity-pending-rooms-${sanitizedKey}`}>
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+                        Seen in {person.rooms.length} room{person.rooms.length === 1 ? "" : "s"}
+                      </div>
+                      {person.rooms.map((room) => (
+                        <div key={room.id} className="text-[10px] text-muted-foreground font-mono truncate">
+                          {room.roomId}{room.projectPath ? ` · ${room.projectPath}` : " · unbound"}
+                        </div>
+                      ))}
                     </div>
+
+                    {previewRoom !== undefined && previewRoom.firstMessagePreview.length > 0 && (
+                      <div className="text-[11px] text-foreground/80 mt-1.5 italic line-clamp-2">
+                        "{previewRoom.firstMessagePreview}"
+                      </div>
+                    )}
+
+                    {/* s195 — registration data collected during DM flow */}
+                    {person.registrationData !== undefined && (
+                      <div className="mt-2 p-2 rounded bg-muted/40 border border-border/40 space-y-0.5">
+                        <div className="text-[10px] font-medium text-muted-foreground mb-1">Registration data</div>
+                        {person.registrationData.name !== undefined && (
+                          <div className="text-[11px] text-foreground font-mono">Name: {person.registrationData.name}</div>
+                        )}
+                        {person.registrationData.email !== undefined && (
+                          <div className="text-[11px] text-foreground font-mono">Email: {person.registrationData.email}</div>
+                        )}
+                        {person.registrationData.birthdate !== undefined && (
+                          <div className="text-[11px] text-foreground font-mono">Birthdate: {person.registrationData.birthdate}</div>
+                        )}
+                        {person.registrationData.pronouns !== undefined && (
+                          <div className="text-[11px] text-foreground font-mono">Pronouns: {person.registrationData.pronouns}</div>
+                        )}
+                        {person.registrationData.discordHandle !== undefined && (
+                          <div className="text-[11px] text-foreground font-mono">Discord: @{person.registrationData.discordHandle}</div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* s195 — project assignment before approving */}
+                    <ProjectSelector
+                      projects={projects}
+                      selected={selectedProjects[person.key] ?? []}
+                      onChange={(paths) => setSelectedProjects((prev) => ({ ...prev, [person.key]: paths }))}
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5 shrink-0">
+                    <Button
+                      size="xs"
+                      onClick={() => void handleApprove(person.key, person.recordId)}
+                      disabled={isBusy}
+                      data-testid={`identity-pending-approve-${sanitizedKey}`}
+                    >
+                      {isBusy ? "…" : "Approve"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      onClick={() => void handleReject(person.key, person.recordId)}
+                      disabled={isBusy}
+                      data-testid={`identity-pending-reject-${sanitizedKey}`}
+                    >
+                      Reject
+                    </Button>
                   </div>
                 </div>
-              ))}
-            </div>
-          </Card>
-        ))}
+              </Card>
+            );
+          })}
+        </div>
       </div>
     </PageScroll>
   );

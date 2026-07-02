@@ -3,10 +3,12 @@ import { createRoot } from "react-dom/client";
 import { registerAll as registerAllEChartTypes } from "@particle-academy/fancy-echarts";
 import "./index.css";
 import "@particle-academy/react-fancy/styles.css";
+import "@particle-academy/fancy-code/styles.css";
 import "@particle-academy/fancy-whiteboard/styles.css";
 import "@particle-academy/agent-integrations/styles.css";
+import "@particle-academy/fancy-diff/styles.css";
+import "@particle-academy/fancy-pwa/styles.css";
 import { App } from "./App.js";
-import { isElectron } from "./lib/environment.js";
 import { setupContentRendererExtensions } from "./lib/content-renderer-setup.js";
 
 // fancy-echarts (renamed from react-echarts upstream, finalized 2026-05-14)
@@ -21,15 +23,8 @@ registerAllEChartTypes();
 // widgets without per-callsite component wiring.
 setupContentRendererExtensions();
 
-// Register PWA service worker (skip in Electron — it has its own update mechanism).
-// autoUpdate mode: new SWs activate immediately via skipWaiting + clientsClaim.
-// index.html is never precached, so navigation always hits the network and picks
-// up fresh asset references after an upgrade. No manual unregister needed.
-if (!isElectron()) {
-  import("virtual:pwa-register").then(({ registerSW }) => {
-    registerSW({ immediate: true });
-  }).catch(() => {});
-}
+// PWA service-worker registration is handled by <FancyPwaProvider> in App.tsx
+// (skipped in Electron, which has its own update mechanism).
 
 const root = document.getElementById("root");
 if (root !== null) {

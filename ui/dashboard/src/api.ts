@@ -535,6 +535,64 @@ export async function fetchProjectInfo(path: string): Promise<ProjectGitInfo> {
   return res.json() as Promise<ProjectGitInfo>;
 }
 
+// --- .agi envelope config/knowledge-state surface (story #207) ---
+
+export async function fetchAgiRepoStatus(path: string): Promise<import("./types.js").AgiRepoStatus> {
+  const res = await fetch(`/api/projects/agi-repo/status?path=${encodeURIComponent(path)}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function fetchAgiConfigState(path: string): Promise<import("./types.js").AgiConfigState> {
+  const res = await fetch(`/api/projects/agi-repo/state?path=${encodeURIComponent(path)}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+  return res.json();
+}
+
+async function postAgiRepo(endpoint: string, path: string, body?: Record<string, unknown>): Promise<{ ok: boolean; remoteUrl?: string | null; summary?: string }> {
+  const res = await fetch(`/api/projects/agi-repo/${endpoint}?path=${encodeURIComponent(path)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return data;
+}
+
+export const initAgiRepo = (path: string) => postAgiRepo("init", path);
+export const configureAgiRemote = (path: string, mode: "auto" | "url", url?: string) =>
+  postAgiRepo("remote", path, { mode, url });
+export const pullAgiState = (path: string) => postAgiRepo("pull", path);
+export const pushAgiState = (path: string) => postAgiRepo("push", path);
+
+// ---------------------------------------------------------------------------
+// Identity providers — /api/auth/providers (story #212)
+// ---------------------------------------------------------------------------
+
+/** Canonical identity providers + live status for the System ▸ Identity grid. */
+export async function fetchIdentityProviders(): Promise<import("./types.js").IdentityProviderView[]> {
+  const res = await fetch("/api/auth/providers");
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+  return (await res.json() as { providers: import("./types.js").IdentityProviderView[] }).providers;
+}
+
+/** Store an owner-supplied OAuth app (clientId/secret) for a redirect provider. */
+export async function configureProviderApp(id: string, clientId: string, clientSecret: string): Promise<void> {
+  const res = await fetch(`/api/auth/providers/${encodeURIComponent(id)}/app`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clientId, clientSecret }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+}
+
+/** Clear a redirect provider's stored OAuth app credentials. */
+export async function clearProviderApp(id: string): Promise<void> {
+  const res = await fetch(`/api/auth/providers/${encodeURIComponent(id)}/app`, { method: "DELETE" });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+}
+
 // ---------------------------------------------------------------------------
 // Plans API — /api/plans
 // ---------------------------------------------------------------------------
@@ -885,6 +943,80 @@ export async function fetchChangelog(count = 50, offset = 0): Promise<{ commits:
 }
 
 // ---------------------------------------------------------------------------
+// UpgradeNextSteps — /api/system/upgrade-next-steps
+// ---------------------------------------------------------------------------
+
+export async function fetchUpgradeNextSteps(filter: "pending" | "all" = "pending"): Promise<{ steps: import("./types.js").UpgradeNextStep[]; hasRequired: boolean }> {
+  const res = await fetch(`/api/system/upgrade-next-steps?filter=${filter}`);
+  if (!res.ok) return { steps: [], hasRequired: false };
+  return res.json() as Promise<{ steps: import("./types.js").UpgradeNextStep[]; hasRequired: boolean }>;
+}
+
+export async function completeUpgradeStep(id: string): Promise<{ ok: boolean; hasRequired: boolean }> {
+  const res = await fetch(`/api/system/upgrade-next-steps/${encodeURIComponent(id)}/done`, { method: "POST" });
+  if (!res.ok) return { ok: false, hasRequired: false };
+  return res.json() as Promise<{ ok: boolean; hasRequired: boolean }>;
+}
+
+export async function dismissUpgradeStep(id: string): Promise<{ ok: boolean; hasRequired: boolean }> {
+  const res = await fetch(`/api/system/upgrade-next-steps/${encodeURIComponent(id)}/dismiss`, { method: "POST" });
+  if (!res.ok) return { ok: false, hasRequired: false };
+  return res.json() as Promise<{ ok: boolean; hasRequired: boolean }>;
+}
+
+// ---------------------------------------------------------------------------
+// Upgrade Wizard — fork-aware multi-source upgrade workflow
+// ---------------------------------------------------------------------------
+
+export async function fetchForkStatus(): Promise<import("./types.js").ForkStatus> {
+  const res = await fetch("/api/system/fork-status");
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<import("./types.js").ForkStatus>;
+}
+
+export async function fetchUpgradePreview(source: string): Promise<import("./types.js").UpgradePreview> {
+  const res = await fetch(`/api/system/upgrade-preview?source=${encodeURIComponent(source)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<import("./types.js").UpgradePreview>;
+}
+
+export async function fetchUpgradeHistory(): Promise<{ entries: import("./types.js").UpgradeHistoryEntry[] }> {
+  const res = await fetch("/api/system/upgrade-history");
+  if (!res.ok) return { entries: [] };
+  return res.json() as Promise<{ entries: import("./types.js").UpgradeHistoryEntry[] }>;
+}
+
+export async function addUpgradeHistoryNote(id: string, note: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/system/upgrade-history/${encodeURIComponent(id)}/note`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ note }),
+  });
+  if (!res.ok) return { ok: false };
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+export async function mergeForkSource(source: string): Promise<import("./types.js").MergeResult> {
+  const res = await fetch("/api/system/merge-source", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source }),
+  });
+  // 409 = merge conflict — still a structured response, not an error throw
+  if (!res.ok && res.status !== 409) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<import("./types.js").MergeResult>;
+}
+
+// ---------------------------------------------------------------------------
 // System connections — /api/system/connections
 // ---------------------------------------------------------------------------
 
@@ -1109,6 +1241,7 @@ export interface HostingStatus {
     hostname: string;
     type: string;
     status: "running" | "stopped" | "error" | "unconfigured";
+    serving: boolean;
     port: number | null;
     url: string | null;
     mode: "production" | "development";
@@ -1518,6 +1651,8 @@ export interface MemoryEvent {
   confidence: number;
   createdAt: string;
   projectPath: string | null;
+  /** s234 locality scope — prime|gestalt|project:<path>|provider:<id>|room:<channelId>:<roomId>. */
+  scope: string | null;
   coaFingerprint: string;
 }
 
@@ -1532,12 +1667,14 @@ export async function fetchMemoryEvents(params?: {
   q?: string;
   projectPath?: string | null;
   entityId?: string;
+  scope?: string;
   limit?: number;
 }): Promise<MemoryEvent[]> {
   const url = new URL("/api/memory/events", window.location.origin);
   if (params?.q) url.searchParams.set("q", params.q);
   if (params?.projectPath !== undefined) url.searchParams.set("projectPath", params.projectPath ?? "null");
   if (params?.entityId) url.searchParams.set("entityId", params.entityId);
+  if (params?.scope) url.searchParams.set("scope", params.scope);
   if (params?.limit) url.searchParams.set("limit", String(params.limit));
   const res = await fetch(url.toString(), { headers: { Accept: "application/json" } });
   if (!res.ok) throw new Error(`Memory events fetch failed: ${res.status}`);
@@ -2385,45 +2522,6 @@ export async function loginDashboard(username: string, password: string): Promis
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<{ ok: boolean; token: string; user: import("./types.js").DashboardUserInfo }>;
-}
-
-export interface IdLoginResult {
-  status: "completed" | "pending";
-  /** Present when status is "completed" — instant login (LAN auto-approved). */
-  token?: string;
-  user?: { userId: string; entityId: string; displayName: string; coaAlias: string; geid: string };
-  /** Present when status is "pending" — popup flow needed (off-LAN). */
-  handoffId?: string;
-  authUrl?: string;
-}
-
-export async function startIdLogin(): Promise<IdLoginResult> {
-  const res = await fetch("/api/auth/login-via-id", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<IdLoginResult>;
-}
-
-export async function pollIdLogin(handoffId: string): Promise<{
-  status: "pending" | "completed" | "expired" | "not_found";
-  token?: string;
-  user?: { userId: string; entityId: string; displayName: string; coaAlias: string; geid: string };
-}> {
-  const res = await fetch(`/api/auth/login-via-id/poll?handoffId=${encodeURIComponent(handoffId)}`);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<{
-    status: "pending" | "completed" | "expired" | "not_found";
-    token?: string;
-    user?: { userId: string; entityId: string; displayName: string; coaAlias: string; geid: string };
-  }>;
 }
 
 export async function fetchCurrentUser(token: string): Promise<{
@@ -4279,4 +4377,86 @@ export async function updateWorkflow(id: string, patch: { name?: string; graph?:
 export async function deleteWorkflow(id: string): Promise<void> {
   const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
+}
+
+// --- Identity people management (Wave 1 s228) ---------------------------------
+
+/** A channel person the owner has already approved or rejected. */
+export interface DecidedPerson {
+  status: "approved" | "rejected";
+  decidedAt: string;
+  channelId?: string;
+  channelUserId?: string;
+  displayName?: string;
+  projectPath?: string;
+  assignedProjectPaths?: string[];
+  registrationData?: { name?: string; email?: string; birthdate?: string; pronouns?: string; discordHandle?: string };
+}
+
+export async function fetchIdentityPeople(status?: "approved" | "rejected"): Promise<DecidedPerson[]> {
+  const res = await fetch(status ? `/api/identity/people?status=${status}` : "/api/identity/people");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return ((await res.json()) as { people: DecidedPerson[] }).people;
+}
+
+export async function patchPersonProjects(channelId: string, channelUserId: string, projectPaths: string[]): Promise<void> {
+  const res = await fetch(
+    `/api/identity/people/${encodeURIComponent(channelId)}/${encodeURIComponent(channelUserId)}/projects`,
+    { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectPaths }) },
+  );
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export async function revokePerson(channelId: string, channelUserId: string): Promise<void> {
+  const res = await fetch(`/api/identity/people/${encodeURIComponent(channelId)}/${encodeURIComponent(channelUserId)}/revoke`, { method: "POST" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export async function reReviewPerson(channelId: string, channelUserId: string): Promise<void> {
+  const res = await fetch(`/api/identity/people/${encodeURIComponent(channelId)}/${encodeURIComponent(channelUserId)}/re-review`, { method: "POST" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+// --- Contribution metrics (Wave 2b) ------------------------------------------
+
+export interface ContributeMetrics {
+  ownerLogin: string | null;
+  repos: Array<{ slug: string; displayName: string; merged: number; open: number; total: number }>;
+  totals: { merged: number; open: number; total: number };
+}
+
+export async function fetchContributeMetrics(): Promise<ContributeMetrics> {
+  const res = await fetch("/api/dev/contribute/metrics");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as ContributeMetrics;
+}
+
+// --- Incoming PR comments (Wave 2c) ------------------------------------------
+
+export interface PrComment {
+  id: number;
+  authorLogin: string;
+  authorAvatar: string | null;
+  body: string;
+  createdAt: string;
+  htmlUrl: string;
+}
+
+export async function fetchPrComments(slug: string, prNumber: number): Promise<PrComment[]> {
+  const res = await fetch(`/api/dev/incoming/${encodeURIComponent(slug)}/pr/${String(prNumber)}/comments`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return ((await res.json()) as { comments: PrComment[] }).comments;
+}
+
+export async function postPrComment(slug: string, prNumber: number, body: string): Promise<PrComment> {
+  const res = await fetch(`/api/dev/incoming/${encodeURIComponent(slug)}/pr/${String(prNumber)}/comments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ body }),
+  });
+  if (!res.ok) {
+    const e = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(e.error ?? `HTTP ${res.status}`);
+  }
+  return ((await res.json()) as { comment: PrComment }).comment;
 }

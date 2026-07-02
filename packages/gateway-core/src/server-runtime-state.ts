@@ -31,10 +31,12 @@ import { GatewayWebSocketServer } from "./ws-server.js";
 import { handlePlanRequest } from "./plan-api.js";
 import { readProjectMcpServers, setDotMcpServer, removeDotMcpServer } from "./mcp-config-store.js";
 import type { EntityStore, CommsLog, NotificationStore } from "@agi/entity-model";
+import { epochMsToIso } from "@agi/memory";
 import { injectTokenIntoCloneUrl } from "./dev-mode-auth.js";
 import { eq, and } from "drizzle-orm";
 import { connections } from "@agi/db-schema";
 import { decryptToken } from "./crypto-tokens.js";
+import { isVersionNewer } from "./version-compare.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
 import { probeGpuStats } from "./hardware-probe.js";
@@ -60,6 +62,8 @@ import { registerHandoffRoutes, startHandoffCleanup } from "./handoff-api.js";
 import { registerDeviceFlowRoutes } from "./device-flow-api.js";
 import { registerConnectionsRoutes } from "./connections-api.js";
 import { resolveEncryptionKey } from "./crypto-tokens.js";
+import { CompanionPairingService } from "./companion-pairing.js";
+import { coreForkDir } from "./dev-mode-forks.js";
 import { registerEntityManagementRoutes } from "./entity-management-api.js";
 import { registerLocalFederationRoutes } from "./local-federation-api.js";
 import type { SecretsManager } from "./secrets.js";
@@ -67,7 +71,7 @@ import { DashboardUserStore, hasRole } from "./dashboard-user-store.js";
 import type { IdentityProvider } from "./identity-provider.js";
 import type { OAuthHandler } from "./oauth-handler.js";
 import type { LLMProvider } from "./llm/index.js";
-import { registerIdentityRoutes } from "./identity-api.js";
+import { registerIdentityRoutes, registerIdentityProvidersRoute } from "./identity-api.js";
 import { registerSubUserRoutes } from "./sub-user-api.js";
 import type { VisitorAuthManager } from "./visitor-auth.js";
 import type { FederationNode } from "./federation-node.js";
@@ -75,7 +79,14 @@ import type { COAChainLogger } from "@agi/coa-chain";
 import type { DashboardSession } from "./dashboard-user-store.js";
 import type { FederationRouter as FedRouter } from "./federation-router.js";
 import { appendUpgradeLog, clearUpgradeLog, getUpgradeLog } from "./upgrade-log.js";
-import { projectConfigPath } from "./project-config-path.js";
+import { appendUpgradeHistory, readUpgradeHistory, addResolutionNote, generateHistoryId } from "./upgrade-history.js";
+import {
+  listUpgradeNextSteps,
+  completeUpgradeNextStep,
+  dismissUpgradeNextStep,
+  hasPendingRequiredSteps,
+} from "./upgrade-next-steps.js";
+import { projectConfigPath, KNOWLEDGE_DIR, isVisibleInFileBrowser } from "./project-config-path.js";
 import {
   buildCandidatePayload,
   clearRawCaptures,
@@ -413,11 +424,40 @@ interface GitExecResult {
   exitCode: number;
 }
 
-async function execGitDashboard(args: string[], cwd: string): Promise<GitExecResult> {
+/**
+ * Read the owner's GitHub login + decrypted access token from the connections
+ * table. Used by the dev/contribute endpoints (outbound PRs). Returns nulls
+ * when unavailable rather than throwing.
+ */
+async function readOwnerGithub(
+  deps: RuntimeStateDeps,
+  encryptionKey: Buffer | undefined,
+): Promise<{ login: string | null; token: string | null }> {
+  let login: string | null = null;
+  let token: string | null = null;
+  if (deps.db) {
+    try {
+      const [row] = await deps.db
+        .select({ accountLabel: connections.accountLabel, accessToken: connections.accessToken })
+        .from(connections)
+        .where(and(eq(connections.provider, "github"), eq(connections.role, "owner")))
+        .limit(1);
+      if (row) {
+        login = row.accountLabel?.trim() ?? null;
+        if (row.accessToken && encryptionKey) token = decryptToken(encryptionKey, row.accessToken);
+      }
+    } catch {
+      /* connection unavailable — return nulls */
+    }
+  }
+  return { login, token };
+}
+
+async function execGitDashboard(args: string[], cwd: string, timeoutMs = 30_000): Promise<GitExecResult> {
   try {
     const { stdout, stderr } = await execFileAsync("git", args, {
       cwd,
-      timeout: 30_000,
+      timeout: timeoutMs,
       maxBuffer: 1024 * 1024,
     });
     return {
@@ -535,6 +575,8 @@ function parseGitStatus(raw: string): {
 /** Guard: only one upgrade at a time across the process. */
 let upgradeInProgress = false;
 let upgradeStartedAt = 0;
+/** History entry being built for the current upgrade run. */
+let currentHistoryEntry: import("./upgrade-history.js").UpgradeHistoryEntry | null = null;
 
 /** Fetch cache — avoid hammering the remote on rapid poll calls. */
 let lastFetchTime = 0;
@@ -610,6 +652,12 @@ export async function createGatewayRuntimeState(
   if (deps.configPath && deps.db) {
     encryptionKey = resolveEncryptionKey(deps.configPath);
   }
+
+  // Companion device pairing (gateway ↔ desktop/mobile companions, e.g. Genie).
+  // In-memory for now (devices re-pair after a gateway restart — persistence is
+  // a follow-up). The pairing LOGIC predates this (Task #182); we expose it over
+  // HTTP here so LAN companions can pair without a separate identity service.
+  const companionPairing = new CompanionPairingService();
 
   // Derive gateway base URL from hosting config (used in handoff authUrl)
   let gatewayBaseUrl = "https://ai.on";
@@ -1374,8 +1422,8 @@ export async function createGatewayRuntimeState(
           // counts are all zero. Previously, only non-zero totals
           // populated the field, which made it impossible to tell
           // "not migrated" from "migrated but empty" in the dashboard.
-          // Now: presence of k/ dir → ▣ 0 for empty; absence → "—".
-          const kRoot = join(fullPath, "k");
+          // Now: presence of .ai/ dir → ▣ 0 for empty; absence → "—".
+          const kRoot = join(fullPath, KNOWLEDGE_DIR);
           if (existsSync(kRoot)) {
             const countJson = (subdir: string): number => {
               const dir = join(kRoot, subdir);
@@ -1403,7 +1451,7 @@ export async function createGatewayRuntimeState(
         let tynnSlice: { open: number; doing: number } | undefined;
         try {
           const candidates = [
-            join(fullPath, "k", "pm", "tasks.jsonl"),
+            join(fullPath, KNOWLEDGE_DIR, "pm", "tasks.jsonl"),
             join(fullPath, ".tynn-lite", "tasks.jsonl"),
           ];
           const tasksPath = candidates.find((p) => existsSync(p));
@@ -1850,6 +1898,235 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // {project}.agi monorepo envelope (Phase 3, first slice)
+  //
+  // GET  /api/projects/agi-repo/status?path=<projectPath> — envelope + submodules
+  // POST /api/projects/agi-repo/init?path=<projectPath>   — git init the envelope
+  // POST /api/projects/agi-repo/import?path=<projectPath> — adopt existing repos/ as submodules
+  //
+  // Mirrors the /api/projects/repos gate (private-network + workspace-dir
+  // validation). The `_aionima` collection is excluded by the manager.
+  // -----------------------------------------------------------------------
+
+  const agiRepoGuard = (
+    request: import("fastify").FastifyRequest,
+    reply: import("fastify").FastifyReply,
+  ): string | null => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      reply.code(403).send({ error: "Projects API only allowed from private network" });
+      return null;
+    }
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) {
+      reply.code(400).send({ error: "path query parameter is required" });
+      return null;
+    }
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+      return null;
+    }
+    return targetPath;
+  };
+
+  fastify.get("/api/projects/agi-repo/status", async (request, reply) => {
+    const targetPath = agiRepoGuard(request, reply);
+    if (!targetPath) return reply;
+    const { getAgiRepoStatus } = await import("./agi-repo-manager.js");
+    return reply.send(getAgiRepoStatus(targetPath));
+  });
+
+  fastify.post("/api/projects/agi-repo/init", async (request, reply) => {
+    const targetPath = agiRepoGuard(request, reply);
+    if (!targetPath) return reply;
+    const { initAgiRepo } = await import("./agi-repo-manager.js");
+    const result = initAgiRepo(targetPath);
+    if (!result.ok) return reply.code(400).send({ error: result.error });
+    if (deps.projectConfigManager) {
+      try {
+        await deps.projectConfigManager.update(targetPath, { agiRepo: { initialized: true, remoteUrl: null } });
+      } catch { /* config update best-effort — git state is the source of truth */ }
+    }
+    return reply.send(result);
+  });
+
+  fastify.post("/api/projects/agi-repo/import", async (request, reply) => {
+    const targetPath = agiRepoGuard(request, reply);
+    if (!targetPath) return reply;
+    const { importAgiRepo } = await import("./agi-repo-manager.js");
+    const result = importAgiRepo(targetPath);
+    if (!result.ok) return reply.code(400).send({ error: result.error });
+    if (deps.projectConfigManager) {
+      try {
+        await deps.projectConfigManager.update(targetPath, { agiRepo: { initialized: true, remoteUrl: null } });
+      } catch { /* best-effort */ }
+    }
+    return reply.send(result);
+  });
+
+  // GET /api/projects/agi-repo/state?path= — config/knowledge STATE diff
+  // (story #207). The envelope's git identity is its config + knowledge state +
+  // submodule pins; chats/sandbox/.trash are excluded. Never 500s.
+  fastify.get("/api/projects/agi-repo/state", async (request, reply) => {
+    const targetPath = agiRepoGuard(request, reply);
+    if (!targetPath) return reply;
+    const { getAgiConfigState } = await import("./agi-repo-manager.js");
+    return reply.send(getAgiConfigState(targetPath));
+  });
+
+  // POST /api/projects/agi-repo/remote?path= — configure the {slug}.agi remote.
+  // Body: { mode: "auto" | "url", url? }. "auto" creates wishborn/{slug}.agi via
+  // the owner's connected GitHub token and wires origin; "url" wires an existing
+  // remote the owner pastes.
+  fastify.post("/api/projects/agi-repo/remote", async (request, reply) => {
+    const targetPath = agiRepoGuard(request, reply);
+    if (!targetPath) return reply;
+    const body = (request.body ?? {}) as { mode?: string; url?: string };
+    const { setAgiRemote, createPrivateAgiRemote } = await import("./agi-repo-manager.js");
+
+    let remoteUrl: string | null = null;
+
+    if (body.mode === "url") {
+      if (!body.url || typeof body.url !== "string") {
+        return reply.code(400).send({ error: "url is required for mode=url" });
+      }
+      const res = setAgiRemote(targetPath, body.url);
+      if (!res.ok) return reply.code(400).send({ error: res.error });
+      remoteUrl = body.url.trim();
+    } else if (body.mode === "auto") {
+      // Read the owner's GitHub token (connections table) and create the repo.
+      let token: string | null = null;
+      if (deps.db && encryptionKey) {
+        try {
+          const [row] = await deps.db
+            .select({ accessToken: connections.accessToken })
+            .from(connections)
+            .where(and(eq(connections.provider, "github"), eq(connections.role, "owner")))
+            .limit(1);
+          if (row?.accessToken) token = decryptToken(encryptionKey, row.accessToken);
+        } catch { /* fall through to 400 */ }
+      }
+      if (!token) {
+        return reply.code(400).send({ error: "no connected GitHub account — connect one in Settings → Gateway → Contributing, or use mode=url" });
+      }
+      const created = await createPrivateAgiRemote(targetPath, token);
+      if (!created.ok) return reply.code(502).send({ error: created.error });
+      remoteUrl = created.remoteUrl ?? null;
+    } else {
+      return reply.code(400).send({ error: "mode must be 'auto' or 'url'" });
+    }
+
+    if (deps.projectConfigManager) {
+      try {
+        await deps.projectConfigManager.update(targetPath, { agiRepo: { initialized: true, remoteUrl } });
+      } catch { /* best-effort */ }
+    }
+    return reply.send({ ok: true, remoteUrl });
+  });
+
+  // POST /api/projects/agi-repo/pull?path= — fast-forward config/knowledge +
+  // `git submodule update --init --recursive`.
+  fastify.post("/api/projects/agi-repo/pull", async (request, reply) => {
+    const targetPath = agiRepoGuard(request, reply);
+    if (!targetPath) return reply;
+    const { applyAgiUpstream } = await import("./agi-repo-manager.js");
+    const result = applyAgiUpstream(targetPath);
+    if (!result.ok) return reply.code(400).send({ error: result.error });
+    return reply.send(result);
+  });
+
+  // POST /api/projects/agi-repo/push?path= — commit + push config/knowledge
+  // (chats/sandbox/.trash are gitignored, never pushed).
+  fastify.post("/api/projects/agi-repo/push", async (request, reply) => {
+    const targetPath = agiRepoGuard(request, reply);
+    if (!targetPath) return reply;
+    const { pushAgiState } = await import("./agi-repo-manager.js");
+    const result = pushAgiState(targetPath);
+    if (!result.ok) return reply.code(400).send({ error: result.error });
+    return reply.send(result);
+  });
+
+  // -----------------------------------------------------------------------
+  // Companion device pairing (gateway ↔ desktop/mobile companions, e.g. Genie)
+  //
+  // POST /api/companion/pair/code           — owner generates a 6-digit code
+  // POST /api/companion/pair                — device submits code + info → token
+  // GET  /api/companion/devices             — list paired devices
+  // POST /api/companion/devices/:id/revoke  — revoke a device's access
+  //
+  // LAN-only. Code generation + device management require admin (the owner
+  // operates them from the dashboard). The pair submission is gated by the
+  // code itself (the device has no session yet), private-network-only.
+  // -----------------------------------------------------------------------
+
+  const companionAdminGuard = (
+    request: import("fastify").FastifyRequest,
+    reply: import("fastify").FastifyReply,
+  ): boolean => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      reply.code(403).send({ error: "Companion API only allowed from private network" });
+      return false;
+    }
+    if (dashboardUserStore) {
+      const session = extractDashboardSession(request.raw, dashboardUserStore);
+      if (!session || !hasRole(session.role, "admin")) {
+        reply.code(403).send({ error: "Admin role required" });
+        return false;
+      }
+    }
+    return true;
+  };
+
+  fastify.post("/api/companion/pair/code", async (request, reply) => {
+    if (!companionAdminGuard(request, reply)) return reply;
+    const entityId = deps.ownerEntityId ?? "#E0";
+    const pairingCode = companionPairing.generateCode(entityId);
+    return reply.send({ code: pairingCode.code, expiresAt: pairingCode.expiresAt });
+  });
+
+  fastify.post("/api/companion/pair", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Companion API only allowed from private network" });
+    }
+    const body = (request.body as { code?: string; deviceName?: string; platform?: string; pushToken?: string } | undefined) ?? {};
+    if (!body.code || !body.deviceName) {
+      return reply.code(400).send({ error: "code and deviceName are required" });
+    }
+    const platform = body.platform === "ios" || body.platform === "android" ? body.platform : "desktop";
+    const result = companionPairing.pair({
+      code: body.code,
+      deviceName: body.deviceName,
+      platform,
+      pushToken: body.pushToken,
+    });
+    if (!result.success) {
+      return reply.code(400).send({ error: result.error ?? "pairing failed" });
+    }
+    return reply.send({
+      sessionToken: result.sessionToken,
+      device: result.device,
+      ownerEntityId: deps.ownerEntityId ?? "#E0",
+    });
+  });
+
+  fastify.get("/api/companion/devices", async (request, reply) => {
+    if (!companionAdminGuard(request, reply)) return reply;
+    const entityId = deps.ownerEntityId ?? "#E0";
+    return reply.send({ devices: companionPairing.getDevices(entityId) });
+  });
+
+  fastify.post<{ Params: { id: string } }>("/api/companion/devices/:id/revoke", async (request, reply) => {
+    if (!companionAdminGuard(request, reply)) return reply;
+    const revoked = companionPairing.revokeDevice(request.params.id);
+    if (!revoked) return reply.code(404).send({ error: "device not found" });
+    return reply.send({ ok: true });
+  });
+
+  // -----------------------------------------------------------------------
   // CHN-D (s165) slice 2 — channel-room binding CRUD per project
   //
   // GET    /api/projects/rooms?path=<projectPath>            — list bindings
@@ -2047,6 +2324,148 @@ export async function createGatewayRuntimeState(
       return reply.code(code).send({ error: `reject failed: ${msg}` });
     }
   });
+
+  // -----------------------------------------------------------------------
+  // Identity people management (Wave 1 s228) — approved/rejected history.
+  //
+  // GET    /api/identity/people?status=approved|rejected           — list decided people
+  // PATCH  /api/identity/people/:channelId/:channelUserId/projects — edit granted projects
+  // POST   /api/identity/people/:channelId/:channelUserId/revoke   — revoke approval
+  // POST   /api/identity/people/:channelId/:channelUserId/re-review — un-reject (re-review)
+  //
+  // Same private-network + 503-if-no-store guard as /api/identity/pending.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/identity/people", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+    if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
+    const status = (request.query as Record<string, string>)["status"];
+    const filter = status === "approved" || status === "rejected" ? status : undefined;
+
+    // APPROVED people are sourced from the ENTITY STORE (the durable local
+    // identity system) — a verified/sealed tier == approved. This is the fix
+    // for "doesn't remember users / not tied to the identity system": the old
+    // implementation read the ephemeral pending-approval decision log, which
+    // held only pre-Wave-1 snapshot-less rows and showed nothing. The decision
+    // log is now consulted ONLY to enrich each person with assigned projects.
+    const decisionList = deps.pendingApprovalStore.listDecisions();
+    const projectsByPerson = new Map<string, string[]>();
+    for (const d of decisionList) {
+      if (d.channelId !== undefined && d.channelUserId !== undefined && d.assignedProjectPaths !== undefined) {
+        projectsByPerson.set(`${d.channelId}::${d.channelUserId}`, d.assignedProjectPaths);
+      }
+    }
+
+    type DecidedPerson = {
+      status: "approved" | "rejected";
+      channelId: string;
+      channelUserId: string;
+      displayName: string;
+      decidedAt: string;
+      entityId?: string;
+      verificationTier?: string;
+      assignedProjectPaths?: string[];
+    };
+    const people: DecidedPerson[] = [];
+
+    if (deps.entityStore !== undefined && filter !== "rejected") {
+      const channelPeople = await deps.entityStore.listChannelPeople();
+      for (const p of channelPeople) {
+        if (p.verificationTier !== "verified" && p.verificationTier !== "sealed") continue;
+        // The owner (#E0) isn't an "approved person" — they do the approving.
+        if (deps.ownerEntityId !== undefined && p.entityId === deps.ownerEntityId) continue;
+        const projects = projectsByPerson.get(`${p.channel}::${p.channelUserId}`);
+        people.push({
+          status: "approved",
+          channelId: p.channel,
+          channelUserId: p.channelUserId,
+          displayName: p.displayName,
+          decidedAt: p.updatedAt,
+          entityId: p.entityId,
+          verificationTier: p.verificationTier,
+          ...(projects !== undefined ? { assignedProjectPaths: projects } : {}),
+        });
+      }
+    }
+
+    // REJECTED people come from the decision log (a rejection is a drop, not a
+    // durable entity tier). Snapshot-bearing rejected decisions only.
+    if (filter !== "approved") {
+      for (const d of deps.pendingApprovalStore.listDecisions("rejected")) {
+        if (d.channelId === undefined || d.channelUserId === undefined) continue;
+        people.push({
+          status: "rejected",
+          channelId: d.channelId,
+          channelUserId: d.channelUserId,
+          displayName: d.displayName ?? d.channelUserId,
+          decidedAt: d.decidedAt,
+          ...(d.assignedProjectPaths !== undefined ? { assignedProjectPaths: d.assignedProjectPaths } : {}),
+        });
+      }
+    }
+
+    return reply.send({ people, count: people.length });
+  });
+
+  fastify.patch<{ Params: { channelId: string; channelUserId: string }; Body: { projectPaths?: string[] } }>(
+    "/api/identity/people/:channelId/:channelUserId/projects",
+    async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+      if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
+      const { channelId, channelUserId } = request.params;
+      const projectPaths = (request.body as { projectPaths?: string[] } | undefined)?.projectPaths ?? [];
+      // Upsert: entity-sourced approved people may have no decision-log entry,
+      // so resolve their display name from the entity store and create one.
+      let displayName = channelUserId;
+      if (deps.entityStore !== undefined) {
+        const entity = await deps.entityStore.resolveEntityByChannel(channelId, channelUserId);
+        if (entity !== null) displayName = entity.displayName;
+      }
+      deps.pendingApprovalStore.upsertAssignedProjects(channelId, channelUserId, displayName, projectPaths);
+      return reply.send({ ok: true, channelId, channelUserId, projectPaths });
+    },
+  );
+
+  fastify.post<{ Params: { channelId: string; channelUserId: string } }>(
+    "/api/identity/people/:channelId/:channelUserId/revoke",
+    async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+      if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
+      const { channelId, channelUserId } = request.params;
+      // Real revoke: drop the entity back to "unverified" (the inbound gate
+      // checks entity.verificationTier, so clearing only the JSON decision would
+      // leave the person fully approved). Then clear any decision-log record.
+      let entityRevoked = false;
+      if (deps.entityStore !== undefined) {
+        const entity = await deps.entityStore.resolveEntityByChannel(channelId, channelUserId);
+        if (entity !== null && (entity.verificationTier === "verified" || entity.verificationTier === "sealed")) {
+          await deps.entityStore.updateEntity(entity.id, { verificationTier: "unverified" });
+          entityRevoked = true;
+        }
+      }
+      const clearedDecision = deps.pendingApprovalStore.clearDecision(channelId, channelUserId);
+      if (!entityRevoked && !clearedDecision) {
+        return reply.code(404).send({ error: "No approved entity or decision found for that channel + user" });
+      }
+      return reply.send({ ok: true, action: "revoked", channelId, channelUserId, entityRevoked });
+    },
+  );
+
+  fastify.post<{ Params: { channelId: string; channelUserId: string } }>(
+    "/api/identity/people/:channelId/:channelUserId/re-review",
+    async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+      if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
+      const { channelId, channelUserId } = request.params;
+      const changed = deps.pendingApprovalStore.clearDecision(channelId, channelUserId);
+      if (!changed) return reply.code(404).send({ error: "No decision found for that channel + user" });
+      return reply.send({ ok: true, action: "re-review", channelId, channelUserId });
+    },
+  );
 
   // -----------------------------------------------------------------------
   // CHN-F (s167) — channel workflow bindings CRUD (private network only)
@@ -2251,7 +2670,7 @@ export async function createGatewayRuntimeState(
     // updatedAt falls within each day. (s130 phase A.6 reader-flip
     // landed cycle 100, so per-project chat dirs are populated for
     // s130-migrated projects.)
-    const chatDir = join(targetPath, "k", "chat");
+    const chatDir = join(targetPath, KNOWLEDGE_DIR, "chat");
     if (existsSync(chatDir)) {
       try {
         const files = readdirSync(chatDir).filter((f) => f.endsWith(".json"));
@@ -2984,7 +3403,14 @@ export async function createGatewayRuntimeState(
         scopeLabel: "v0.4.0",
       });
     } catch (err) {
-      return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+      // The progress bar is optional chrome. A provider failure must not become
+      // a 502 that spams the dashboard console every 30s — log the reason and
+      // return an empty feed (UI hides at total:0). The layered PM provider
+      // already degrades internally; this is defense-in-depth for any other throw.
+      log.warn(
+        `loop/progress: provider failed, hiding bar — ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return reply.send({ finished: 0, qa: 0, total: 0, scopeLabel: "v0.4.0" });
     }
   });
 
@@ -3453,6 +3879,26 @@ export async function createGatewayRuntimeState(
     }
 
     if (!existsSync(join(targetPath, ".git"))) {
+      // Read-only inspection actions on a non-git dir (e.g. a `.agi` envelope
+      // whose git identity is its config/submodule state, not a working tree —
+      // story #207) return a clean 200 the dashboard renders as an empty state,
+      // NOT a 400 that spams the console on every auto-refresh. Mutating actions
+      // still reject — you can't branch/stash/commit a non-repo.
+      const READ_ONLY_GIT_ACTIONS = new Set([
+        "status", "branch_list", "stash_list", "log", "remote_list", "diff",
+      ]);
+      if (READ_ONLY_GIT_ACTIONS.has(body.action)) {
+        return reply.send({
+          exitCode: 0,
+          notGitRepo: true,
+          branch: null,
+          files: [],
+          branches: [],
+          stashes: [],
+          commits: [],
+          remotes: [],
+        });
+      }
       return reply.code(400).send({ error: "Not a git repository" });
     }
 
@@ -4074,7 +4520,7 @@ export async function createGatewayRuntimeState(
       if (!projectsRoot) {
         return reply.code(500).send({ error: "no workspace projects dir configured" });
       }
-      const targetDir = join(projectsRoot, "_aionima", spec.slug);
+      const targetDir = coreForkDir(join(projectsRoot, "_aionima"), spec.slug);
       if (!existsSync(targetDir)) {
         return reply.code(404).send({ error: `fork not provisioned — toggle Dev Mode to provision ${slug}` });
       }
@@ -4118,6 +4564,298 @@ export async function createGatewayRuntimeState(
           });
         } catch { /* best-effort */ }
       }
+
+      return reply.send(result);
+    });
+
+    // -----------------------------------------------------------------------
+    // GET /api/dev/contribute/status — outbound PR status per core fork
+    // -----------------------------------------------------------------------
+    //
+    // Mirror of core-forks/status but for the OUTBOUND direction: how many
+    // commits each fork is ahead of `upstream/dev`, grouped into Learnings
+    // (PRIME) and Mechanics (everything else), plus any already-open PR.
+
+    fastify.get("/api/dev/contribute/status", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      }
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) {
+          return reply.code(403).send({ error: "Admin role required" });
+        }
+      }
+
+      const projectsRoot = (deps.workspaceProjects ?? [])[0];
+      if (!projectsRoot) {
+        return reply.send({ ownerLogin: null, learnings: [], mechanics: [], error: "no workspace projects dir configured" });
+      }
+      const coreCollectionDir = join(projectsRoot, "_aionima");
+      if (!existsSync(coreCollectionDir)) {
+        return reply.send({ ownerLogin: null, learnings: [], mechanics: [], error: "core-fork collection not provisioned — enable Contributing Mode" });
+      }
+
+      const { login, token } = await readOwnerGithub(deps, encryptionKey);
+
+      const { computeContributeStatus } = await import("./dev-mode-contribute.js");
+      const status = await computeContributeStatus(coreCollectionDir, login, token);
+      return reply.send(status);
+    });
+
+    // -----------------------------------------------------------------------
+    // GET /api/dev/contribute/metrics — contribution metrics (Wave 2b)
+    //   Per core repo: merged PRs (accepted contributions), open PRs, total
+    //   authored, plus rolled-up totals. Informational; zeros without a token.
+    // -----------------------------------------------------------------------
+    fastify.get("/api/dev/contribute/metrics", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      }
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) {
+          return reply.code(403).send({ error: "Admin role required" });
+        }
+      }
+      const { login, token } = await readOwnerGithub(deps, encryptionKey);
+      const { computeContributeMetrics } = await import("./dev-mode-contribute.js");
+      const metrics = await computeContributeMetrics(login, token);
+      return reply.send(metrics);
+    });
+
+    // -----------------------------------------------------------------------
+    // GET /api/dev/incoming/status — INBOUND PR review queue
+    // -----------------------------------------------------------------------
+    //
+    // The mirror of contribute/status: open PRs that contributors' personal
+    // forks (incl. forks-of-forks) have opened INTO upstream `dev`, grouped per
+    // core repo. The owner — First Custodian — reviews + tests these before
+    // merging (merge stays on GitHub; we never automate that write). Requires a
+    // GitHub token (upstream repos may be private; the list endpoint is
+    // rate-limited unauthenticated).
+
+    fastify.get("/api/dev/incoming/status", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      }
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) {
+          return reply.code(403).send({ error: "Admin role required" });
+        }
+      }
+
+      const { login, token } = await readOwnerGithub(deps, encryptionKey);
+      if (!token) {
+        return reply.send({
+          ownerLogin: login,
+          repos: [],
+          error: "GitHub token unavailable. Reconnect your GitHub account via Settings → Connections.",
+        });
+      }
+
+      const { computeIncomingStatus } = await import("./dev-mode-incoming.js");
+      const status = await computeIncomingStatus(token, login);
+      return reply.send(status);
+    });
+
+    // -----------------------------------------------------------------------
+    // POST /api/dev/incoming/:slug/pr/:number/test — prepare a live PR test
+    // -----------------------------------------------------------------------
+    //
+    // The live mount-swap (remount the VM to the PR worktree, serve at
+    // test.ai.on, click through, restore on exit) is inherently a terminal
+    // operation — it waits for the owner to finish reviewing, and restoring the
+    // mount must be guaranteed even on Ctrl-C (a trap the headless gateway
+    // can't own). So this endpoint VALIDATES the request and returns the exact,
+    // copy-able `agi test-vm pr <slug> <number>` command rather than spawning a
+    // headless job that could leave the VM mounted to a PR. The CLI is the full
+    // mechanism. Supported for the `agi` repo only (the VM serves agi).
+
+    fastify.post("/api/dev/incoming/:slug/pr/:number/test", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      }
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) {
+          return reply.code(403).send({ error: "Admin role required" });
+        }
+      }
+
+      const { slug, number } = request.params as { slug: string; number: string };
+      const prNumber = Number.parseInt(number, 10);
+      if (!Number.isInteger(prNumber) || prNumber <= 0) {
+        return reply.code(400).send({ error: `invalid PR number: ${number}` });
+      }
+
+      const { resolvePrTestTarget } = await import("./dev-mode-pr-test.js");
+      let target: ReturnType<typeof resolvePrTestTarget>;
+      try {
+        target = resolvePrTestTarget(slug, prNumber);
+      } catch (err) {
+        return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+      }
+      if (!target) {
+        return reply.code(404).send({ error: `unknown core repo: ${slug}` });
+      }
+
+      if (slug !== "agi") {
+        return reply.send({
+          supported: false,
+          command: null,
+          note: `Live VM testing is supported for the agi repo only (the VM serves agi). Review ${target.displayName} PRs on GitHub.`,
+        });
+      }
+
+      return reply.send({
+        supported: true,
+        command: `agi test-vm pr ${slug} ${String(prNumber)}`,
+        note:
+          "Run this in your terminal. It fetches the PR head into a throwaway worktree, " +
+          "remounts the test VM to it, and serves the PR at https://test.ai.on for you to " +
+          "click through. Press Enter when done — your dev tree is restored automatically " +
+          "(even on Ctrl-C). Your working tree is never touched.",
+      });
+    });
+
+    // -----------------------------------------------------------------------
+    // PR comments (Wave 2c) — read + post an incoming PR's conversation.
+    //   GET  /api/dev/incoming/:slug/pr/:number/comments
+    //   POST /api/dev/incoming/:slug/pr/:number/comments  { body }
+    // -----------------------------------------------------------------------
+    fastify.get("/api/dev/incoming/:slug/pr/:number/comments", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) return reply.code(403).send({ error: "Admin role required" });
+      }
+      const { slug, number } = request.params as { slug: string; number: string };
+      const prNumber = Number.parseInt(number, 10);
+      if (!Number.isInteger(prNumber) || prNumber <= 0) return reply.code(400).send({ error: `invalid PR number: ${number}` });
+      const { CORE_REPOS } = await import("./dev-mode-forks.js");
+      const spec = CORE_REPOS.find((s) => s.slug === slug);
+      if (!spec) return reply.code(404).send({ error: `unknown core repo: ${slug}` });
+      const { token } = await readOwnerGithub(deps, encryptionKey);
+      const { listPrComments } = await import("./dev-mode-incoming.js");
+      try {
+        const comments = await listPrComments(spec, prNumber, token ?? "");
+        return reply.send({ comments, count: comments.length });
+      } catch (err) {
+        return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    fastify.post("/api/dev/incoming/:slug/pr/:number/comments", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) return reply.code(403).send({ error: "Admin role required" });
+      }
+      const { slug, number } = request.params as { slug: string; number: string };
+      const prNumber = Number.parseInt(number, 10);
+      if (!Number.isInteger(prNumber) || prNumber <= 0) return reply.code(400).send({ error: `invalid PR number: ${number}` });
+      const commentBody = (request.body as { body?: string } | undefined)?.body;
+      if (commentBody === undefined || commentBody.trim() === "") return reply.code(400).send({ error: "comment body is required" });
+      const { CORE_REPOS } = await import("./dev-mode-forks.js");
+      const spec = CORE_REPOS.find((s) => s.slug === slug);
+      if (!spec) return reply.code(404).send({ error: `unknown core repo: ${slug}` });
+      const { token } = await readOwnerGithub(deps, encryptionKey);
+      if (token === null) return reply.code(400).send({ error: "GitHub not connected — connect on the Contributing page" });
+      const { postPrComment } = await import("./dev-mode-incoming.js");
+      try {
+        const comment = await postPrComment(spec, prNumber, token, commentBody.trim());
+        return reply.send({ ok: true, comment });
+      } catch (err) {
+        return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    // -----------------------------------------------------------------------
+    // POST /api/dev/contribute/:slug/pr — open a cross-repo PR to upstream/dev
+    // -----------------------------------------------------------------------
+    //
+    // Body `{ title?, body? }`. Drafts an AI body (aion-micro) when none is
+    // supplied, then opens `<ownerLogin>:<branch> → <upstreamOrg>:dev`.
+
+    fastify.post("/api/dev/contribute/:slug/pr", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      }
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) {
+          return reply.code(403).send({ error: "Admin role required" });
+        }
+      }
+
+      const { slug } = request.params as { slug: string };
+      const { CORE_REPOS: CORE_REPO_SPECS } = await import("./dev-mode-forks.js");
+      const spec = CORE_REPO_SPECS.find((s) => s.slug === slug);
+      if (!spec) {
+        return reply.code(404).send({ error: `unknown core fork: ${slug}` });
+      }
+
+      const projectsRoot = (deps.workspaceProjects ?? [])[0];
+      if (!projectsRoot) {
+        return reply.code(500).send({ error: "no workspace projects dir configured" });
+      }
+      const targetDir = coreForkDir(join(projectsRoot, "_aionima"), spec.slug);
+      if (!existsSync(targetDir)) {
+        return reply.code(404).send({ error: `fork not provisioned — toggle Contributing Mode to provision ${slug}` });
+      }
+
+      const { login, token } = await readOwnerGithub(deps, encryptionKey);
+      if (!token) {
+        return reply.code(502).send({ error: "GitHub token unavailable. Reconnect your GitHub account via Settings → Connections." });
+      }
+      if (!login) {
+        return reply.code(502).send({ error: "GitHub login not found. Reconnect your GitHub account via Settings → Connections." });
+      }
+
+      const {
+        computeContributeStatus,
+        draftPrBody,
+        defaultPrTitle,
+        createUpstreamPr,
+      } = await import("./dev-mode-contribute.js");
+
+      // Recompute this repo's ahead state so we draft from a fresh commit list
+      // and refuse a no-op PR.
+      const coreCollectionDir = join(projectsRoot, "_aionima");
+      const status = await computeContributeStatus(coreCollectionDir, login, token);
+      const repoInfo = [...status.learnings, ...status.mechanics].find((r) => r.slug === slug);
+      if (!repoInfo || repoInfo.error) {
+        return reply.code(400).send({ error: repoInfo?.error ?? "could not compute contribution status" });
+      }
+      if (repoInfo.commitsAhead === 0) {
+        return reply.code(400).send({ error: `${spec.displayName} has no commits ahead of upstream/dev — nothing to contribute.` });
+      }
+
+      const reqBody = (request.body as { title?: string; body?: string } | undefined) ?? {};
+      const prLog = createComponentLogger(deps.logger ?? undefined, "dev-contribute");
+      const title = reqBody.title?.trim() || defaultPrTitle(spec, repoInfo.aheadCommits);
+      const body = reqBody.body?.trim() || await draftPrBody(spec, repoInfo.aheadCommits, deps.aionMicro, prLog);
+
+      const result = await createUpstreamPr(spec, token, login, repoInfo.branch, title, body);
+      if (!result.ok) {
+        return reply.code(502).send({ error: result.error ?? "PR creation failed" });
+      }
+
+      try {
+        deps.wsRef?.server?.broadcast("dashboard_event", {
+          type: "dev:contribute-pr-opened" as const,
+          data: { slug: spec.slug, prUrl: result.prUrl, prNumber: result.prNumber, alreadyOpen: result.alreadyOpen ?? false },
+        });
+      } catch { /* best-effort */ }
 
       return reply.send(result);
     });
@@ -4329,7 +5067,7 @@ export async function createGatewayRuntimeState(
             for (const repo of CORE_REPOS) {
               const repoUrl = devCfg[repo.repoKey] as string | undefined;
               if (!repoUrl) continue;
-              const targetDir = join(coreCollectionDir, repo.slug);
+              const targetDir = coreForkDir(coreCollectionDir, repo.slug);
               const cloneUrl = cloneAccessToken
                 ? injectTokenIntoCloneUrl(repoUrl, cloneAccessToken)
                 : repoUrl;
@@ -4432,6 +5170,36 @@ export async function createGatewayRuntimeState(
                 log.warn(`dev: failed to provision ${repo.slug}: ${reason}`);
                 provisionFailures.push({ slug: repo.slug, reason });
               }
+            }
+
+            // After provisioning the core forks, formalize the collection as a
+            // private {slug}.agi envelope (owner directive 2026-06-29): git init
+            // + register the forks as submodules + create the PRIVATE {slug}.agi
+            // GitHub repo (created, NOT forked — .agi envelopes are private).
+            // Contributing Mode creates the .agi monorepo for the user, not just
+            // the forks. Best-effort + idempotent — failures are logged, never
+            // block the toggle.
+            try {
+              const { importAgiRepo, createPrivateAgiRemote, agiRemoteName } = await import("./agi-repo-manager.js");
+              const imp = importAgiRepo(coreCollectionDir);
+              if (imp.ok) {
+                log.info(`dev: envelope ${agiRemoteName(coreCollectionDir)} initialized (${String((imp.registered ?? []).length)} submodule(s))`);
+                if (cloneAccessToken) {
+                  const remote = await createPrivateAgiRemote(coreCollectionDir, cloneAccessToken);
+                  if (remote.ok) {
+                    log.info(`dev: private envelope remote → ${remote.remoteUrl ?? "?"}`);
+                    if (deps.projectConfigManager) {
+                      try { await deps.projectConfigManager.update(coreCollectionDir, { agiRepo: { initialized: true, remoteUrl: remote.remoteUrl ?? null } }); } catch { /* best-effort */ }
+                    }
+                  } else {
+                    log.warn(`dev: envelope remote create skipped: ${remote.error ?? "unknown"}`);
+                  }
+                }
+              } else {
+                log.warn(`dev: envelope init failed: ${imp.error ?? "unknown"}`);
+              }
+            } catch (envErr) {
+              log.warn(`dev: envelope provisioning error: ${envErr instanceof Error ? envErr.message : String(envErr)}`);
             }
           }
 
@@ -4922,9 +5690,12 @@ export async function createGatewayRuntimeState(
     const now = Date.now();
     if (now - topProcessesCache.ts < 5000) return topProcessesCache.data;
     try {
+      // `ps aux` (BSD personality) combined with `-o` errors with "conflicting
+      // format options" and breaks the top-processes widget. Use `-eo` (select
+      // all + user-defined format) — one format source, no conflict.
       const out = execFileSync(
         "ps",
-        ["aux", "--sort=-%mem", "--no-headers", "-ww", "-o", "pid,user,%cpu,%mem,rss,comm"],
+        ["-eo", "pid,user,%cpu,%mem,rss,comm", "--sort=-%mem", "--no-headers", "-ww"],
         { timeout: 5000 },
       ).toString();
       const data = out
@@ -5398,6 +6169,26 @@ export async function createGatewayRuntimeState(
     clearUpgradeLog();
     const repoPath = deps.selfRepoPath;
 
+    // Start a history entry for this upgrade run
+    let deployedVersion = "unknown";
+    try {
+      deployedVersion = (JSON.parse(readFileSync(join(repoPath, "package.json"), "utf-8")) as { version?: string }).version ?? "unknown";
+    } catch { /* best-effort */ }
+    const body = request.body as { source?: string } | undefined;
+    currentHistoryEntry = {
+      id: generateHistoryId(),
+      startedAt: new Date().toISOString(),
+      completedAt: "",
+      fromVersion: deployedVersion,
+      toVersion: deployedVersion,
+      source: body?.source ?? null,
+      success: false,
+      failedAtStep: null,
+      errorMessage: null,
+      resolutionNote: null,
+      log: [],
+    };
+
     // Respond immediately — upgrade runs in the background
     void reply.code(202).send({ ok: true, message: "Upgrade started" });
 
@@ -5490,14 +6281,52 @@ export async function createGatewayRuntimeState(
         } else {
           broadcastUpgrade("complete", "Deploy complete", "complete", "done");
         }
+        // Persist success to upgrade history
+        if (currentHistoryEntry) {
+          let newVersion = currentHistoryEntry.fromVersion;
+          try {
+            newVersion = (JSON.parse(readFileSync(join(repoPath, "package.json"), "utf-8")) as { version?: string }).version ?? newVersion;
+          } catch { /* best-effort */ }
+          appendUpgradeHistory({
+            ...currentHistoryEntry,
+            completedAt: new Date().toISOString(),
+            toVersion: newVersion,
+            success: true,
+            log: getUpgradeLog().map(e => ({ phase: e.phase, step: e.step ?? "", status: e.status ?? "", message: e.message, timestamp: e.timestamp })),
+          });
+          currentHistoryEntry = null;
+        }
       } else {
         broadcastUpgrade("error", `Deploy failed (exit ${code}) at step: ${lastStep}`, lastStep, "fail");
+        // Persist failure to upgrade history
+        if (currentHistoryEntry) {
+          appendUpgradeHistory({
+            ...currentHistoryEntry,
+            completedAt: new Date().toISOString(),
+            success: false,
+            failedAtStep: lastStep,
+            errorMessage: `Deploy failed (exit ${String(code)}) at step: ${lastStep}`,
+            log: getUpgradeLog().map(e => ({ phase: e.phase, step: e.step ?? "", status: e.status ?? "", message: e.message, timestamp: e.timestamp })),
+          });
+          currentHistoryEntry = null;
+        }
       }
     });
 
     child.on("error", (err) => {
       upgradeInProgress = false;
       broadcastUpgrade("error", `Deploy error: ${err.message}`, "upgrade", "fail");
+      if (currentHistoryEntry) {
+        appendUpgradeHistory({
+          ...currentHistoryEntry,
+          completedAt: new Date().toISOString(),
+          success: false,
+          failedAtStep: "upgrade",
+          errorMessage: err.message,
+          log: getUpgradeLog().map(e => ({ phase: e.phase, step: e.step ?? "", status: e.status ?? "", message: e.message, timestamp: e.timestamp })),
+        });
+        currentHistoryEntry = null;
+      }
     });
   });
 
@@ -5511,6 +6340,66 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "System API only allowed from private network" });
     }
     return reply.send(getUpgradeLog());
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/system/upgrade-history — persistent record of every upgrade
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/system/upgrade-history", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Forbidden" });
+    return reply.send({ entries: readUpgradeHistory() });
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/system/upgrade-history/:id/note — add resolution note
+  // -----------------------------------------------------------------------
+
+  fastify.post<{ Params: { id: string } }>("/api/system/upgrade-history/:id/note", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Forbidden" });
+    const { id } = request.params;
+    const body = request.body as { note?: string } | undefined;
+    const note = typeof body?.note === "string" ? body.note.trim() : "";
+    if (!note) return reply.code(400).send({ error: "note is required" });
+    const ok = addResolutionNote(id, note);
+    if (!ok) return reply.code(404).send({ error: `Entry not found: ${id}` });
+    return reply.send({ ok: true });
+  });
+
+  // ---------------------------------------------------------------------------
+  // UpgradeNextSteps — post-upgrade interactive task queue
+  // ---------------------------------------------------------------------------
+
+  fastify.get("/api/system/upgrade-next-steps", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "System API only allowed from private network" });
+    }
+    const query = request.query as Record<string, string>;
+    const filter = query.filter === "pending" ? "pending" : "all";
+    return reply.send({
+      steps: listUpgradeNextSteps(filter),
+      hasRequired: hasPendingRequiredSteps(),
+    });
+  });
+
+  fastify.post("/api/system/upgrade-next-steps/:id/done", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Forbidden" });
+    const { id } = request.params as { id: string };
+    const ok = completeUpgradeNextStep(id);
+    return reply.send({ ok, hasRequired: hasPendingRequiredSteps() });
+  });
+
+  fastify.post("/api/system/upgrade-next-steps/:id/dismiss", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Forbidden" });
+    const { id } = request.params as { id: string };
+    const result = dismissUpgradeNextStep(id);
+    if (result === "required") return reply.code(409).send({ error: "Cannot dismiss a required step" });
+    return reply.send({ ok: result, hasRequired: hasPendingRequiredSteps() });
   });
 
   // GET /api/system/changelog — git commit history for the deployed repo
@@ -6585,7 +7474,7 @@ export async function createGatewayRuntimeState(
       const dirs: string[] = [];
       for (const projectPath of projects) {
         if (existsSync(join(projectPath, ".agi"))) {
-          const chatDir = join(projectPath, "k", "chat");
+          const chatDir = join(projectPath, KNOWLEDGE_DIR, "chat");
           if (existsSync(chatDir)) dirs.push(chatDir);
         }
       }
@@ -7256,6 +8145,53 @@ export async function createGatewayRuntimeState(
   // Federation & Identity routes
   // -----------------------------------------------------------------------
 
+  // Hot read of federation.enabled — gates the Civicognita provider on the
+  // System ▸ Identity page; a config toggle takes effect without restart.
+  const readFederationEnabled = (): boolean => {
+    if (!deps.configPath) return false;
+    try {
+      const raw = JSON.parse(readFileSync(deps.configPath, "utf-8")) as {
+        federation?: { enabled?: boolean };
+      };
+      return raw.federation?.enabled === true;
+    } catch {
+      return false;
+    }
+  };
+
+  // Identity provider routes — registered UNCONDITIONALLY (story #212). The
+  // canonical provider list is registry-driven, and redirect connect
+  // (Google/Meta/X/Tynn) must work independent of whether federation or
+  // identity brokering (identityProvider) is configured.
+  registerIdentityProvidersRoute(fastify, {
+    oauthHandler: deps.oauthHandler ?? null,
+    db: deps.db,
+    encKey: encryptionKey,
+    logger: deps.logger,
+    federationEnabled: readFederationEnabled,
+    // Persist owner OAuth-app creds to gateway.json identity.oauth.<provider>
+    // (read back hot by the oauthHandler thunk — no restart needed).
+    writeOAuthApp: (provider, creds) => {
+      if (!deps.configPath) return false;
+      try {
+        const raw = JSON.parse(readFileSync(deps.configPath, "utf-8")) as Record<string, unknown>;
+        const identity = (raw.identity ?? {}) as { oauth?: Record<string, unknown> };
+        const oauth = (identity.oauth ?? {}) as Record<string, unknown>;
+        if (creds === null) {
+          delete oauth[provider];
+        } else {
+          oauth[provider] = creds;
+        }
+        identity.oauth = oauth;
+        raw.identity = identity;
+        writeFileSync(deps.configPath, JSON.stringify(raw, null, 2) + "\n", "utf-8");
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  });
+
   if (deps.identityProvider) {
     registerIdentityRoutes(fastify, {
       identityProvider: deps.identityProvider,
@@ -7263,6 +8199,7 @@ export async function createGatewayRuntimeState(
       logger: deps.logger,
       db: deps.db,
       encKey: encryptionKey,
+      federationEnabled: readFederationEnabled,
     });
   }
 
@@ -7306,14 +8243,23 @@ export async function createGatewayRuntimeState(
   // safe to serve without the full editor plugin.
 
   const docsRoot = join(deps.selfRepoPath ?? deps.workspaceRoot ?? process.cwd(), "docs");
+  // The PRIME corpus — what the /knowledge "Browse" page is meant to surface
+  // (domains, inputs, the full Aionima knowledge graph). Read-only: PRIME is
+  // read-only at runtime, and the built-in routes never write, so this exposes
+  // a browse/read view of the corpus without the editor plugin. Editing PRIME
+  // stays out-of-band (the editor plugin / git), per the read-only-at-runtime
+  // architecture.
+  const knowledgeRoot = deps.primeDir ?? join(deps.selfRepoPath ?? deps.workspaceRoot ?? process.cwd(), ".aionima");
 
   type FileNode = { name: string; path: string; type: "file" | "dir"; children?: FileNode[]; ext?: string };
 
   function buildFileTree(dir: string, prefix: string, hideHidden = false): FileNode[] {
     if (!existsSync(dir)) return [];
     const entries = readdirSync(dir, { withFileTypes: true })
-      .filter((e) => e.name !== ".git" && e.name !== "node_modules")
-      .filter((e) => !hideHidden || !e.name.startsWith("."))
+      // Hides .git/node_modules, and (when hideHidden) dotfiles — EXCEPT the
+      // knowledge dir (.ai/), which stays visible in the UI per owner
+      // directive 2026-06-09. See isVisibleInFileBrowser.
+      .filter((e) => isVisibleInFileBrowser(e.name, hideHidden))
       .sort((a, b) => {
         // Directories first, then alphabetical
         if (a.isDirectory() && !b.isDirectory()) return -1;
@@ -7335,9 +8281,15 @@ export async function createGatewayRuntimeState(
 
   fastify.get("/api/files/tree", async (request, reply) => {
     const { root } = request.query as { root?: string };
+    // Knowledge root — read-only browse of the PRIME corpus (the knowledge graph
+    // the /knowledge page surfaces). Returns an empty tree (not 403) when the
+    // corpus isn't present, so the page renders an honest empty state.
+    if (root === "knowledge") {
+      return reply.send({ tree: buildFileTree(knowledgeRoot, "knowledge", true) });
+    }
     // Only allow the docs subtree
     if (root !== "docs") {
-      return reply.code(403).send({ error: "Built-in file tree only serves docs/" });
+      return reply.code(403).send({ error: "Built-in file tree only serves docs/ or knowledge/" });
     }
     const tree = buildFileTree(docsRoot, "docs");
 
@@ -7433,6 +8385,21 @@ export async function createGatewayRuntimeState(
       const content = readFileSync(resolved, "utf-8");
       const size = statSync(resolved).size;
       return reply.send({ content, size });
+    }
+
+    if (filePath.startsWith("knowledge/")) {
+      // Read-only PRIME corpus file. Tree paths are prefixed "knowledge/"; strip
+      // it and resolve within the corpus root, with path-traversal protection.
+      const rel = filePath.slice("knowledge/".length);
+      const resolved = resolvePath(knowledgeRoot, rel);
+      const rootAbsolute = resolvePath(knowledgeRoot);
+      if (!resolved.startsWith(rootAbsolute + "/") && resolved !== rootAbsolute) {
+        return reply.code(403).send({ error: "Path is outside the knowledge corpus" });
+      }
+      if (!existsSync(resolved) || !statSync(resolved).isFile()) {
+        return reply.code(404).send({ error: "File not found" });
+      }
+      return reply.send({ content: readFileSync(resolved, "utf-8"), size: statSync(resolved).size });
     }
 
     // Resolve and validate the path stays within docs/
@@ -7579,13 +8546,14 @@ export async function createGatewayRuntimeState(
   // GET /api/memory/events — episodic events for the memory browser
   fastify.get("/api/memory/events", async (request, reply) => {
     if (!deps.graphAdapter) return reply.code(503).send({ error: "Memory adapter unavailable" });
-    const q = request.query as { q?: string; projectPath?: string; entityId?: string; limit?: string };
+    const q = request.query as { q?: string; projectPath?: string; entityId?: string; scope?: string; limit?: string };
     const limit = Math.min(parseInt(q.limit ?? "50", 10) || 50, 200);
     const projectPath = q.projectPath === "null" ? null : q.projectPath;
     try {
       const events = await deps.graphAdapter.queryGraphEvents({
         entityId: q.entityId,
         projectPath,
+        scopes: q.scope ? [q.scope] : undefined, // s234 — optional locality filter
         semantic: q.q,
         limit,
       });
@@ -7595,8 +8563,9 @@ export async function createGatewayRuntimeState(
           summary: e.summary,
           tags: e.tags,
           confidence: e.confidence,
-          createdAt: String(e.createdAt),
+          createdAt: epochMsToIso(e.createdAt), // Unix-ms epoch → ISO-8601 (dashboard new Date() can't parse a numeric string)
           projectPath: e.projectPath ?? null,
+          scope: e.scope ?? null, // s234 locality scope
           coaFingerprint: e.coaFingerprint,
         })),
       });
@@ -8092,6 +9061,505 @@ export async function createGatewayRuntimeState(
       return reply.send({ ok: true, ...result });
     });
   }
+
+  // -----------------------------------------------------------------------
+  // GET /api/system/fork-status — multi-source upgrade status
+  //
+  // Fetches all remotes and computes ahead/behind commit counts for each
+  // branch combination (origin/main, origin/dev, upstream/main, upstream/dev).
+  // Used by the Upgrade Wizard step 1 to show which source the user can pull
+  // from, including across fork boundaries in Dev Mode.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/system/fork-status", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "System API only allowed from private network" });
+    }
+    const repoPath = deps.selfRepoPath ?? process.cwd();
+
+    try {
+      const channel = getUpdateChannel();
+      // Read dev.enabled fresh from disk (same pattern as line ~3877) —
+      // deps.config may be a boot-time snapshot; configPath always has the live value.
+      let devEnabled = false;
+      if (deps.configPath) {
+        try {
+          const cfgRaw = readFileSync(deps.configPath, "utf-8");
+          const cfg = JSON.parse(cfgRaw) as { dev?: { enabled?: boolean } };
+          devEnabled = cfg.dev?.enabled ?? false;
+        } catch { /* config unreadable — stay false */ }
+      }
+
+      // In Dev Mode, ensure an "upstream" remote points at the canonical repo
+      // (Civicognita/agi) so the Upgrade Wizard can always show the upstream
+      // as a source — even when origin is the user's fork.
+      if (devEnabled) {
+        const { CORE_REPOS: CORE_REPO_SPECS } = await import("./dev-mode-forks.js");
+        const agiSpec = CORE_REPO_SPECS.find((s) => s.slug === "agi");
+        const canonicalUrl = agiSpec
+          ? `https://github.com/${agiSpec.upstreamOrg ?? "Civicognita"}/${agiSpec.upstream}.git`
+          : "https://github.com/Civicognita/agi.git";
+
+        const existingUrl = await execGitDashboard(["remote", "get-url", "upstream"], repoPath);
+        if (existingUrl.exitCode !== 0) {
+          await execGitDashboard(["remote", "add", "upstream", canonicalUrl], repoPath);
+        } else if (existingUrl.stdout.trim() !== canonicalUrl) {
+          await execGitDashboard(["remote", "set-url", "upstream", canonicalUrl], repoPath);
+        }
+      }
+
+      // Fetch remotes so rev-list comparisons are fresh.
+      // Use targeted per-remote fetches with a longer timeout — "fetch --all"
+      // with a fresh upstream can take 30s+ when pulling full history.
+      const remoteListRes = await execGitDashboard(["remote"], repoPath);
+      const allRemotes = remoteListRes.stdout.trim().split("\n").filter(Boolean);
+      for (const r of allRemotes) {
+        // Shallow-ish fetch: get latest main+dev without full history depth
+        await execGitDashboard(
+          ["fetch", r, "main", "dev", "--quiet", "--update-head-ok"],
+          repoPath,
+          60_000,
+        );
+      }
+
+      // Deployed commit (written by upgrade.sh; fall back to HEAD if absent)
+      let deployedCommit = "";
+      try {
+        deployedCommit = readFileSync(join(process.cwd(), ".deployed-commit"), "utf-8").trim();
+      } catch {
+        const headRes = await execGitDashboard(["rev-parse", "HEAD"], repoPath);
+        deployedCommit = headRes.stdout.trim();
+      }
+
+      // Current branch
+      const branchRes = await execGitDashboard(["rev-parse", "--abbrev-ref", "HEAD"], repoPath);
+      const currentBranch = branchRes.stdout.trim() || "HEAD";
+
+      // Current deployed version from package.json
+      let currentVersion = "0.0.0";
+      try {
+        const raw = readFileSync(join(repoPath, "package.json"), "utf-8");
+        currentVersion = (JSON.parse(raw) as { version?: string }).version ?? "0.0.0";
+      } catch { /* best-effort */ }
+
+      // List all known remote/branch combinations to check
+      const remoteRes = await execGitDashboard(["remote"], repoPath);
+      const remotes = remoteRes.stdout.trim().split("\n").filter(Boolean);
+
+      // The canonical upstream remote name — "upstream" in Dev Mode, "origin"
+      // otherwise (when origin IS the canonical Civicognita repo).
+      const canonicalRemote = devEnabled ? "upstream" : "origin";
+
+      const candidateBranches = ["main", "dev"];
+      const sources: Array<{
+        ref: string;
+        label: string;
+        commitsAhead: number;
+        commitsBehind: number;
+        latestCommit: { hash: string; message: string; date: string } | null;
+        latestVersion: string | null;
+        isCurrentChannel: boolean;
+        isUpstream: boolean;
+        mergeType: "up-to-date" | "fast-forward" | "three-way" | "behind";
+        hasConflicts: boolean;
+        isUpgrade: boolean;
+      }> = [];
+
+      for (const remote of remotes) {
+        // In Dev Mode: skip origin/main (fork's main is not a useful upgrade source).
+        // The fork's current channel (origin/dev or similar) IS included.
+        if (devEnabled && remote === "origin" && candidateBranches.some(b => b !== channel)) {
+          // Only include origin/{currentChannel} in Dev Mode, skip other origin branches
+        }
+
+        // Determine display label for this remote
+        let remoteLabel = remote;
+        const urlRes = await execGitDashboard(["remote", "get-url", remote], repoPath);
+        const remoteUrl = urlRes.stdout.trim();
+        const ghMatch = /github\.com[/:]([^/]+)\/([^.]+)/.exec(remoteUrl);
+        if (ghMatch) remoteLabel = `${ghMatch[1]}/${ghMatch[2]}`;
+
+        const isUpstreamRemote = remote === canonicalRemote;
+
+        for (const branch of candidateBranches) {
+          // In Dev Mode, for the fork remote (origin), only include the current channel
+          if (devEnabled && remote === "origin" && branch !== channel) continue;
+
+          const ref = `${remote}/${branch}`;
+
+          // Check that this ref actually exists
+          const existsRes = await execGitDashboard(["rev-parse", "--verify", ref], repoPath);
+          if (existsRes.exitCode !== 0) continue;
+
+          const refCommit = existsRes.stdout.trim();
+
+          // Compute ahead (local has these) and behind (remote has these)
+          const aheadRes = await execGitDashboard(["rev-list", "--count", `${ref}..${deployedCommit}`], repoPath);
+          const commitsAhead = parseInt(aheadRes.stdout.trim(), 10) || 0;
+
+          const behindRes = await execGitDashboard(["rev-list", "--count", `${deployedCommit}..${ref}`], repoPath);
+          const commitsBehind = parseInt(behindRes.stdout.trim(), 10) || 0;
+
+          // Latest commit on this ref
+          let latestCommit: { hash: string; message: string; date: string } | null = null;
+          const logRes = await execGitDashboard(
+            ["log", "-1", "--format=%H|%s|%ai", refCommit],
+            repoPath,
+          );
+          const logLine = logRes.stdout.trim();
+          if (logLine) {
+            const [hash, message, date] = logLine.split("|");
+            latestCommit = { hash: hash ?? "", message: message ?? "", date: date ?? "" };
+          }
+
+          // Version at this ref from package.json
+          let latestVersion: string | null = null;
+          const pkgRes = await execGitDashboard(["show", `${ref}:package.json`], repoPath);
+          if (pkgRes.exitCode === 0) {
+            try {
+              latestVersion = (JSON.parse(pkgRes.stdout) as { version?: string }).version ?? null;
+            } catch { /* non-JSON or missing */ }
+          }
+
+          // Merge compatibility heuristic:
+          //   - up-to-date: nothing to merge
+          //   - fast-forward: source is simply ahead (no local divergence) — clean
+          //   - three-way: both sides have unique commits — may have conflicts
+          //   - behind: source is older than local — would bring back old state, warn
+          let mergeType: "up-to-date" | "fast-forward" | "three-way" | "behind";
+          if (commitsBehind === 0 && commitsAhead === 0) {
+            mergeType = "up-to-date";
+          } else if (commitsBehind > 0 && commitsAhead === 0) {
+            mergeType = "fast-forward";
+          } else if (commitsBehind > 0 && commitsAhead > 0) {
+            mergeType = "three-way";
+          } else {
+            // commitsAhead > 0 && commitsBehind === 0 — source is behind local
+            mergeType = "behind";
+          }
+
+          // Quick conflict pre-check via git merge-tree (non-destructive).
+          // Only run for three-way merges to keep latency down.
+          let hasConflicts = false;
+          if (mergeType === "three-way") {
+            const mergeBaseRes = await execGitDashboard(
+              ["merge-base", deployedCommit, refCommit],
+              repoPath,
+            );
+            if (mergeBaseRes.exitCode === 0) {
+              const mergeBase = mergeBaseRes.stdout.trim();
+              const mergeTreeRes = await execGitDashboard(
+                ["merge-tree", mergeBase, deployedCommit, refCommit],
+                repoPath,
+              );
+              hasConflicts = mergeTreeRes.stdout.includes("<<<<<<<");
+            }
+          }
+
+          // "Current" marks the source the gateway ACTUALLY upgrades from —
+          // which is always `origin`: the canonical Civicognita repo in
+          // production, and the owner's fork in Dev Mode (upgrade.sh rewrites
+          // origin → the fork). Keying this off canonicalRemote ("upstream" in
+          // Dev Mode) wrongly stamped "Current" on Civicognita/agi — dev,
+          // making the custodian think they track upstream/dev when they run
+          // their own fork.
+          const isCurrentChannel = branch === channel && remote === "origin";
+
+          // A source is a REAL upgrade only when its package.json version is
+          // strictly newer than ours. Raw commit topology is not enough: a
+          // custodian's content flows fork/dev → upstream/dev → upstream/main,
+          // so upstream/main ALWAYS trails by merge bubbles and shows
+          // commitsBehind > 0 (three-way) despite being an OLDER version. The
+          // version gate is what keeps the wizard from offering a phantom
+          // "upgrade" back to an older release. When a source's version is
+          // unreadable, fall back to topology (conservative — still requires
+          // commits the local HEAD lacks, and never a "behind" source).
+          const topologyUpgrade = mergeType === "fast-forward" || mergeType === "three-way";
+          const isUpgrade = topologyUpgrade && (
+            latestVersion == null ? true : isVersionNewer(latestVersion, currentVersion)
+          );
+
+          sources.push({
+            ref,
+            label: devEnabled && !isUpstreamRemote
+              ? `${remoteLabel} — ${branch} (your fork)`
+              : `${remoteLabel} — ${branch}`,
+            commitsAhead,
+            commitsBehind,
+            latestCommit,
+            latestVersion,
+            isCurrentChannel,
+            mergeType,
+            hasConflicts,
+            isUpstream: isUpstreamRemote,
+            isUpgrade,
+          });
+        }
+      }
+
+      // Sort: upstream first (canonical), then current channel, then by commitsBehind
+      sources.sort((a, b) => {
+        if (a.isUpstream && !b.isUpstream) return -1;
+        if (!a.isUpstream && b.isUpstream) return 1;
+        if (a.isCurrentChannel && !b.isCurrentChannel) return -1;
+        if (!a.isCurrentChannel && b.isCurrentChannel) return 1;
+        return b.commitsBehind - a.commitsBehind;
+      });
+
+      return reply.send({ devModeEnabled: devEnabled, currentBranch, currentVersion, deployedCommit, sources });
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/system/upgrade-preview — read upgrade impact without executing
+  //
+  // ?source={ref}  e.g. "upstream/dev", "origin/main"
+  //
+  // Returns the changelog, list of migrations that will run, and a
+  // classification of what the upgrade will affect (restart / db / frontend).
+  // Nothing is mutated.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/system/upgrade-preview", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "System API only allowed from private network" });
+    }
+    const repoPath = deps.selfRepoPath ?? process.cwd();
+    const query = request.query as Record<string, string>;
+    const source = query.source ?? "";
+
+    if (!source) {
+      return reply.code(400).send({ error: "source query parameter required (e.g. ?source=upstream/dev)" });
+    }
+
+    try {
+      // Verify the ref exists
+      const verifyRes = await execGitDashboard(["rev-parse", "--verify", source], repoPath);
+      if (verifyRes.exitCode !== 0) {
+        return reply.code(422).send({ error: `Ref not found: ${source}` });
+      }
+
+      // Deployed commit
+      let deployedCommit = "";
+      try {
+        deployedCommit = readFileSync(join(process.cwd(), ".deployed-commit"), "utf-8").trim();
+      } catch {
+        const headRes = await execGitDashboard(["rev-parse", "HEAD"], repoPath);
+        deployedCommit = headRes.stdout.trim();
+      }
+
+      // Version we're deploying FROM (current deployed)
+      let fromVersion = "0.0.0";
+      try {
+        const raw = readFileSync(join(repoPath, "package.json"), "utf-8");
+        fromVersion = (JSON.parse(raw) as { version?: string }).version ?? "0.0.0";
+      } catch { /* best-effort */ }
+
+      // Version we're deploying TO (target ref)
+      let toVersion = fromVersion;
+      const targetPkgRes = await execGitDashboard(["show", `${source}:package.json`], repoPath);
+      if (targetPkgRes.exitCode === 0) {
+        try {
+          toVersion = (JSON.parse(targetPkgRes.stdout) as { version?: string }).version ?? fromVersion;
+        } catch { /* best-effort */ }
+      }
+
+      // Commit list between deployed and target
+      const logRes = await execGitDashboard(
+        ["log", `${deployedCommit}..${source}`, "--format=%H|%s|%ai"],
+        repoPath,
+      );
+      const commits = logRes.stdout.trim().split("\n").filter(Boolean).map((line) => {
+        const [hash, message, date] = line.split("|");
+        return { hash: hash ?? "", message: message ?? "", date: date ?? "" };
+      });
+      const commitCount = commits.length;
+
+      // Changed files for impact classification
+      const diffRes = await execGitDashboard(
+        ["diff", "--name-only", deployedCommit, source],
+        repoPath,
+      );
+      const changedFiles = diffRes.stdout.trim().split("\n").filter(Boolean);
+
+      const BACKEND_PREFIXES = ["packages/gateway-core", "packages/entity-model", "packages/agent-bridge", "packages/model-runtime", "packages/skills", "packages/memory", "packages/coa-chain", "packages/security", "packages/trpc-api"];
+      const CHANNEL_PREFIXES = ["channels/"];
+      const UI_PREFIXES = ["ui/", "packages/aion-sdk"];
+      const DB_FILES = ["packages/db-schema", "packages/entity-model/src/migration"];
+
+      const backendChanged = changedFiles.some(f => BACKEND_PREFIXES.some(p => f.startsWith(p)));
+      const dbChanged = changedFiles.some(f => DB_FILES.some(p => f.startsWith(p)));
+      const uiChanged = changedFiles.some(f => UI_PREFIXES.some(p => f.startsWith(p)));
+      const channelChanged = changedFiles.some(f => CHANNEL_PREFIXES.some(p => f.startsWith(p)));
+
+      const changedAreas: string[] = [];
+      if (backendChanged) changedAreas.push("gateway-core");
+      if (dbChanged) changedAreas.push("db-schema");
+      if (uiChanged) changedAreas.push("ui/dashboard");
+      if (channelChanged) changedAreas.push("channels");
+
+      // Parse pending migrations from migration-runner.ts at the target ref
+      const migrations: Array<{ id: string; version: string; description: string }> = [];
+      const migrationSrcRes = await execGitDashboard(
+        ["show", `${source}:packages/gateway-core/src/migration-runner.ts`],
+        repoPath,
+      );
+      if (migrationSrcRes.exitCode === 0) {
+        // Regex extracts each migration block's version + id + description
+        const migrationRegex = /version:\s*["'](\d+\.\d+\.\d+)["'][^}]*?id:\s*["']([^"']+)["'][^}]*?description:\s*["']([^"']+)["']/gs;
+        let match: RegExpExecArray | null;
+        while ((match = migrationRegex.exec(migrationSrcRes.stdout)) !== null) {
+          const [, version, id, description] = match;
+          if (version && id && description && version > fromVersion) {
+            migrations.push({ id, version, description });
+          }
+        }
+      }
+
+      const impact = {
+        requiresRestart: backendChanged || dbChanged || channelChanged,
+        requiresDbMigration: dbChanged || migrations.length > 0,
+        frontendOnly: uiChanged && !backendChanged && !dbChanged && !channelChanged,
+        changedAreas,
+      };
+
+      // Stat listing — always emitted (small regardless of diff size)
+      let diffStat: string | null = null;
+      const statRes = await execGitDashboard(
+        ["diff", "--stat", `${deployedCommit}`, source],
+        repoPath,
+      );
+      if (statRes.exitCode === 0 && statRes.stdout.trim()) {
+        diffStat = statRes.stdout.trim();
+      }
+
+      // Full unified diff — capped at 500 KB to keep the response payload sane.
+      // If the diff exceeds the cap, fileDiff is null and the UI falls back to diffStat.
+      const DIFF_SIZE_CAP = 512 * 1024;
+      let fileDiff: string | null = null;
+      const fullDiffRes = await execGitDashboard(
+        ["diff", `${deployedCommit}`, source],
+        repoPath,
+      );
+      if (fullDiffRes.exitCode === 0 && fullDiffRes.stdout.trim()) {
+        const raw = fullDiffRes.stdout.trim();
+        fileDiff = raw.length <= DIFF_SIZE_CAP ? raw : null;
+      }
+
+      return reply.send({ fromVersion, toVersion, commitCount, commits, migrations, impact, source, fileDiff, diffStat });
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/system/merge-source — merge a remote ref into the local branch
+  //
+  // Body: { source: string }  e.g. { source: "upstream/main" }
+  //
+  // Runs: git fetch {remote} && git merge {ref} --no-edit
+  // On conflict: aborts immediately and returns the conflicted file list.
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/system/merge-source", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "System API only allowed from private network" });
+    }
+    const repoPath = deps.selfRepoPath ?? process.cwd();
+    const body = request.body as { source?: string };
+    const source = typeof body.source === "string" ? body.source.trim() : "";
+
+    if (!source) {
+      return reply.code(400).send({ error: "source field required in request body" });
+    }
+
+    // Validate the ref looks like "remote/branch" to prevent injection
+    if (!/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._/-]+$/.test(source)) {
+      return reply.code(400).send({ error: "Invalid source format — expected remote/branch" });
+    }
+
+    // Verify the ref exists
+    const verifyRes = await execGitDashboard(["rev-parse", "--verify", source], repoPath);
+    if (verifyRes.exitCode !== 0) {
+      return reply.code(422).send({ error: `Ref not found: ${source}` });
+    }
+
+    try {
+      // Count commits that will be merged (for the response)
+      let deployedCommit = "";
+      try {
+        deployedCommit = readFileSync(join(process.cwd(), ".deployed-commit"), "utf-8").trim();
+      } catch {
+        const headRes = await execGitDashboard(["rev-parse", "HEAD"], repoPath);
+        deployedCommit = headRes.stdout.trim();
+      }
+      const countRes = await execGitDashboard(
+        ["rev-list", "--count", `${deployedCommit}..${source}`],
+        repoPath,
+      );
+      const mergedCommits = parseInt(countRes.stdout.trim(), 10) || 0;
+
+      // Fetch the specific remote so refs are fresh
+      const remote = source.split("/")[0];
+      await execGitDashboard(["fetch", remote ?? "origin"], repoPath);
+
+      // Attempt the merge
+      const mergeRes = await execGitDashboard(
+        ["merge", source, "--no-edit", "--no-ff"],
+        repoPath,
+      );
+
+      if (mergeRes.exitCode === 0) {
+        const fastForward = mergeRes.stdout.includes("Fast-forward");
+
+        // Push the merged result to origin so upgrade.sh can pull it.
+        // upgrade.sh always runs `git checkout -B dev origin/dev` which resets
+        // /opt/agi back to origin — without this push the merge is thrown away.
+        const currentBranch = (await execGitDashboard(["rev-parse", "--abbrev-ref", "HEAD"], repoPath)).stdout.trim() || "dev";
+        const pushRes = await execGitDashboard(["push", "origin", currentBranch], repoPath, 60_000);
+        const pushOk = pushRes.exitCode === 0;
+
+        return reply.send({
+          ok: true,
+          fastForward,
+          mergedCommits,
+          aborted: false,
+          pushedToFork: pushOk,
+          message: pushOk
+            ? `${mergeRes.stdout.trim()} — pushed to origin/${currentBranch}`
+            : `Merged locally but push failed: ${pushRes.stderr.trim()}`,
+        });
+      }
+
+      // Merge failed — check for conflicts
+      const statusRes = await execGitDashboard(
+        ["diff", "--name-only", "--diff-filter=U"],
+        repoPath,
+      );
+      const conflicts = statusRes.stdout.trim().split("\n").filter(Boolean);
+
+      // Abort to leave the repo in a clean state
+      await execGitDashboard(["merge", "--abort"], repoPath);
+
+      return reply.code(409).send({
+        ok: false,
+        fastForward: false,
+        mergedCommits: 0,
+        conflicts,
+        aborted: true,
+        message: `Merge aborted — ${conflicts.length} conflict(s) detected. Use Aion Doctor to resolve.`,
+      });
+    } catch (err) {
+      // Attempt cleanup on unexpected error
+      await execGitDashboard(["merge", "--abort"], repoPath).catch(() => null);
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
 
   // -----------------------------------------------------------------------
   // Pre-listen hooks — register additional routes before the server starts

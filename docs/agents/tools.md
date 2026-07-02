@@ -270,7 +270,7 @@ Path traversal sequences (`..`, absolute paths) are rejected.
 **Available:** Always (no state or tier gate)
 **Added:** v0.4.0 (s112)
 
-Search AGI platform documentation and project knowledge files indexed by the `DocIndexer`. Covers `agi/docs/`, the global `k/` folder (`~/_aionima/k/`), and per-project `k/` folders.
+Search AGI platform documentation and project knowledge files indexed by the `DocIndexer`. Covers `agi/docs/`, the global knowledge folder (`~/_aionima/.ai/`), and per-project `.ai/` folders (the knowledge dir, renamed from `k/` 2026-06-09).
 
 **Parameters:**
 | Name | Type | Required | Default | Description |

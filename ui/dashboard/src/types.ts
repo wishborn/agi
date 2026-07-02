@@ -106,6 +106,150 @@ export interface SystemUpgradeEvent {
   status?: string;
 }
 
+/** Emitted once on gateway boot when a new version is detected. */
+export interface SystemUpgradedEvent {
+  toVersion: string;
+  fromVersion: string | null;
+  pendingSteps: number;
+  hasRequired: boolean;
+}
+
+/** A single post-upgrade action item (required or optional). */
+export interface UpgradeNextStep {
+  id: string;
+  title: string;
+  description: string;
+  required: boolean;
+  /** pending = actionable. done/dismissed = resolved. superseded = cancelled by a later migration. */
+  status: "pending" | "done" | "dismissed" | "superseded";
+  addedAt: string;
+  fromVersion: string;
+  action?: {
+    label: string;
+    kind: "navigate" | "external-url" | "chat";
+    target: string;
+  };
+  /** IDs of earlier steps this step supersedes. */
+  cancels?: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Upgrade Wizard — fork-aware 2-step upgrade workflow
+// ---------------------------------------------------------------------------
+
+/** One remote/branch source the user can upgrade from. */
+export interface ForkBranchInfo {
+  /** git ref string, e.g. "upstream/main", "origin/dev". */
+  ref: string;
+  /** Human label, e.g. "Civicognita/agi — main". */
+  label: string;
+  /** Commits the local fork has that this source does not. */
+  commitsAhead: number;
+  /** Commits this source has that the local fork does not (i.e. "behind count"). */
+  commitsBehind: number;
+  latestCommit: { hash: string; message: string; date: string } | null;
+  /** Version string from package.json at that ref, if readable. */
+  latestVersion: string | null;
+  /** True when this ref matches the current update channel. */
+  isCurrentChannel: boolean;
+  /** True when this ref is from the canonical upstream repo (Civicognita/agi),
+   *  as opposed to the user's personal fork. Upstream sources are always shown;
+   *  fork sources only appear in Dev Mode. */
+  isUpstream: boolean;
+  /**
+   * Merge compatibility classification:
+   * - "up-to-date": nothing to merge
+   * - "fast-forward": source is ahead of local with no divergence — clean merge
+   * - "three-way": both sides have unique commits — may have conflicts
+   * - "behind": source is older than local — merging would bring back old state
+   */
+  mergeType: "up-to-date" | "fast-forward" | "three-way" | "behind";
+  /** True if a merge-tree simulation detected conflict markers. Only set for three-way merges. */
+  hasConflicts: boolean;
+  /**
+   * True only when this source is a REAL upgrade — its package.json version is
+   * strictly newer than the current one. Topology alone (commitsBehind > 0) is
+   * not enough: upstream/main trails a custodian's fork by merge bubbles, so it
+   * shows as three-way despite being an OLDER version. The wizard gates the
+   * Review action on this, never on mergeType. */
+  isUpgrade: boolean;
+}
+
+/** Response from GET /api/system/fork-status. */
+export interface ForkStatus {
+  devModeEnabled: boolean;
+  currentBranch: string;
+  currentVersion: string;
+  deployedCommit: string;
+  sources: ForkBranchInfo[];
+}
+
+/** A migration entry that will execute for a given upgrade. */
+export interface UpgradePreviewMigration {
+  id: string;
+  version: string;
+  description: string;
+}
+
+/** High-level classification of what an upgrade will affect. */
+export interface UpgradeImpact {
+  /** True if any backend file changed (gateway restart required). */
+  requiresRestart: boolean;
+  /** True if any migrations are in the range. */
+  requiresDbMigration: boolean;
+  /** True if only ui/ or channel static files changed (hot-swap, no restart). */
+  frontendOnly: boolean;
+  /** Coarse area labels, e.g. ["gateway-core", "ui/dashboard", "channels/discord"]. */
+  changedAreas: string[];
+}
+
+/** Response from GET /api/system/upgrade-preview?source={ref}. */
+export interface UpgradePreview {
+  fromVersion: string;
+  toVersion: string;
+  commitCount: number;
+  commits: { hash: string; message: string; date: string }[];
+  migrations: UpgradePreviewMigration[];
+  impact: UpgradeImpact;
+  source: string;
+  /** Full unified diff (git format) of all changed files between deployed and target.
+   *  Suitable for passing directly to FancyDiff source={{ unified }}.
+   *  Null when the diff exceeds the size cap — use diffStat fallback instead. */
+  fileDiff: string | null;
+  /** Output of git diff --stat — file names with +/- line counts.
+   *  Always present when there are commits, regardless of diff size. */
+  diffStat: string | null;
+}
+
+/** A single entry in the persistent upgrade history. */
+export interface UpgradeHistoryEntry {
+  id: string;
+  startedAt: string;
+  completedAt: string;
+  fromVersion: string;
+  toVersion: string;
+  source: string | null;
+  success: boolean;
+  failedAtStep: string | null;
+  errorMessage: string | null;
+  resolutionNote: string | null;
+  log: Array<{ phase: string; step: string; status: string; message: string; timestamp: string }>;
+}
+
+/** Response from POST /api/system/merge-source. */
+export interface MergeResult {
+  ok: boolean;
+  fastForward: boolean;
+  mergedCommits: number;
+  /** Conflicted file paths — populated only when aborted is true. */
+  conflicts?: string[];
+  /** True when the merge was aborted due to conflicts. */
+  aborted: boolean;
+  /** True when the merged result was successfully pushed to origin/{branch}. */
+  pushedToFork?: boolean;
+  message: string;
+}
+
 /** Hosting infrastructure status from WebSocket. */
 export interface HostingStatusData {
   ready: boolean;
@@ -397,6 +541,7 @@ export type DashboardEvent =
   | { type: "overview:updated"; data: DashboardOverview }
   | { type: "project:activity"; data: ProjectActivity }
   | { type: "system:upgrade"; data: SystemUpgradeEvent }
+  | { type: "system:upgraded"; data: SystemUpgradedEvent }
   | { type: "system:update_available"; data: UpdateCheck }
   | { type: "hosting:status"; data: HostingStatusData }
   | { type: "project:config_changed"; data: ProjectConfigChangedData }
@@ -428,6 +573,10 @@ export interface ProjectHostingInfo {
   internalPort: number | null;
   runtimeId?: string | null;
   status: "running" | "stopped" | "error" | "unconfigured";
+  /** True when the most recent TCP probe to the container's port succeeded.
+   *  Green = running + serving. Yellow = running + !serving (starting/degraded).
+   *  Only meaningful when status === "running"; always false otherwise. */
+  serving?: boolean;
   tunnelUrl?: string | null;
   containerName?: string;
   image?: string;
@@ -440,6 +589,10 @@ export interface ProjectHostingInfo {
   containerKind?: "static" | "code" | "mapp";
   /** s145 t585 — installed MApp IDs for the MApp container kind. */
   mapps?: string[];
+  /** When false, the Caddy offline-page error block is omitted — raw app errors pass through. */
+  friendlyErrors?: boolean;
+  /** Custom container image for multi-repo projects (overrides agi-runtime:lamp). */
+  baseImage?: string | null;
   /** Circuit-breaker state for this project's hosting service id, when not closed.
    *  Surfaces "open" / "half-open" so the dashboard can render a distinct chip. */
   breaker?: {
@@ -616,6 +769,135 @@ export interface CoreForkStatus {
   error?: string;
 }
 
+/** Outbound-contribution direction (fork → upstream/dev). Learnings = PRIME,
+ *  Mechanics = every other core repo. */
+export type ContributeKind = "learnings" | "mechanics";
+
+export interface RepoContributeInfo {
+  slug: string;
+  displayName: string;
+  kind: ContributeKind;
+  branch: string;
+  /** Commits on the fork's branch not yet in upstream/dev. */
+  commitsAhead: number;
+  upstream: string;
+  upstreamOrg: string;
+  /** Latest commit subjects the fork is ahead by (capped, most-recent first). */
+  aheadCommits: string[];
+  existingPrUrl: string | null;
+  existingPrNumber: number | null;
+  error?: string;
+}
+
+/** Response of GET /api/dev/contribute/status. */
+export interface ContributeStatus {
+  ownerLogin: string | null;
+  learnings: RepoContributeInfo[];
+  mechanics: RepoContributeInfo[];
+  error?: string;
+}
+
+/** One open PR a contributor's personal fork has targeted at upstream/dev. */
+export interface IncomingPrInfo {
+  slug: string;
+  number: number;
+  title: string;
+  authorLogin: string;
+  /** Head repo full name — the contributor fork, possibly a fork-of-fork. */
+  headRepoFullName: string;
+  headRef: string;
+  headSha: string;
+  baseRef: string;
+  htmlUrl: string;
+  createdAt: string;
+  updatedAt: string;
+  isDraft: boolean;
+  /** True when the head repo is not the upstream itself (a real cross-fork PR). */
+  isCrossRepo: boolean;
+}
+
+/** Incoming PRs for one core repo. */
+export interface IncomingRepoStatus {
+  slug: string;
+  displayName: string;
+  upstream: string;
+  upstreamOrg: string;
+  prs: IncomingPrInfo[];
+  error?: string;
+}
+
+/** Response of GET /api/dev/incoming/status — inbound PR review queue. */
+export interface IncomingStatus {
+  ownerLogin: string | null;
+  repos: IncomingRepoStatus[];
+  error?: string;
+}
+
+/** Response of POST /api/dev/contribute/:slug/pr. */
+export interface CreatePrResult {
+  ok: boolean;
+  prUrl?: string;
+  prNumber?: number;
+  alreadyOpen?: boolean;
+  error?: string;
+}
+
+/** {project}.agi monorepo envelope status (Phase 3). */
+export interface AgiRepoStatus {
+  /** True when the project folder is itself a git repo. */
+  initialized: boolean;
+  /** Submodule paths registered in .gitmodules (e.g. ["repos/agi"]). */
+  submodules: string[];
+  /** repos/ subdirs that are git repos but not yet registered as submodules. */
+  unregisteredRepos: string[];
+}
+
+/** A classified change in a `.agi` envelope's config/knowledge state (story #207). */
+export interface AgiConfigChange {
+  path: string;
+  kind: "config" | "knowledge" | "submodule";
+  change: "added" | "modified" | "deleted";
+}
+
+/** Config/knowledge STATE of a `.agi` envelope vs its upstream. Chats excluded. */
+export interface AgiConfigState {
+  initialized: boolean;
+  hasRemote: boolean;
+  remoteUrl: string | null;
+  ahead: number;
+  behind: number;
+  /** Incoming upstream changes to review. */
+  incoming: AgiConfigChange[];
+  /** Local uncommitted config/knowledge changes. */
+  localChanges: AgiConfigChange[];
+  submoduleDrift: string[];
+}
+
+export interface AgiRepoOpResult {
+  ok: boolean;
+  initialized?: boolean;
+  registered?: string[];
+  error?: string;
+}
+
+/** A paired companion device (gateway ↔ desktop/mobile). */
+export interface CompanionDevice {
+  id: string;
+  entityId: string;
+  deviceName: string;
+  platform: "ios" | "android" | "desktop";
+  pushToken: string | null;
+  lastSeenAt: string;
+  pairedAt: string;
+  status: "active" | "revoked";
+}
+
+/** Response of POST /api/companion/pair/code. */
+export interface PairCodeResult {
+  code: string;
+  expiresAt: string;
+}
+
 /** Response shape of POST /api/dev/core-forks/:slug/merge. */
 export type CoreForkMergeResult =
   | { ok: true; ff: boolean; agentic: boolean; newSha: string; pushed: boolean }
@@ -658,6 +940,9 @@ export interface GitActionResult {
   stdout?: string;
   stderr?: string;
   error?: string;
+  /** Read-only git action on a dir with no top-level `.git` (e.g. a `.agi`
+   *  envelope). The dashboard renders an empty state instead of an error. */
+  notGitRepo?: boolean;
 }
 
 export interface GitFileEntry {
@@ -1118,7 +1403,26 @@ export interface AuthStatus {
   enabled: boolean;
   hasUsers: boolean;
   userCount: number;
-  provider?: "local-id" | "internal";
+}
+
+/** Live status of a canonical identity provider (GET /api/auth/providers, story #212). */
+export type IdentityProviderStatus =
+  | "connected"
+  | "available"
+  | "needs-config"
+  | "federation-gated";
+
+/** One canonical identity provider + its live status, for the System ▸ Identity grid. */
+export interface IdentityProviderView {
+  id: "github" | "google" | "meta" | "x" | "tynn" | "civicognita";
+  displayName: string;
+  authMode: "device" | "redirect" | "federation";
+  requiresOwnerApp: boolean;
+  gatedOn?: "federation";
+  brandHint: string;
+  blurb: string;
+  status: IdentityProviderStatus;
+  connectedLabel: string | null;
 }
 
 /** PRIME corpus source status from GET /api/prime/status. */

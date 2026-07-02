@@ -8,9 +8,9 @@ import { test, expect } from "@playwright/test";
  *   - clicking it navigates to /projects/_aionima
  *   - /aionima legacy URL redirects to /projects/_aionima
  *   - /pax legacy URL redirects to /projects/_aionima
- *   - /projects/_aionima loads the universal-monorepo project detail
- *     (Details / Editor / Repository tabs available — same shape as any
- *     other s140-layout project)
+ *   - /projects/_aionima loads the aionima-system meta-project detail
+ *     (Repos | Contribute | Editor tabs — the s179 container shape; the
+ *     read-only Details tab was removed 2026-06-08)
  *
  * Skips clicking the Repository drilldown if no repos are visible (some
  * test envs may not have run the t703 fork migration yet).
@@ -40,12 +40,13 @@ test.describe("Aionima self-managed project (s119 t706)", () => {
     await expect(page).toHaveURL(/\/projects\/_aionima(\?|#|$)/, { timeout: 10_000 });
   });
 
-  test("/projects/_aionima loads ProjectDetail with universal-monorepo tabs", async ({ page }) => {
+  test("/projects/_aionima loads ProjectDetail with the aionima-system tab set", async ({ page }) => {
     await page.goto("/projects/_aionima", { waitUntil: "domcontentloaded" });
-    // The project detail page exposes a tab strip; "Details" is always
-    // present. Other tabs (Editor / Repository / etc.) appear gated by
-    // project type / capability flags.
-    await expect(page.getByRole("tab", { name: /Details/i }).first()).toBeVisible({ timeout: 15_000 });
+    // The aionima-system meta-project exposes Repos | Contribute | Editor.
+    // The Repos tab is always present; the read-only Details tab was removed
+    // 2026-06-08 (owner directive) and must NOT appear for this container.
+    await expect(page.getByTestId("project-tab-repos")).toBeVisible({ timeout: 15_000 });
+    expect(await page.getByTestId("project-tab-contribute").count()).toBeGreaterThan(0);
   });
 
   // Regression for v0.4.664 fix (Wish #22/#23) — the existing "click navigates
@@ -58,20 +59,22 @@ test.describe("Aionima self-managed project (s119 t706)", () => {
     await page.goto("/projects", { waitUntil: "domcontentloaded" });
     await page.getByTestId("project-card-aionima").click();
     await expect(page).toHaveURL(/\/projects\/_aionima(\?|#|$)/, { timeout: 10_000 });
-    await expect(page.getByRole("tab", { name: /Details/i }).first()).toBeVisible({ timeout: 15_000 });
+    // ProjectDetail actually rendered → the aionima-system Repos tab is present.
+    await expect(page.getByTestId("project-tab-repos")).toBeVisible({ timeout: 15_000 });
   });
 
   // Regression for v0.4.720 fix (s175) — _aionima was misidentified as a
   // core-fork (isCoreFork=true) due to coreCollection:"aionima" matching the
   // container itself, rendering the reduced two-tab Editor+Repository UX
-  // instead of the full project detail with Details tab.
-  test("/projects/_aionima renders full project detail (not core-fork two-tab UX)", async ({ page }) => {
+  // instead of the aionima-system meta-project view.
+  test("/projects/_aionima renders the aionima-system view (not core-fork two-tab UX)", async ({ page }) => {
     await page.goto("/projects/_aionima", { waitUntil: "domcontentloaded" });
-    // Full project detail exposes a sub-surface tab strip with Details.
-    // Core-fork mode renders a plain TabsList with only Editor + Repository
-    // and no "project-sub-surface" testid.
-    await expect(page.getByTestId("project-sub-surface")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByRole("tab", { name: /Details/i }).first()).toBeVisible();
+    // The aionima-system meta-project view is identified by its Contribute tab,
+    // which the plain core-fork two-tab (Editor + Repository) UX never renders.
+    await expect(page.getByTestId("project-tab-contribute")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("project-tab-repos")).toBeVisible();
+    // Details tab was removed for this container — assert it's gone.
+    expect(await page.getByRole("tab", { name: /^Details$/ }).count()).toBe(0);
   });
 
   // Regression for v0.4.664 filter fix — `_aionima/` is the meta-project and

@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { VitePWA } from "vite-plugin-pwa";
+import { fancyPwa } from "@particle-academy/fancy-pwa/vite";
 
 const require = createRequire(import.meta.url);
 // Read the root package.json version so the SW cache name is versioned.
@@ -20,35 +20,30 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
-    VitePWA({
-      registerType: "autoUpdate",
-      selfDestroying: false,
-      includeAssets: ["favicon.ico", "favicon-16x16.png", "favicon-32x32.png", "apple-touch-icon.png", "logo.png", "logo-small.png"],
-      workbox: {
-        // cacheId namespaces all workbox cache names with the AGI version.
-        // When the version bumps (every code-change commit), the precache
-        // partition name changes from e.g. "workbox-precache-v2" to
-        // "agi-0.4.44-precache-v2", so cleanupOutdatedCaches evicts the old
-        // partition even for static assets whose content hashes haven't changed.
-        cacheId: `agi-${AGI_VERSION}`,
-        // Never precache index.html — it must always come from the network
-        // so it references the latest hashed JS/CSS filenames after an upgrade.
-        // JS/CSS files have content hashes so cached versions are naturally unique.
-        globPatterns: ["**/*.{js,css,ico,png,svg,woff2}"],
-        navigateFallback: null,
-        maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
-        skipWaiting: true,
-        clientsClaim: true,
-        cleanupOutdatedCaches: true,
-        globIgnores: ["**/echarts-*.js"],
-        runtimeCaching: [
-          {
-            urlPattern: /\/assets\/echarts-.*\.js$/,
-            handler: "CacheFirst" as const,
-            options: { cacheName: "echarts-cache", expiration: { maxEntries: 2, maxAgeSeconds: 30 * 24 * 60 * 60 } },
-          },
-        ],
+    // fancy-diff@0.1.0 imports `Button` from react-fancy which was renamed to
+    // `Action` in v3. The wishborn/react-fancy fork exports both, but the
+    // published 3.2.1 only exports Action. This plugin patches the fancy-diff
+    // bundle at build time to use Action instead.
+    // TODO: remove once fancy-diff publishes against react-fancy ≥ 3.2.1 or
+    //       Particle-Academy/react-fancy merges the dual Button/Action export.
+    {
+      name: "fancy-diff-button-compat",
+      transform(code: string, id: string) {
+        if (id.includes("fancy-diff") && code.includes("{ Badge, Button, Separator, Card }")) {
+          return code.replace(
+            "{ Badge, Button, Separator, Card }",
+            "{ Badge, Action as Button, Separator, Card }",
+          );
+        }
       },
+    },
+    // fancy-pwa: framework-agnostic, Workbox-free PWA layer. Bundles src/sw.ts
+    // (injecting the hashed precache list + a version hash) and emits the
+    // manifest. registerSw:false — the React <FancyPwaProvider> registers the SW
+    // (and skips it in Electron). Caching behaviour lives in src/sw.ts.
+    fancyPwa({
+      sw: "src/sw.ts",
+      registerSw: false,
       manifest: {
         name: "Aionima",
         short_name: "Aionima",
@@ -60,15 +55,9 @@ export default defineConfig({
         icons: [
           { src: "/pwa-192x192.png", sizes: "192x192", type: "image/png" },
           { src: "/pwa-512x512.png", sizes: "512x512", type: "image/png" },
-          {
-            src: "/pwa-maskable-512x512.png",
-            sizes: "512x512",
-            type: "image/png",
-            purpose: "maskable",
-          },
+          { src: "/pwa-maskable-512x512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
         ],
       },
-      devOptions: { enabled: false },
     }),
   ],
   resolve: {
