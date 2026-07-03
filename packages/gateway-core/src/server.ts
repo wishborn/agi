@@ -96,7 +96,7 @@ import type { WSMessage } from "./ws-server.js";
 import { InboundRouter } from "./inbound-router.js";
 import { OutboundDispatcher } from "./outbound-dispatcher.js";
 import { QueueConsumer } from "./queue-consumer.js";
-import { AgentSessionManager } from "./agent-session.js";
+import { AgentSessionManager, channelSessionKey } from "./agent-session.js";
 import { SessionStore } from "./session-store.js";
 import { createAgentRouter, AgentRouter, setPluginProviderRegistry, setModelAgentBridge } from "./llm/index.js";
 import type { LLMProvider } from "./llm/index.js";
@@ -1531,6 +1531,10 @@ export async function startGatewayServer(
             queueMessageId: message.id,
             devMode,
             isOwner: ownerEntityId !== undefined && entityId === ownerEntityId,
+            // Per-channel/room session so channels don't bleed into one shared
+            // conversation (each Discord channel/thread/DM is its own chat, and
+            // can process in parallel). roomId = the discord channel/thread id.
+            sessionKey: channelSessionKey(entity.id, message.channel, channelContextForInvoker?.roomId),
             ...(payload.projectPath !== undefined ? { projectContext: payload.projectPath } : {}),
             ...(channelContextForInvoker !== undefined ? { channelContext: channelContextForInvoker } : {}),
           });
