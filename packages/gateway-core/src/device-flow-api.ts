@@ -16,23 +16,28 @@
  *   POST  /api/auth/device-flow/refresh — refresh Google token (Hive-ID gated)
  */
 
-import { randomBytes } from "node:crypto";
 import { eq, and } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { IncomingMessage } from "node:http";
-import { connections, handoffs, users } from "@agi/db-schema";
+import { connections, handoffs } from "@agi/db-schema";
 import type { Db } from "@agi/db-schema/client";
 import { encryptToken, decryptToken } from "./crypto-tokens.js";
+import { resolveOrCreateOwnerUserId, upsertConnection } from "./oauth-connection-store.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
+import { IDENTITY_PROVIDERS } from "./identity-providers.js";
 
 // ---------------------------------------------------------------------------
 // Provider configuration
 // ---------------------------------------------------------------------------
 
-const GITHUB_CLIENT_ID = "Ov23liMC3zFFaNwtg58t";
+// GitHub's public client id + device endpoints come from the canonical identity
+// registry (story #212) — single source of truth, no duplicated constant here.
+const GITHUB_CLIENT_ID = IDENTITY_PROVIDERS.github.hostedClientId!;
 const HIVE_ID_URL = "https://id.aionima.ai";
 
+// `discord` is a *channel* provider (not on the identity page), so it stays in
+// this device-flow-only table alongside the GitHub entry sourced from the SSOT.
 type ProviderName = "github" | "google" | "discord";
 
 const HIVE_BROKERED_PROVIDERS = new Set<ProviderName>(["google", "discord"]);
@@ -44,9 +49,9 @@ const PROVIDERS: Record<ProviderName, {
   grantType: string;
 }> = {
   github: {
-    deviceCodeUrl: "https://github.com/login/device/code",
-    tokenUrl: "https://github.com/login/oauth/access_token",
-    scopes: "repo read:user user:email",
+    deviceCodeUrl: IDENTITY_PROVIDERS.github.endpoints!.deviceCodeUrl!,
+    tokenUrl: IDENTITY_PROVIDERS.github.endpoints!.tokenUrl,
+    scopes: IDENTITY_PROVIDERS.github.scopes.join(" "),
     grantType: "urn:ietf:params:oauth:grant-type:device_code",
   },
   google: {
@@ -104,34 +109,18 @@ function getClientIp(req: IncomingMessage & { ip?: string }): string {
   return req.ip ?? req.socket?.remoteAddress ?? "unknown";
 }
 
-/** Resolve or create the local owner user row (FK target for connections). */
-async function resolveOrCreateLocalOwner(db: Db, accountLabelHint: string): Promise<string> {
-  const [firstUser] = await db.select({ id: users.id }).from(users).limit(1);
-  if (firstUser) return firstUser.id;
-
-  const principal = (accountLabelHint?.toLowerCase() || "owner").replace(/[^a-z0-9_-]/g, "") || "owner";
-  const id = randomBytes(16).toString("hex");
-  try {
-    await db.insert(users).values({
-      id,
-      authBackend: "virtual",
-      principal,
-      username: principal,
-      displayName: accountLabelHint || "Owner",
-      dashboardRole: "admin",
-    });
-  } catch {
-    const [again] = await db.select({ id: users.id }).from(users).limit(1);
-    return again?.id ?? id;
-  }
-  return id;
-}
-
 async function fetchAccountLabel(provider: ProviderName, accessToken: string, tokenType: string): Promise<string> {
+  // The account-label lookup hits a DIFFERENT host than the token endpoint
+  // (api.github.com vs github.com). Without a timeout a slow/blocked userinfo
+  // host would hang the whole completion poll indefinitely → the UI sits on
+  // "waiting for approval" forever (story #218). The label is non-critical, so
+  // bound it tightly and fall back to "" on timeout/error.
+  const labelTimeout = AbortSignal.timeout(8000);
   try {
     if (provider === "github") {
       const res = await fetch("https://api.github.com/user", {
         headers: { Authorization: `${tokenType} ${accessToken}`, "User-Agent": "Aionima-Gateway" },
+        signal: labelTimeout,
       });
       const u = await res.json() as { login?: string };
       return u.login ?? "";
@@ -139,6 +128,7 @@ async function fetchAccountLabel(provider: ProviderName, accessToken: string, to
     if (provider === "google") {
       const res = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
         headers: { Authorization: `Bearer ${accessToken}` },
+        signal: labelTimeout,
       });
       const u = await res.json() as { email?: string };
       return u.email ?? "";
@@ -146,6 +136,7 @@ async function fetchAccountLabel(provider: ProviderName, accessToken: string, to
     if (provider === "discord") {
       const res = await fetch("https://discord.com/api/v10/users/@me", {
         headers: { Authorization: `Bearer ${accessToken}` },
+        signal: labelTimeout,
       });
       const u = await res.json() as { global_name?: string; username?: string };
       return u.global_name ?? u.username ?? "";
@@ -256,6 +247,12 @@ export function registerDeviceFlowRoutes(fastify: FastifyInstance, deps: DeviceF
     const deviceCode = (request.query as Record<string, string>).deviceCode;
     if (!deviceCode) return reply.code(400).send({ error: "deviceCode query parameter is required" });
 
+    // Whole-handler guard: ANY throw (DB read, token decrypt/parse, handoff
+    // delete, …) returns {status:"error"} with the real message — never an
+    // unhandled 500 that the frontend poll loop would treat as transient and
+    // spin/blow up on (story #218 follow-up). The surfaced message also tells
+    // us the actual cause.
+    try {
     const [sessionRow] = await db
       .select()
       .from(handoffs)
@@ -268,7 +265,18 @@ export function registerDeviceFlowRoutes(fastify: FastifyInstance, deps: DeviceF
       return reply.send({ status: "expired" });
     }
 
-    const sessionData = JSON.parse(decryptToken(encKey, sessionRow.connectedServices!)) as DeviceSessionData;
+    // Decrypt the session. If the key can't open it (e.g. the encryption key
+    // rotated between start and poll, or the row is corrupt), the session is
+    // unrecoverable — drop it and report expired so the user cleanly restarts,
+    // rather than 500-ing every poll.
+    let sessionData: DeviceSessionData;
+    try {
+      sessionData = JSON.parse(decryptToken(encKey, sessionRow.connectedServices!)) as DeviceSessionData;
+    } catch (err) {
+      log.error(`Device flow: session decrypt failed (unrecoverable) — ${err instanceof Error ? err.message : String(err)}`);
+      await db.delete(handoffs).where(eq(handoffs.id, deviceCode)).catch(() => {});
+      return reply.send({ status: "expired", error: "session_unreadable" });
+    }
     const { provider } = sessionData;
     const providerCfg = PROVIDERS[provider];
 
@@ -314,47 +322,36 @@ export function registerDeviceFlowRoutes(fastify: FastifyInstance, deps: DeviceF
     const expiresIn = data.expires_in as number | undefined;
 
     const accountLabel = await fetchAccountLabel(provider, accessToken, tokenType);
-    const userId = await resolveOrCreateLocalOwner(db, accountLabel);
-    const now = new Date();
-    const tokenExpiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000) : null;
 
-    const [existing] = await db
-      .select()
-      .from(connections)
-      .where(and(eq(connections.userId, userId), eq(connections.provider, provider), eq(connections.role, sessionData.role)))
-      .limit(1);
-
-    if (existing) {
-      await db.update(connections)
-        .set({
-          accountLabel,
-          accessToken: encryptToken(encKey, accessToken),
-          refreshToken: refreshToken ? encryptToken(encKey, refreshToken) : null,
-          tokenExpiresAt,
-          scopes: scope ?? null,
-          updatedAt: now,
-        })
-        .where(eq(connections.id, existing.id));
-    } else {
-      await db.insert(connections).values({
-        id: randomBytes(16).toString("hex"),
-        userId,
+    // Persist the connection. Any failure here must surface as a clear error —
+    // NOT an unhandled 500, which the frontend poll loop would silently treat
+    // as transient and keep spinning on "waiting" forever (story #218).
+    try {
+      const userId = await resolveOrCreateOwnerUserId(db, accountLabel);
+      // Shared store (story #213) — single upsert path for both OAuth ingress flows.
+      await upsertConnection(db, encKey, userId, {
         provider,
         role: sessionData.role,
         accountLabel,
-        accessToken: encryptToken(encKey, accessToken),
-        refreshToken: refreshToken ? encryptToken(encKey, refreshToken) : null,
-        tokenExpiresAt,
+        accessToken,
+        refreshToken: refreshToken ?? null,
+        tokenExpiresAt: expiresIn ? new Date(Date.now() + expiresIn * 1000) : null,
         scopes: scope ?? null,
-        createdAt: now,
-        updatedAt: now,
       });
+    } catch (err) {
+      log.error(`Device flow: token obtained but persistence failed: ${err instanceof Error ? err.message : String(err)}`);
+      return reply.send({ status: "error", error: `Authorized, but saving the connection failed: ${err instanceof Error ? err.message : String(err)}` });
     }
 
     await db.delete(handoffs).where(eq(handoffs.id, deviceCode));
 
     log.info(`Device flow completed: provider=${provider} role=${sessionData.role} user=${accountLabel}`);
     return reply.send({ status: "completed", provider, role: sessionData.role, accountLabel });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error(`Device flow poll failed: ${msg}`);
+      return reply.send({ status: "error", error: `Device flow poll failed: ${msg}` });
+    }
   });
 
   // GET /api/auth/device-flow/status

@@ -3,30 +3,27 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router";
 import { cn } from "@/lib/utils";
 import { useSettingsContext } from "./settings-layout.js";
-import { useRootContext } from "./root.js";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar.js";
+import { CompanionDevicesCard } from "@/components/CompanionDevicesCard.js";
 import { OwnerSettings } from "@/components/settings/OwnerSettings.js";
-import { DevSettings } from "@/components/settings/DevSettings.js";
 import { GatewayNetworkSettings } from "@/components/settings/GatewayNetworkSettings.js";
-import { IdentitySettings } from "@/components/settings/IdentitySettings.js";
 import { DevNote } from "@/components/ui/dev-notes";
 import { Button } from "@/components/ui/button";
 import type { AionimaConfig } from "../types.js";
 
-type Tab = "general" | "identity" | "dev" | "network";
+type Tab = "general" | "dev" | "network";
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "general", label: "General" },
-  { id: "identity", label: "Federation" },
   { id: "dev", label: "Contributing" },
   { id: "network", label: "Network" },
 ];
 
 export default function SettingsGatewayPage() {
-  const { configHook } = useSettingsContext();
-  const { onOpenUpgradeWizard } = useRootContext();
+  const { configHook, onOpenUpgradeWizard } = useSettingsContext();
   const [activeTab, setActiveTab] = useState<Tab>("general");
   const [draft, setDraft] = useState<AionimaConfig>(configHook.data ?? ({} as AionimaConfig));
   const [dirty, setDirty] = useState(false);
@@ -72,14 +69,32 @@ export default function SettingsGatewayPage() {
         live at Settings → Channels (plugin-driven, one tab per installed channel). Gateway settings no
         longer has a hardcoded Telegram/Discord config surface.
       </DevNote>
+      <DevNote heading="2026-06-08 — Contributing GitHub connect is AGI-native (no more id.ai.on)" kind="info" scope="settings/gateway">
+        The Contributing tab's GitHub auth gate no longer pops the retired Local-ID service at
+        id.ai.on. It now runs AGI's own device flow (device-flow-api.ts, absorbed from Local-ID):
+        click "Connect GitHub" → enter the shown code at github.com/login/device → the token lands
+        in the connections table and Dev Mode unlocks. Backend already read githubAuthenticated from
+        the connections table directly; only this UI was stuck on the dead popup.
+      </DevNote>
       <DevNote heading="Contributing/Dev Mode gates DevNotes visibility" kind="info" scope="settings/gateway">
-        Toggle "Contributing" tab → enable Dev Mode. Notes only render when this is on. Production users
-        running the gateway never see DevNotes; you (with Contributing on) see them on every page+tab.
+        Dev Mode gates DevNotes visibility — notes only render when it's on. The toggle moved to the
+        dedicated Contributing page (/contribute, Repos &amp; Mode tab). Production users never see DevNotes.
+      </DevNote>
+      <DevNote heading="2026-06-18 — Contributing moved to /contribute (Wave 2)" kind="info" scope="settings/gateway">
+        The Contributing tab here is now just a pointer. Contributing mode, GitHub connect, fork/repo
+        status, incoming + outbound PRs, and the test VM live on the dedicated /contribute page (Outbound /
+        Incoming / Repos &amp; Mode tabs) — less scroll, plus contribution metrics + PR comments.
       </DevNote>
       <DevNote heading="Project folder restructure incoming (s140)" kind="warning" scope="settings/gateway">
         After running `agi project-migrate s140 --execute`, this page's project list reflects the new
         layout: every project gets {"{k/, repos/, sandbox/, project.json}"} at root (chat stays at k/chat/). Stacks attach
         per-repo (s141 follow-up). Sacred projects (Aionima 5 + PAx 4) untouched.
+      </DevNote>
+      <DevNote heading="2026-06-07 — Companion device pairing (Genie / mobile)" kind="info" scope="settings/gateway">
+        General tab now has a Companion devices card: generate a 6-digit code, read it to a LAN
+        companion (e.g. Genie desktop), and it pairs for a per-device session token. Manage/revoke
+        devices here. Pairing lives in AGI (Local-ID deprecated); answers agi#178 Q5.2a. In-memory
+        for now — devices re-pair after a gateway restart (persistence is a follow-up).
       </DevNote>
       <DevNote heading="Manage Upgrade — review action only for real upgrades" kind="info" scope="settings/gateway">
         The upgrade wizard now lists every source (commit deltas always shown) but only renders a
@@ -118,6 +133,7 @@ export default function SettingsGatewayPage() {
       {/* Tab content */}
       {activeTab === "general" && (
         <>
+          <OwnerSettings owner={owner} update={update} />
           <GatewayNetworkSettings gateway={gateway} config={draft} update={update} section="general" />
           {/* Upgrade management — always accessible regardless of pending updates */}
           <div className="mt-6 rounded-lg border border-border bg-card p-4 flex items-center justify-between gap-4">
@@ -137,18 +153,24 @@ export default function SettingsGatewayPage() {
               Manage Upgrade
             </Button>
           </div>
-        </>
-      )}
-
-      {activeTab === "identity" && (
-        <>
-          <OwnerSettings owner={owner} update={update} />
-          <IdentitySettings config={draft} update={update} />
+          {/* Companion device pairing (gateway ↔ desktop/mobile, e.g. Genie) */}
+          <div className="mt-6">
+            <CompanionDevicesCard />
+          </div>
         </>
       )}
 
       {activeTab === "dev" && (
-        <DevSettings config={draft} update={update} />
+        <div className="rounded-lg border border-border bg-card p-4" data-testid="contribute-moved-pointer">
+          <div className="text-[13px] font-semibold text-foreground">Contributing has its own page now</div>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            Contributing mode, GitHub connect, fork/repo status, incoming &amp; outbound PRs, and the test VM
+            moved to a dedicated page (Wave 2 — less scroll, contribution metrics, PR comments).
+          </p>
+          <Link to="/contribute" className="inline-block mt-2 text-[12px] text-primary hover:underline" data-testid="contribute-page-link">
+            Open Contributing →
+          </Link>
+        </div>
       )}
 
       {activeTab === "network" && (

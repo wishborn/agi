@@ -223,6 +223,25 @@ A red or yellow mark on any origin row means `agi upgrade` hasn't completed the 
 
 Toggle Dev Mode off in the dashboard → `dev.enabled: false` in config → next `agi upgrade` → `ensure_origin_remote` sees that `dev.*Repo` are no longer the effective URLs (because the fallback branches to Civicognita) → rewrites origins back to Civicognita → subsequent upgrades pull canonical releases again.
 
+### Upgrade Wizard source listing — Upstream vs your fork
+
+The Upgrade Wizard (`GET /api/system/fork-status`) lists every candidate source under
+two headings: **Upstream** (the canonical `Civicognita/agi` remote) and **Your fork**
+(your personal `wishborn/agi`, shown only in Dev Mode). Each source reports `commitsAhead`
+/ `commitsBehind` and a `mergeType` for information — but the **Review →** action is gated
+on a separate `isUpgrade` flag, **not** on commit topology.
+
+`isUpgrade` is **version-aware**: a source is a real upgrade only when its `package.json`
+version is *strictly newer* than the deployed version. This matters because content flows
+`fork/dev → upstream/dev → upstream/main`, so for the First Custodian **`upstream/main`
+always trails your fork by the merge commits that carried your own PRs**. Those merge
+bubbles make `commitsBehind > 0` (a "three-way" merge) even though the source is an *older*
+release. Without the version gate the wizard would offer a phantom "4 commits available"
+upgrade back to an older version (the v0.4.906-vs-v0.4.911 case). Sources that are newer by
+topology but older by version render as a non-interactive **info row** ("older than your
+vX — nothing to pull"), alongside the up-to-date and behind info rows. Only a
+strictly-newer source gets a selectable card and a Review button.
+
 ---
 
 ## Contributing upstream (outbound PRs)
@@ -249,3 +268,47 @@ Each core fork that is ahead of `upstream/dev` shows a **Create PR** button. It:
 **PRs always target `dev`, never `main`.** See `CONTRIBUTING.md` for the full convention.
 Backend: `packages/gateway-core/src/dev-mode-contribute.ts`;
 endpoints `GET /api/dev/contribute/status` + `POST /api/dev/contribute/:slug/pr`.
+
+---
+
+## Reviewing incoming PRs (as Upstream custodian)
+
+The **First Custodian** of Upstream (the owner of `Civicognita/agi`) is the only one who
+merges PRs to `dev`/`main`. Other contributors PR their **personal forks** — possibly
+forks-of-forks — into the upstream `dev` branch. The dashboard surfaces those open PRs as a
+**review queue** so the custodian can inspect and test each one before merging.
+
+`GET /api/dev/incoming/status` returns, per core repo, the open PRs targeting
+`‹upstreamOrg›/‹repo›:dev` (`state=open`, sorted by most-recently-updated). Each entry
+carries the PR number, title, author, **head repo full name** (the contributor's fork — a
+cross-fork PR is flagged via `isCrossRepo`), head ref/sha, draft flag, and timestamps.
+Requires a connected GitHub account (the upstream repos may be private; the GitHub list
+endpoint is rate-limited unauthenticated) — without a token the endpoint returns an empty
+queue with an actionable error.
+
+Backend: `packages/gateway-core/src/dev-mode-incoming.ts`. **Merging stays on GitHub** — an
+irreversible write the dashboard never automates.
+
+### Testing a PR live before merge
+
+The **Test in VM** button on a PR row (and the `agi test-vm pr <slug> <number>` CLI) tests the
+PR's actual code in the test VM:
+
+```bash
+agi test-vm pr agi 178
+```
+
+This fetches `pull/178/head` into a **throwaway git worktree** (a sibling under
+`_aionima/repos/` — your working tree is never touched), `pnpm install`s it (cheap — pnpm
+hard-links from the store), remounts the VM's `/mnt/agi` to the worktree, rebuilds + restarts,
+and serves the PR build at `https://test.ai.on`. Click through it; press Enter when done and
+your dev tree is **restored automatically** (a trap guarantees the remount + worktree cleanup
+even on Ctrl-C). Supported for the `agi` repo only — the VM serves agi, so an agi PR is what can
+run live; PRs to PRIME / the marketplaces / PAx are reviewed on GitHub.
+
+The dashboard button is a thin front for this: the live mount-swap waits for you to finish
+reviewing and must restore the mount even on interrupt — a terminal trap the headless gateway
+can't own — so the button validates the PR and hands you the exact command to run rather than
+spawning a job that could leave the VM mounted to a PR. Endpoint:
+`POST /api/dev/incoming/:slug/pr/:number/test`. CLI flow:
+`scripts/test-vm.sh pr` → `cmd_pr_test`.

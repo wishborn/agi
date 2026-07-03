@@ -30,6 +30,7 @@ import { PmLitePanel } from "./PmLitePanel.js";
 import { PmKanbanPanel } from "./PmKanbanPanel.js";
 import { NotesPanel } from "./NotesPanel.js";
 import { ChannelsPanel } from "./ChannelsPanel.js";
+import { AgiProjectStatePanel } from "./AgiProjectStatePanel.js";
 import { ScheduledJobsTab } from "./ScheduledJobsTab.js";
 import { MCPTab } from "./MCPTab.js";
 import { ProjectActivityTab } from "./ProjectActivityTab.js";
@@ -46,6 +47,7 @@ import { MagicAppPicker } from "./MagicAppPicker.js";
 import { isDesktopServedType } from "@/lib/project-type-classifier";
 import { AionimaSystemReposPanel } from "./AionimaSystemReposPanel.js";
 import { AionimaContributePanel } from "./AionimaContributePanel.js";
+import { AionimaIncomingPrsPanel } from "./AionimaIncomingPrsPanel.js";
 import { AgiRepoCard } from "./AgiRepoCard.js";
 
 export interface ProjectDetailProps {
@@ -232,6 +234,8 @@ export function ProjectDetail({
     "taskmaster": "coordinate",
     // Wish #17 / s155 t671 — Plans tab in coordinate mode (PM workflow).
     "plans": "coordinate",
+    // story #207 — Project tab: the .agi envelope config/knowledge-state surface.
+    "project": "coordinate",
     // s152 — Notes tab in coordinate mode (knowledge capture for the project).
     "notes": "coordinate",
     // s139 t538 — PM kanban tab in coordinate mode. Reuses PmKanbanPanel
@@ -452,6 +456,54 @@ export function ProjectDetail({
         })()}
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
         <DevNotes title="Project workspace — dev notes">
+          <DevNotes.Item kind="info" heading="2026-06-10 — Coordinate → Project: .agi config/knowledge-state surface">
+            New <strong>Project</strong> tab in Coordinate mode manages a <code>.agi</code> envelope as a
+            config/knowledge-STATE surface — NOT a repo manager. An upgrade Wizard (git init +{" "}
+            <code>{"{slug}.agi"}</code> remote, with <em>AGI auto-creates</em> OR <em>paste URL</em>)
+            turns a project into an envelope; once wired, the panel shows ahead/behind + a reviewable
+            diff of config/knowledge/submodule changes with <strong>Pull &amp; apply</strong> (runs{" "}
+            <code>git submodule update --init --recursive</code>) and <strong>Push state</strong>. Chats
+            (<code>.ai/chat/</code>), <code>sandbox/</code>, <code>.trash/</code> are excluded from sync.
+            Backend: <code>agi-repo/{"{state,remote,pull,push}"}</code> (v0.4.921–922, story #207).
+          </DevNotes.Item>
+          <DevNotes.Item kind="info" heading="2026-06-09 — Knowledge dir renamed k/ → .ai/">
+            Every project's knowledge layer (<code>plans/ knowledge/ pm/ memory/ chat/ issues/</code>)
+            moved from <code>k/</code> to <code>.ai/</code> to match common AI-workflow conventions
+            (<code>.cursor/</code>, <code>.aider/</code>). Existing projects auto-migrate on gateway
+            boot (rename is atomic + never clobbers). <code>.ai/</code> is dot-hidden to <code>ls</code>
+            but stays <strong>visible in the file browser</strong> here — the sibling <code>.agi/</code>
+            config envelope is unchanged. New projects scaffold <code>.ai/</code> directly (v0.4.919).
+          </DevNotes.Item>
+          <DevNotes.Item kind="info" heading="2026-06-08 — Incoming PRs tab (review contributors' forks)">
+            New <strong>Incoming</strong> tab on the _aionima container (Repos | Contribute |
+            Incoming | Editor). Lists open PRs that contributors' personal forks — including
+            forks-of-forks — have opened into upstream <code>dev</code>, grouped per core repo,
+            with author, head fork (cross-fork flagged), and draft state. Merge happens on
+            GitHub via <em>View on GitHub →</em> (an irreversible write we never automate). The
+            <em>Test in VM</em> button hands you <code>agi test-vm pr agi &lt;n&gt;</code>, which
+            fetches the PR head into a throwaway worktree, remounts the VM to it, and serves it at
+            <code>test.ai.on</code> for live click-through — restoring your dev tree on exit
+            (agi repo only; v0.4.915).
+          </DevNotes.Item>
+          <DevNotes.Item kind="info" heading="2026-06-08 — Upstream vs Personal forks + version-aware upgrades">
+            Terminology + correctness. (1) The Repos panel header is now <strong>Personal forks</strong>
+            ("tracked against Upstream (Civicognita)") instead of "Core Forks"; fork labels come from the
+            API's <code>displayName</code> (single source of truth) rather than a stale hardcoded map that
+            still listed the deprecated Local-ID and omitted the PAx repos. (2) The Upgrade Wizard now gates
+            the <strong>Review →</strong> action on a version-aware <code>isUpgrade</code> flag, not raw commit
+            topology. <code>upstream/main</code> trails your fork by merge bubbles, so it showed a phantom
+            "4 commits available" despite being an older version (v0.4.906 vs v0.4.911) — it now renders as an
+            <em>info row</em> ("older than your vX — nothing to pull"). Incoming-PR review/test tab is next.
+          </DevNotes.Item>
+          <DevNotes.Item kind="info" heading="2026-06-08 — Aionima page repaired: forks resolve + Details tab removed">
+            Two fixes. (1) The Repos + Contribute panels were blank ("No forks provisioned" / "No repos in
+            this group") because the backend looked for forks at <code>_aionima/&lt;slug&gt;</code> while the
+            2026-05-13 restructure moved them to <code>_aionima/repos/&lt;slug&gt;</code>. A shared
+            <code>coreForkDir()</code> resolver now prefers the nested layout (legacy flat still supported).
+            (2) The meta-project tab set is now <strong>Repos | Contribute | Editor</strong> — the read-only
+            Details tab was dropped (it duplicated what other tabs show). Regular projects keep their Details
+            tab.
+          </DevNotes.Item>
           <DevNotes.Item kind="info" heading="2026-06-07 — .agi monorepo envelope control (Details tab)">
             Regular projects' Details tab now carries an AgiRepoCard: initialize the project folder as a
             {" "}<code>{"{slug}.agi"}</code> git envelope, or import existing <code>repos/</code> as git
@@ -481,47 +533,6 @@ export function ProjectDetail({
             instead of the full mode-picker + all tabs. Stack strip and mode picker hidden.
             AionimaSystemReposPanel shows all five core forks with ahead/behind badges,
             a file browser toggle, and a Talk-to-project button.
-          </DevNotes.Item>
-          <DevNotes.Item kind="info" heading="Cycles 144-148 — Canvas + Chat split (slice 5c phases 1-3)">
-            Mockup B's flyout-shell shape is in: Canvas section header reads `Canvas · {"{tab}"}`,
-            tabs sit on the left (flex-1), chat aside sits on the right (280px, lg+ only). The
-            aside shows iterative-work status (when eligible) + an Open chat CTA.
-          </DevNotes.Item>
-          <DevNotes.Item kind="todo" heading="Slice 5c phase 4 — chat content not yet in aside">
-            The actual chat thread + composer is still rendered inside the cycle-87 floating
-            ChatFlyout, NOT inside the workspace aside. Phase 4 moves that content into the
-            right panel and adds collapsible AccordionFlyout chrome.
-          </DevNotes.Item>
-          <DevNotes.Item kind="warning" heading="Chat panel close button desync (cycle 149 owner-flagged)">
-            Clicking X in the chat panel header collapses both AccordionFlyout sections to rail-only
-            but leaves the header chat-button highlighted as active. The two close triggers need
-            two-way binding via `onOpenChange`. Filed as comment on s134 t517.
-          </DevNotes.Item>
-          <DevNotes.Item kind="info" heading="Cycle 137 — sub-surface pill restyle (slice 5b)">
-            Mode picker pill row uses tailwind arbitrary-attribute variant
-            `[&[aria-selected=true]]` to override react-fancy underline-variant defaults via
-            tailwind-merge. Yellow active fill, muted hover inactive.
-          </DevNotes.Item>
-          <DevNotes.Item kind="todo" heading="Cage indicator (t517 item 6)">
-            Depends on s130 t515 phase B (chat-tool cage primitive — backlog). When chat is
-            project-bound, a small "Tools caged to this project" pill appears in the chat header.
-          </DevNotes.Item>
-          <DevNotes.Item kind="warning" heading="Project folder restructure incoming (s140)">
-            Each project will move to {"{k/, repos/, sandbox/}"} (with chat at k/chat/) at the project root with a
-            single root `project.json` config (project- + repo-config combined). Stacks attach to
-            individual repos, not to the project. Multi-repo single-container hosting UI extends
-            with per-repo {"{config, start, dev, stack-actions}"} surfaces. Migration runs as a
-            dry-run report first; no file moves until owner sign-off.
-          </DevNotes.Item>
-          <DevNotes.Item kind="info" heading="Cycle 228 — _aionima Sacred card 404 regression fixed (s175)">
-            Three stale checks caused the Sacred meta-project to render incorrectly: (1) isSacred
-            only checked for type "aionima" but _aionima gets type "aionima-system" — Sacred
-            badge/locks were absent. (2) isCoreFork checked coreCollection === "aionima" which
-            matched the container itself (not just forks inside it), rendering the reduced
-            two-tab UX instead of the full project detail. (3) canViewSacred blocked "aionima-system"
-            projects behind contributing mode. Root cause was the ESM __dirname bug (now fixed at
-            project-config-path.ts:41) which prevented project.json creation → _aionima had no
-            project type on disk → cascade of wrong detections. All three guards tightened.
           </DevNotes.Item>
         </DevNotes>
         {project.category && (
@@ -731,11 +742,16 @@ export function ProjectDetail({
             <TabsTrigger value="repository">Repository</TabsTrigger>
           </TabsList>
         ) : isAionimaContainer ? (
-          // s179: _aionima meta-project — Repos | Contribute | Details | Editor
+          // s179: _aionima meta-project — Repos | Contribute | Editor.
+          // Details tab dropped 2026-06-08 (owner directive): for the meta-project
+          // it was read-only metadata that duplicated what Repos/Editor already
+          // show — no user-visible value. The details TabsContent below is kept
+          // for regular projects; the redirect at ~L257 bounces any stray
+          // activeTab="details" back to "repos" for this container.
           <TabsList>
             <TabsTrigger value="repos" data-testid="project-tab-repos">Repos</TabsTrigger>
             <TabsTrigger value="contribute" data-testid="project-tab-contribute">Contribute</TabsTrigger>
-            <TabsTrigger value="details">Details</TabsTrigger>
+            <TabsTrigger value="incoming" data-testid="project-tab-incoming">Incoming</TabsTrigger>
             <TabsTrigger value="files">Editor</TabsTrigger>
           </TabsList>
         ) : (
@@ -761,6 +777,9 @@ export function ProjectDetail({
               {tabBelongsToMode("iterative-work")
                 && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
                 <TabsTrigger value="iterative-work" className={SUB_PILL_CLASS} data-testid="project-tab-iterative-work">Scheduled Jobs</TabsTrigger>
+              )}
+              {tabBelongsToMode("project") && !isAionimaContainer && (
+                <TabsTrigger value="project" className={SUB_PILL_CLASS} data-testid="project-tab-project">Project</TabsTrigger>
               )}
               {tabBelongsToMode("plans") && (
                 <TabsTrigger value="plans" className={SUB_PILL_CLASS} data-testid="project-tab-plans">Plans</TabsTrigger>
@@ -1360,6 +1379,12 @@ export function ProjectDetail({
           </Card>
         </TabsContent>
 
+        <TabsContent value="incoming" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          <Card className="p-4">
+            <AionimaIncomingPrsPanel />
+          </Card>
+        </TabsContent>
+
         <TabsContent value="repository" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <Card className="p-4">
             {isCoreFork && project?.coreForkSlug ? (
@@ -1513,6 +1538,11 @@ export function ProjectDetail({
         {/* Wish #17 / s155 t671 — Plans tab (PM-Lite). Always available;
             DONE/CURRENT/NEXT views over the layered PM provider, plus a
             file-based plan list straight from <projectPath>/k/plans/. */}
+        {/* story #207 — .agi envelope config/knowledge-state surface. */}
+        <TabsContent value="project" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          <AgiProjectStatePanel projectPath={project.path} projectName={project.name} />
+        </TabsContent>
+
         <TabsContent value="plans" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <PmLitePanel projectPath={project.path} />
         </TabsContent>

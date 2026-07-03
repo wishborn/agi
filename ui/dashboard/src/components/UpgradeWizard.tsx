@@ -22,6 +22,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { UpgradeNextStepsPanel } from "@/components/UpgradeNextStepsPanel.js";
+import { computeUpgradeStepRows, normalizeStepStatus } from "@/lib/upgrade-steps.js";
+import { useTheme } from "@/lib/theme-provider";
 import { FancyDiff } from "@particle-academy/fancy-diff";
 import {
   fetchForkStatus,
@@ -29,6 +31,8 @@ import {
   mergeForkSource,
   fetchUpgradeHistory,
   addUpgradeHistoryNote,
+  fetchChangelog,
+  type ChangelogCommit,
 } from "@/api.js";
 import type {
   ForkStatus,
@@ -43,25 +47,9 @@ import type {
 // Fine-step label map (upgrade.sh phase names → human-readable labels)
 // ---------------------------------------------------------------------------
 
-const STEP_LABELS: Record<string, string> = {
-  preflight: "Preflight checks",
-  "origin-agi": "Verify fork origin",
-  "origin-prime": "Verify PRIME origin",
-  "pull-agi": "Pull latest AGI",
-  "pull-prime": "Pull latest PRIME",
-  "pull-marketplace": "Pull Plugin Marketplace",
-  "pull-mapp-marketplace": "Pull MApp Marketplace",
-  submodules: "Initialize submodules",
-  "protocol-check": "Protocol version check",
-  install: "Install dependencies",
-  rebuild: "Rebuild native modules",
-  build: "Build frontend",
-  "build-marketplace": "Build Marketplace",
-  "db-push": "Database migration",
-  systemd: "Update service config",
-  restart: "Restart service",
-  complete: "Complete",
-};
+// The upgrade step list + status vocabulary live in @/lib/upgrade-steps.js,
+// mirrored from scripts/upgrade.sh (story #216). A drift guard test keeps them
+// in sync.
 
 // ---------------------------------------------------------------------------
 // Props
@@ -102,6 +90,12 @@ export function UpgradeWizard({
 }: UpgradeWizardProps) {
   const [step, setStep] = useState<Step>(1);
 
+  // Resolve the dashboard's active light/dark so the diff viewer can be told
+  // explicitly — fancy-diff's `theme="auto"` does NOT actually detect dark mode
+  // (no media-query / .dark-class probe), so we must pass the real value.
+  const { themeId, themes } = useTheme();
+  const isDarkTheme = themes.find((t) => t.id === themeId)?.dark ?? true;
+
   // Step 1 state
   const [forkStatus, setForkStatus] = useState<ForkStatus | null>(null);
   const [forkLoading, setForkLoading] = useState(false);
@@ -121,6 +115,11 @@ export function UpgradeWizard({
 
   // Merge result to display in step 3
   const [mergeResult, setMergeResult] = useState<{ fastForward: boolean; commits: number } | null>(null);
+
+  // Recent changelog — surfaced in the "up to date" state so the running
+  // changelog (what changed in the last upgrade) is always reachable, not just
+  // in the transient post-upgrade panel.
+  const [recentCommits, setRecentCommits] = useState<ChangelogCommit[]>([]);
 
   // Track already-seen fine steps so the list grows monotonically
   const seenStepsRef = useRef<Map<string, { status: string; message: string }>>(new Map());
@@ -164,13 +163,13 @@ export function UpgradeWizard({
     fetchForkStatus()
       .then((status) => {
         setForkStatus(status);
-        // Only real upgrades (commitsBehind > 0) are actionable. Pre-select the
-        // current-channel upgrade if it's a real one, else the first real upgrade.
-        // When everything is up-to-date/behind, nothing is selected — the wizard
-        // shows an informational "up to date" state with no review action.
-        const realUpgrades = status.sources.filter(
-          (s) => s.mergeType === "fast-forward" || s.mergeType === "three-way",
-        );
+        // Only real upgrades (strictly-newer VERSION) are actionable. Pre-select
+        // the current-channel upgrade if it's a real one, else the first real
+        // upgrade. When everything is up-to-date / behind / older, nothing is
+        // selected — the wizard shows an informational state with no review
+        // action. Gating on `isUpgrade` (not mergeType) keeps upstream/main —
+        // which trails by merge bubbles — out of the actionable set.
+        const realUpgrades = status.sources.filter((s) => s.isUpgrade);
         const preselect = realUpgrades.find((s) => s.isCurrentChannel) ?? realUpgrades[0];
         if (preselect) setSelectedSource(preselect.ref);
         setForkLoading(false);
@@ -180,6 +179,13 @@ export function UpgradeWizard({
         setForkLoading(false);
       });
   }, [open, upgradePhase]);
+
+  // Load the recent changelog on open so the "up to date" state can show what
+  // changed (the running changelog) instead of a dead-end.
+  useEffect(() => {
+    if (!open) return;
+    fetchChangelog(8).then(({ commits }) => setRecentCommits(commits)).catch(() => {});
+  }, [open]);
 
   // Dismiss on Escape
   useEffect(() => {
@@ -289,25 +295,9 @@ export function UpgradeWizard({
   const upgradeError = upgradePhase === "error";
 
   // Build ordered step rows for step 3 from accumulated log entries
-  const stepRows = Object.entries(STEP_LABELS).map(([key, label]) => {
-    const entry = seenStepsRef.current.get(key);
-    const status = entry?.status ?? "pending";
-    return { key, label, status };
-  }).filter(({ key }) => {
-    // Only show steps that have been seen or are the next expected one
-    const seen = seenStepsRef.current.has(key);
-    const anyRunning = [...seenStepsRef.current.values()].some(e => e.status === "start");
-    if (seen) return true;
-    // Show the first unseen step as "pending" when something is running
-    if (anyRunning) {
-      const keys = Object.keys(STEP_LABELS);
-      const lastSeen = keys.filter(k => seenStepsRef.current.has(k)).pop();
-      const lastSeenIdx = lastSeen ? keys.indexOf(lastSeen) : -1;
-      const thisIdx = keys.indexOf(key);
-      return thisIdx === lastSeenIdx + 1;
-    }
-    return false;
-  });
+  // The FULL checklist, always — every step renders immediately (pending) and
+  // flips green as upgrade.sh reports `done` for it (story #216). No filtering.
+  const stepRows = computeUpgradeStepRows(seenStepsRef.current);
 
   // ---------------------------------------------------------------------------
   // Render helpers
@@ -363,11 +353,17 @@ export function UpgradeWizard({
   }) {
     const isBehind = source.mergeType === "behind";
     const upToDate = source.mergeType === "up-to-date";
-    const canUpgrade = !isBehind && !upToDate;
+    // The review/upgrade action only appears for a REAL upgrade (strictly-newer
+    // version), never on raw topology. A source that is fast-forward/three-way
+    // by commits but NOT newer by version (the upstream/main merge-bubble case)
+    // is "older" — informational, not actionable.
+    const canUpgrade = source.isUpgrade;
+    const isOlder = !canUpgrade && !isBehind && !upToDate;
+    const currentVersion = forkStatus?.currentVersion;
 
     // Owner directive: the source listing + commit deltas are ALWAYS shown, but
-    // the review/upgrade action only appears for a real upgrade (commitsBehind > 0).
-    // up-to-date and behind sources render as non-interactive info rows.
+    // the review/upgrade action only appears for a real upgrade.
+    // up-to-date, behind, and older sources render as non-interactive info rows.
     if (isBehind) {
       // Info row — our fork is ahead of this source; nothing to pull.
       return (
@@ -405,6 +401,31 @@ export function UpgradeWizard({
               <span className="text-[9px] px-1 py-0.5 rounded bg-blue/10 text-blue/70 font-semibold">Current</span>
             )}
             <span className="text-[9px] text-green/70 font-semibold">✓ up to date</span>
+          </div>
+        </div>
+      );
+    }
+
+    if (isOlder) {
+      // Info row — the source has commits we don't (merge bubbles), but its
+      // VERSION is older than ours. This is the upstream/main case for a
+      // custodian: pulling it would be a phantom "downgrade", so no action.
+      return (
+        <div
+          data-testid="upgrade-source-info"
+          data-merge-type="older"
+          className="flex items-center gap-3 rounded-lg border border-border/40 bg-surface0/30 px-3 py-2"
+        >
+          <span className="w-2 h-2 rounded-full bg-muted shrink-0" />
+          <span className="text-[11px] text-muted-foreground flex-1 truncate">{source.label}</span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {source.isCurrentChannel && (
+              <span className="text-[9px] px-1 py-0.5 rounded bg-blue/10 text-blue/70 font-semibold">Current</span>
+            )}
+            <span className="text-[9px] text-muted-foreground/70">
+              {source.latestVersion ? `v${source.latestVersion}` : "this source"}
+              {currentVersion ? ` — older than your v${currentVersion}` : " — older than yours"}, nothing to pull
+            </span>
           </div>
         </div>
       );
@@ -508,32 +529,46 @@ export function UpgradeWizard({
     );
   }
 
-  function StepRow({ label, status, first }: { label: string; status: string; first?: boolean }) {
-    const isDone = status === "ok" || status === "skip";
-    const isRunning = status === "start";
-    const isError = status === "fail";
-    const isPending = status === "pending";
+  // One consistent status language for every step row (both the merge-result
+  // group and the upgrade.sh steps). The raw status is normalized first so
+  // upgrade.sh's "done"/"warn"/"error" AND the merge rows' "ok"/"start" all map
+  // correctly: green check = done, yellow check = done-with-warning, muted dash
+  // = skipped (NOT green), pulsing blue dot = running, red × = failed, hollow
+  // grey ring = pending. Done text is muted (readable); only skipped is struck.
+  function StepStatusIcon({ status }: { status: string }) {
+    const s = normalizeStepStatus(status);
     return (
-      <div className={cn("flex items-center gap-3 py-1.5", !first && "border-t border-border/50")}>
-        <span className={cn(
-          "w-2 h-2 rounded-full shrink-0",
-          isDone ? "bg-green"
-            : isRunning ? "bg-blue animate-pulse"
-            : isError ? "bg-red"
-            : "bg-muted",
-        )} />
+      <span className="w-3.5 inline-flex items-center justify-center shrink-0 text-[11px] leading-none">
+        {s === "done" && <span className="text-green font-semibold" aria-label="done">✓</span>}
+        {s === "warn" && <span className="text-yellow font-semibold" aria-label="done with warning">✓</span>}
+        {s === "skip" && <span className="text-muted-foreground/50 font-semibold" aria-label="skipped">–</span>}
+        {s === "running" && <span className="w-2 h-2 rounded-full bg-blue animate-pulse" aria-label="running" />}
+        {s === "error" && <span className="text-red font-semibold" aria-label="failed">✕</span>}
+        {s === "pending" && <span className="w-2 h-2 rounded-full border border-muted-foreground/40" aria-label="pending" />}
+      </span>
+    );
+  }
+
+  function StepRow({ label, status, first }: { label: string; status: string; first?: boolean }) {
+    const s = normalizeStepStatus(status);
+    return (
+      <div className={cn("flex items-center gap-2.5 py-1.5", !first && "border-t border-border/50")}>
+        <StepStatusIcon status={status} />
         <span className={cn(
           "text-[12px]",
-          isDone ? "text-muted-foreground line-through decoration-muted-foreground/40"
-            : isRunning ? "text-foreground font-medium"
-            : isPending ? "text-muted-foreground/50"
-            : "text-foreground",
+          s === "done" ? "text-muted-foreground"
+            : s === "skip" ? "text-muted-foreground line-through decoration-muted-foreground/40"
+            : s === "running" ? "text-foreground font-medium"
+            : s === "warn" ? "text-foreground"
+            : s === "error" ? "text-red font-medium"
+            : "text-muted-foreground/50",
         )}>
           {label}
         </span>
-        {isRunning && <span className="text-[10px] text-blue ml-auto">running…</span>}
-        {isError && <span className="text-[10px] text-red ml-auto">failed</span>}
-        {status === "skip" && <span className="text-[10px] text-muted-foreground/60 ml-auto">skipped</span>}
+        {s === "running" && <span className="text-[10px] text-blue ml-auto">running…</span>}
+        {s === "warn" && <span className="text-[10px] text-yellow ml-auto">done · warning</span>}
+        {s === "error" && <span className="text-[10px] text-red ml-auto">failed</span>}
+        {s === "skip" && <span className="text-[10px] text-muted-foreground/60 ml-auto">skipped</span>}
       </div>
     );
   }
@@ -578,7 +613,7 @@ export function UpgradeWizard({
 
       {/* History panel (replaces step body when toggled) */}
       {showHistory && (
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto" data-testid="upgrade-history-panel">
           <div className="max-w-2xl mx-auto w-full px-5 py-6">
             <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-4">
               Upgrade History
@@ -772,16 +807,28 @@ export function UpgradeWizard({
                   available. Up-to-date installs see a clear "nothing to review"
                   state instead of a dangling Preview button. */}
               {!forkLoading && forkStatus && (() => {
-                const hasRealUpgrade = forkStatus.sources.some(
-                  (s) => s.mergeType === "fast-forward" || s.mergeType === "three-way",
-                );
+                const hasRealUpgrade = forkStatus.sources.some((s) => s.isUpgrade);
                 if (!hasRealUpgrade) {
                   return (
-                    <div
-                      data-testid="upgrade-no-upgrades"
-                      className="flex items-center gap-2 justify-center text-[12px] text-green/80 bg-green/5 border border-green/15 rounded-lg px-3 py-3"
-                    >
-                      <span>✓</span> You're up to date — nothing to review.
+                    <div data-testid="upgrade-no-upgrades" className="flex flex-col gap-3">
+                      <div className="flex items-center gap-2 justify-center text-[12px] text-green/80 bg-green/5 border border-green/15 rounded-lg px-3 py-3">
+                        <span>✓</span> You're up to date — nothing to review.
+                      </div>
+                      {/* Running changelog — what changed in recent upgrades, so this
+                          state is informative rather than a dead-end. */}
+                      {recentCommits.length > 0 && (
+                        <div data-testid="upgrade-recent-changelog" className="rounded-lg border border-border bg-surface1 p-3">
+                          <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">What changed recently</div>
+                          <div className="space-y-1">
+                            {recentCommits.slice(0, 6).map((c) => (
+                              <div key={c.hash} className="flex items-start gap-2 text-[11px]">
+                                <span className="font-mono text-muted-foreground shrink-0">{c.hash.slice(0, 7)}</span>
+                                <span className="text-foreground leading-relaxed">{c.subject}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 }
@@ -881,9 +928,14 @@ export function UpgradeWizard({
                   </div>
                   {preview.fileDiff ? (
                     <div className="text-[11px] overflow-auto max-h-[420px]">
+                      {/* Read-only comparison — the upgrade preview is informational,
+                          it must NOT carry the accept/reject acceptance UX (fancy-diff
+                          0.2.0 `variant="compare"`, owner directive 2026-06-12). */}
                       <FancyDiff
                         source={{ unified: preview.fileDiff }}
+                        variant="compare"
                         mode="inline"
+                        theme={isDarkTheme ? "dark" : "light"}
                       />
                     </div>
                   ) : (
@@ -1004,24 +1056,16 @@ export function UpgradeWizard({
 
           {step === 3 && (
             <div data-testid="upgrade-wizard-step-3" className="flex flex-col gap-4">
-              {/* Merge + push result */}
+              {/* Merge + push result — same StepRow language as the steps below. */}
               {mergeResult && (
-                <div className="rounded-lg border border-border bg-card divide-y divide-border">
-                  <div className="flex items-center gap-2 px-3 py-2 text-[11px]">
-                    <span className="text-green font-semibold">✓</span>
-                    <span className="text-foreground">
-                      Merged {mergeResult.commits} commit{mergeResult.commits !== 1 ? "s" : ""}
-                      {mergeResult.fastForward ? " (fast-forward)" : " (3-way merge)"}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2 px-3 py-2 text-[11px]">
-                    <span className="text-green font-semibold">✓</span>
-                    <span className="text-foreground">Pushed to origin — fork updated</span>
-                  </div>
-                  <div className="flex items-center gap-2 px-3 py-2 text-[11px]">
-                    <span className="text-blue animate-pulse font-semibold">●</span>
-                    <span className="text-foreground font-medium">Running upgrade.sh</span>
-                  </div>
+                <div className="rounded-lg border border-border bg-card px-3 py-1.5">
+                  <StepRow
+                    first
+                    status="ok"
+                    label={`Merged ${mergeResult.commits} commit${mergeResult.commits !== 1 ? "s" : ""}${mergeResult.fastForward ? " (fast-forward)" : " (3-way merge)"}`}
+                  />
+                  <StepRow status="ok" label="Pushed to origin — fork updated" />
+                  <StepRow status={upgradeComplete ? "ok" : "start"} label="Running upgrade.sh" />
                 </div>
               )}
 

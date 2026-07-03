@@ -28,6 +28,7 @@ import type { GatewayStateMachine } from "./state-machine.js";
 import type { AgentSessionManager } from "./agent-session.js";
 import type { ToolRegistry, ToolExecutionResult } from "./tool-registry.js";
 import type { RateLimiter } from "./rate-limiter.js";
+import { splitThinking, ensureVisibleReply } from "./thinking-text.js";
 
 import {
   assembleSystemPromptWithBreakdown,
@@ -38,6 +39,7 @@ import type { SystemPromptContext, EntityContextSection, RequestType, SystemProm
 import { gateInvocation, isHumanCommand } from "./invocation-gate.js";
 import { sanitize } from "./sanitizer.js";
 import { helpModeFiltersTool, isHelpModeContext } from "./help-mode-config.js";
+import { resolveScopeStack, memoryCategoryForScope } from "./memory-scope.js";
 
 import type { LLMProvider, LLMToolCall, LLMToolResult, LLMMessage, LLMContentBlock } from "./llm/index.js";
 import type { UserContextStore } from "./user-context-store.js";
@@ -290,7 +292,7 @@ export interface InvocationRequest {
 }
 
 export type InvocationOutcome =
-  | { type: "response"; text: string; toolsUsed: string[]; coaFingerprint: string; taskmasterEmissions: string[]; model: string; provider: string; usage: { inputTokens: number; outputTokens: number }; toolCount: number; loopCount: number; routingMeta?: { costMode: string; complexity: string; selectedModel: string; selectedProvider: string; escalated: boolean; reason: string; requestType?: string; classifierUsed?: "heuristic" | "aion-micro"; contextLayers?: string[]; tokenBreakdown?: SystemPromptTokenBreakdown } }
+  | { type: "response"; text: string; thinking?: string; toolsUsed: string[]; coaFingerprint: string; taskmasterEmissions: string[]; model: string; provider: string; usage: { inputTokens: number; outputTokens: number }; toolCount: number; loopCount: number; routingMeta?: { costMode: string; complexity: string; selectedModel: string; selectedProvider: string; escalated: boolean; reason: string; requestType?: string; classifierUsed?: "heuristic" | "aion-micro"; contextLayers?: string[]; tokenBreakdown?: SystemPromptTokenBreakdown } }
   | { type: "queued"; reason: string; entityNotification: string }
   | { type: "human_routed"; content: string }
   | { type: "log_only" }
@@ -486,7 +488,7 @@ export class AgentInvoker extends EventEmitter {
       channel,
     };
 
-    // Inject recalled memories — s112 Phase 5: project-scoped + relationships + doc chunks
+    // Inject recalled memories — s234: locality scope-stack cascade (was s112 2-tier).
     let memories: Array<{ content: string; category: string }> | undefined;
     const projectPath = request.projectContext ?? null;
     const queryText = typeof content === "string" ? content.slice(0, 300) : "";
@@ -495,43 +497,46 @@ export class AgentInvoker extends EventEmitter {
       try {
         const graph = this.deps.graphAdapter;
 
-        // Global episodic events (entity-wide)
-        const globalEvents = await graph.queryGraphEvents({
-          entityId: entity.id,
-          projectPath: null,
-          semantic: queryText,
-          limit: 4,
+        // Resolve the request's scope-stack (most-specific → broadest). A memory is
+        // recallable iff its scope is in this stack: broader layers cascade DOWN,
+        // narrower layers stay CONFINED (a room memory never surfaces outside its room).
+        const scopeStack = resolveScopeStack({
+          channelId: request.channelContext?.channelId,
+          roomId: request.channelContext?.roomId,
+          projectPath,
         });
 
-        // Project-scoped episodic events
-        const projectEvents = projectPath
-          ? await graph.queryGraphEvents({ entityId: entity.id, projectPath, semantic: queryText, limit: 4 })
-          : [];
+        // Episodic events across the stack (relevance-ordered; budget-capped).
+        const stackEvents = await graph.queryGraphEvents({
+          entityId: entity.id,
+          scopes: scopeStack,
+          semantic: queryText,
+          limit: 8,
+        });
 
-        // Established relationship facts
+        // Established relationship facts within the stack.
         const relationships = await graph.queryRelationships({
           subjectEntityId: entity.id,
-          projectPath,
+          scopes: scopeStack,
           validAt: new Date(),
           limit: 3,
         });
 
-        // Doc chunks from k/ and agi/docs/
+        // Doc chunks from k/ and agi/docs/ — same scope-stack (prime/gestalt/project docs).
         const docChunks = this.deps.docIndexer
           ? await this.deps.docIndexer.query({
               query: queryText || "memory context",
-              scope: projectPath ? `project:${projectPath}` : "global",
+              scopes: scopeStack,
               limit: 2,
             }).catch(() => [])
           : [];
 
         const parts: Array<{ content: string; category: string }> = [];
 
-        for (const e of globalEvents) {
-          parts.push({ category: "memory", content: e.summary });
-        }
-        for (const e of projectEvents) {
-          parts.push({ category: "project-memory", content: e.summary });
+        for (const e of stackEvents) {
+          // Label by locality (room/channel/project/machine-wide) so the prompt
+          // renders the right heading and the agent can tell scopes apart.
+          parts.push({ category: memoryCategoryForScope(e.scope), content: e.summary });
         }
         for (const r of relationships) {
           const since = new Date(r.validFrom).toISOString().slice(0, 10);
@@ -1282,11 +1287,33 @@ export class AgentInvoker extends EventEmitter {
 
       const emissions =
         this.deps.toolRegistry.extractTaskmasterEmissions(finalText);
-      const { text: cleanedText, strippedCount } =
+      const { text: taskmasterCleaned, strippedCount } =
         this.deps.toolRegistry.stripTaskmasterEmissions(
           finalText,
           entity.verificationTier,
         );
+
+      // Separate any inline <thinking>/<think> reasoning the model emitted in
+      // its text (distinct from provider reasoning_content, already mapped to
+      // thinkingBlocks). Without this the raw reasoning block leaks into channel
+      // replies (the Discord bug). visibleText is what users see; the reasoning
+      // rides along on the outcome so channels can surface it separately.
+      const { visibleText: cleanedText, thinking: inlineThinking } =
+        splitThinking(taskmasterCleaned);
+
+      // A turn that reduced to empty visible text (all-reasoning output, or an
+      // unclosed <thinking> that swallowed the body) must NEVER become a silent
+      // no-send — that was the Discord "Aion went quiet" bug. Guarantee a visible
+      // reply and log the event so out-of-app drops are observable (never silent).
+      const { text: outboundText, usedFallback: usedEmptyReplyFallback } =
+        ensureVisibleReply(cleanedText);
+      if (usedEmptyReplyFallback) {
+        this.log.warn(
+          `empty visible reply for entity ${entity.id} (coa ${outboundFingerprint}) — ` +
+            `model produced no user-facing text (inlineThinking=${String(inlineThinking.length)} chars, ` +
+            `raw=${String(taskmasterCleaned.length)} chars); sent fallback instead of dropping silently`,
+        );
+      }
 
       if (strippedCount > 0) {
         this.emit("taskmaster_emissions", {
@@ -1326,6 +1353,8 @@ export class AgentInvoker extends EventEmitter {
           coaFingerprint: outboundFingerprint,
           sessionKey: sKey,
           projectPath: request.projectContext ?? null,
+          channelId: request.channelContext?.channelId,
+          roomId: request.channelContext?.roomId,
         });
       }
 
@@ -1346,7 +1375,8 @@ export class AgentInvoker extends EventEmitter {
 
       return {
         type: "response",
-        text: cleanedText,
+        text: outboundText,
+        ...(inlineThinking.length > 0 ? { thinking: inlineThinking } : {}),
         toolsUsed,
         coaFingerprint: outboundFingerprint,
         taskmasterEmissions: emissions.map((e) => e.description),

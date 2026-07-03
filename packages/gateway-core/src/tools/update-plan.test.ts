@@ -30,7 +30,7 @@ describe("update_plan handler", () => {
   let planId: string;
 
   beforeEach(() => {
-    // PlanStore now writes to <projectPath>/k/plans/ — project dir must exist.
+    // PlanStore now writes to <projectPath>/.ai/plans/ — project dir must exist.
     tmpProjectDir = mkdtempSync(join(tmpdir(), "update-plan-proj-"));
 
     // Seed a draft plan to operate on.

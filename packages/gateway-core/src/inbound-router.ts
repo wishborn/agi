@@ -261,33 +261,9 @@ export class InboundRouter {
   // Owner notification
   // -------------------------------------------------------------------------
 
-  /**
-   * Notify the owner of a new pairing request on their preferred channel.
-   */
-  private notifyOwnerOfPairingRequest(
-    code: string,
-    displayName: string,
-    fromChannel: string,
-    fromUserId: string,
-  ): void {
-    if (this.ownerConfig === undefined || this.outboundSender === undefined) return;
-
-    // Find the owner's preferred channel (first one configured)
-    const channels = this.ownerConfig.channels;
-    for (const [ch, uid] of Object.entries(channels)) {
-      if (uid !== undefined) {
-        this.outboundSender(ch, uid, {
-          type: "text",
-          text: `New pairing request from ${displayName} (${fromChannel}:${fromUserId})\n\nCode: ${code}\n\nReply /approve ${code} or /reject ${code}`,
-        }).catch((err: unknown) => {
-          this.log.warn(
-            `Failed to notify owner on ${ch}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        });
-        return; // Only notify on one channel
-      }
-    }
-  }
+  // notifyOwnerOfPairingRequest removed 2026-06-08 — it only served the retired
+  // legacy pairing-code gate (Step 0b). Owner now approves channel contacts via
+  // the /identity/pending dashboard, not via in-channel pairing notifications.
 
   // ---------------------------------------------------------------------------
   // Pipeline
@@ -322,47 +298,24 @@ export class InboundRouter {
       // Fall through — owner's non-command messages go to agent
     }
 
-    // Step 0b — Pairing gate for non-owner users
-    // When dmPolicy is "pairing" and the sender is not the owner and not
-    // paired, generate a pairing code and notify the owner.
-    if (
-      this.ownerConfig !== undefined &&
-      this.pairingStore !== undefined &&
-      this.outboundSender !== undefined &&
-      this.ownerConfig.dmPolicy === "pairing" &&
-      !this.isOwner(channelId, message.channelUserId) &&
-      !this.pairingStore.isApproved(channelId, message.channelUserId) &&
-      !message.metadata?.["bypassPairingGate"]
-    ) {
-      const displayName = typeof message.metadata === "object" && message.metadata !== null
-        ? (message.metadata as Record<string, unknown>)["displayName"] as string | undefined
-          ?? (message.metadata as Record<string, unknown>)["firstName"] as string | undefined
-          ?? (message.metadata as Record<string, unknown>)["username"] as string | undefined
-        : undefined;
-
-      const request = this.pairingStore.createRequest(
-        channelId,
-        message.channelUserId,
-        displayName ?? "Unknown",
-      );
-
-      if (request !== null) {
-        // Send pairing message to the unknown user
-        try {
-          await this.outboundSender(channelId, message.channelUserId, {
-            type: "text",
-            text: `To talk to me, you need my owner's approval.\n\nYour pairing code: **${request.code}**\n\nAsk my owner to approve you, or wait for them to see this request.`,
-          });
-        } catch {
-          // Outbound may fail — ignore
-        }
-
-        // Notify the owner on their preferred channel
-        this.notifyOwnerOfPairingRequest(request.code, displayName ?? "Unknown", channelId, message.channelUserId);
-      }
-
-      return null; // Message NOT routed to agent
-    }
+    // Step 0b — Legacy pairing-code gate RETIRED 2026-06-08 (owner directive).
+    //
+    // This branch used to DM every unknown non-owner a 6-digit pairing code
+    // ("To talk to me, you need my owner's approval. Your pairing code: XXX")
+    // and DROP the message (return null) whenever dmPolicy was "pairing" (the
+    // default). Because it ran BEFORE the modern pending-approval capture
+    // (Step 2c), that flow could never see channel messages — the dashboard
+    // /identity/pending page sat empty while users got cryptic codes with no
+    // dashboard surface to approve them.
+    //
+    // Channel identity is now DASHBOARD-ONLY: unknown users are captured as
+    // pending approvals (Step 2c) and surfaced on /identity/pending for the
+    // owner to approve/reject — no code is ever sent. The s194 path (Step 2d)
+    // lets the agent reply without project scope until the owner approves.
+    //
+    // PairingStore + the owner-commands /approve //reject //list (handled in
+    // handleOwnerCommand) remain wired but are now vestigial — no new pairing
+    // requests are created. Removing them entirely is a follow-up.
 
     // Step 0c — STT transcription (optional, graceful degradation)
     let routedMessage = message;

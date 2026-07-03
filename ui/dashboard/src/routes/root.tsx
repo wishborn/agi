@@ -23,6 +23,7 @@ import { createInstanceManager } from "@/lib/magic-app-instances.js";
 import { fetchMagicApps } from "@/api.js";
 import type { MagicAppInfo, MagicAppInstance } from "@/types.js";
 import { DnsSetupBanner } from "@/components/DnsSetupBanner.js";
+import { OfflineBanner, InstallBanner } from "@particle-academy/fancy-pwa";
 import { SafemodeGuard } from "@/lib/safemode-guard.js";
 import { ActivityDot } from "@/components/ActivityDot.js";
 import { ActiveDownloads } from "@/components/ActiveDownloads.js";
@@ -281,7 +282,6 @@ export default function RootLayout() {
   // Auth gate state
   const [authChecked, setAuthChecked] = useState(false);
   const [authRequired, setAuthRequired] = useState(false);
-  const [authProvider, setAuthProvider] = useState<"local-id" | "internal">("internal");
   const [authenticated, setAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ displayName: string; role: string } | null>(null);
 
@@ -298,7 +298,6 @@ export default function RootLayout() {
           return;
         }
 
-        setAuthProvider(status.provider ?? "internal");
         setAuthRequired(true);
 
         if (token) {
@@ -628,7 +627,6 @@ export default function RootLayout() {
   if (authChecked && authRequired && !authenticated) {
     return (
       <LoginPage
-        provider={authProvider}
         onLogin={(token) => {
           // Fetch user info for the header display
           fetchCurrentUser(token)
@@ -878,6 +876,17 @@ export default function RootLayout() {
       {/* Content area — min-h-0 required so flex-1 is constrained to (100vh - header). */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
 
+        {/* PWA affordances (fancy-pwa): offline notice + install nudge inline;
+            update toast floats. Each renders null until relevant. */}
+        {/* Update prompting is handled by the silent version-aware auto-reload
+            in hooks.ts (reloads once when the gateway reports a new version).
+            We deliberately do NOT also render fancy-pwa's <UpdateToast> — having
+            both produced two competing "reload your page" popups. */}
+        <div className="max-w-[1200px] w-full mx-auto px-3 md:px-6 [&:empty]:hidden [&>*]:mt-4">
+          <OfflineBanner />
+          <InstallBanner title="Install Aionima as an app for quick access and offline use." />
+        </div>
+
         {/* DNS setup notice */}
         {hostingHook.status?.dnsmasq?.running && (
           <div className="max-w-[1200px] w-full mx-auto px-3 md:px-6 pt-4">
@@ -926,7 +935,13 @@ export default function RootLayout() {
               if (panelId === "workspace") {
                 return (
                   <AccordionPanel.Section key="workspace" id="workspace" unstyled className={sectionClass}>
-                    <AccordionPanel.Trigger>
+                    {/* `contents` dissolves react-fancy's Trigger wrapper div from
+                        layout so ShellPanelHeader's button/header acts as a direct
+                        flex child of the full-height (items-stretch) Section. Without
+                        it the wrapper is height:auto and the collapsed rail's `h-full`
+                        resolves to label-content height (ragged strips), not full
+                        shell height. See e2e/comms-collapsed-rail.spec.ts. */}
+                    <AccordionPanel.Trigger className="contents">
                       {(state) => <ShellPanelHeader label={label} state={state} {...headerProps} />}
                     </AccordionPanel.Trigger>
                     <AccordionPanel.Content unstyled className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
@@ -950,7 +965,13 @@ export default function RootLayout() {
               if (panelId === "chat") {
                 return (
                   <AccordionPanel.Section key="chat" id="chat" unstyled className={sectionClass}>
-                    <AccordionPanel.Trigger>
+                    {/* `contents` dissolves react-fancy's Trigger wrapper div from
+                        layout so ShellPanelHeader's button/header acts as a direct
+                        flex child of the full-height (items-stretch) Section. Without
+                        it the wrapper is height:auto and the collapsed rail's `h-full`
+                        resolves to label-content height (ragged strips), not full
+                        shell height. See e2e/comms-collapsed-rail.spec.ts. */}
+                    <AccordionPanel.Trigger className="contents">
                       {(state) => <ShellPanelHeader label={label} state={state} {...headerProps} />}
                     </AccordionPanel.Trigger>
                     <AccordionPanel.Content unstyled className="flex-1 min-h-0 min-w-0">
@@ -975,7 +996,13 @@ export default function RootLayout() {
               if (panelId === "canvas") {
                 return (
                   <AccordionPanel.Section key="canvas" id="canvas" unstyled className={sectionClass}>
-                    <AccordionPanel.Trigger>
+                    {/* `contents` dissolves react-fancy's Trigger wrapper div from
+                        layout so ShellPanelHeader's button/header acts as a direct
+                        flex child of the full-height (items-stretch) Section. Without
+                        it the wrapper is height:auto and the collapsed rail's `h-full`
+                        resolves to label-content height (ragged strips), not full
+                        shell height. See e2e/comms-collapsed-rail.spec.ts. */}
+                    <AccordionPanel.Trigger className="contents">
                       {(state) => <ShellPanelHeader label={label} state={state} {...headerProps} />}
                     </AccordionPanel.Trigger>
                     <AccordionPanel.Content unstyled className="flex-1 min-h-0 min-w-0">

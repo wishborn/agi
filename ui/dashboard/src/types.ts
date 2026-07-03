@@ -166,6 +166,13 @@ export interface ForkBranchInfo {
   mergeType: "up-to-date" | "fast-forward" | "three-way" | "behind";
   /** True if a merge-tree simulation detected conflict markers. Only set for three-way merges. */
   hasConflicts: boolean;
+  /**
+   * True only when this source is a REAL upgrade — its package.json version is
+   * strictly newer than the current one. Topology alone (commitsBehind > 0) is
+   * not enough: upstream/main trails a custodian's fork by merge bubbles, so it
+   * shows as three-way despite being an OLDER version. The wizard gates the
+   * Review action on this, never on mergeType. */
+  isUpgrade: boolean;
 }
 
 /** Response from GET /api/system/fork-status. */
@@ -790,6 +797,42 @@ export interface ContributeStatus {
   error?: string;
 }
 
+/** One open PR a contributor's personal fork has targeted at upstream/dev. */
+export interface IncomingPrInfo {
+  slug: string;
+  number: number;
+  title: string;
+  authorLogin: string;
+  /** Head repo full name — the contributor fork, possibly a fork-of-fork. */
+  headRepoFullName: string;
+  headRef: string;
+  headSha: string;
+  baseRef: string;
+  htmlUrl: string;
+  createdAt: string;
+  updatedAt: string;
+  isDraft: boolean;
+  /** True when the head repo is not the upstream itself (a real cross-fork PR). */
+  isCrossRepo: boolean;
+}
+
+/** Incoming PRs for one core repo. */
+export interface IncomingRepoStatus {
+  slug: string;
+  displayName: string;
+  upstream: string;
+  upstreamOrg: string;
+  prs: IncomingPrInfo[];
+  error?: string;
+}
+
+/** Response of GET /api/dev/incoming/status — inbound PR review queue. */
+export interface IncomingStatus {
+  ownerLogin: string | null;
+  repos: IncomingRepoStatus[];
+  error?: string;
+}
+
 /** Response of POST /api/dev/contribute/:slug/pr. */
 export interface CreatePrResult {
   ok: boolean;
@@ -809,11 +852,50 @@ export interface AgiRepoStatus {
   unregisteredRepos: string[];
 }
 
+/** A classified change in a `.agi` envelope's config/knowledge state (story #207). */
+export interface AgiConfigChange {
+  path: string;
+  kind: "config" | "knowledge" | "submodule";
+  change: "added" | "modified" | "deleted";
+}
+
+/** Config/knowledge STATE of a `.agi` envelope vs its upstream. Chats excluded. */
+export interface AgiConfigState {
+  initialized: boolean;
+  hasRemote: boolean;
+  remoteUrl: string | null;
+  ahead: number;
+  behind: number;
+  /** Incoming upstream changes to review. */
+  incoming: AgiConfigChange[];
+  /** Local uncommitted config/knowledge changes. */
+  localChanges: AgiConfigChange[];
+  submoduleDrift: string[];
+}
+
 export interface AgiRepoOpResult {
   ok: boolean;
   initialized?: boolean;
   registered?: string[];
   error?: string;
+}
+
+/** A paired companion device (gateway ↔ desktop/mobile). */
+export interface CompanionDevice {
+  id: string;
+  entityId: string;
+  deviceName: string;
+  platform: "ios" | "android" | "desktop";
+  pushToken: string | null;
+  lastSeenAt: string;
+  pairedAt: string;
+  status: "active" | "revoked";
+}
+
+/** Response of POST /api/companion/pair/code. */
+export interface PairCodeResult {
+  code: string;
+  expiresAt: string;
 }
 
 /** Response shape of POST /api/dev/core-forks/:slug/merge. */
@@ -858,6 +940,9 @@ export interface GitActionResult {
   stdout?: string;
   stderr?: string;
   error?: string;
+  /** Read-only git action on a dir with no top-level `.git` (e.g. a `.agi`
+   *  envelope). The dashboard renders an empty state instead of an error. */
+  notGitRepo?: boolean;
 }
 
 export interface GitFileEntry {
@@ -1318,7 +1403,26 @@ export interface AuthStatus {
   enabled: boolean;
   hasUsers: boolean;
   userCount: number;
-  provider?: "local-id" | "internal";
+}
+
+/** Live status of a canonical identity provider (GET /api/auth/providers, story #212). */
+export type IdentityProviderStatus =
+  | "connected"
+  | "available"
+  | "needs-config"
+  | "federation-gated";
+
+/** One canonical identity provider + its live status, for the System ▸ Identity grid. */
+export interface IdentityProviderView {
+  id: "github" | "google" | "meta" | "x" | "tynn" | "civicognita";
+  displayName: string;
+  authMode: "device" | "redirect" | "federation";
+  requiresOwnerApp: boolean;
+  gatedOn?: "federation";
+  brandHint: string;
+  blurb: string;
+  status: IdentityProviderStatus;
+  connectedLabel: string | null;
 }
 
 /** PRIME corpus source status from GET /api/prime/status. */
