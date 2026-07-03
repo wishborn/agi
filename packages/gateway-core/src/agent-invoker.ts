@@ -28,7 +28,7 @@ import type { GatewayStateMachine } from "./state-machine.js";
 import type { AgentSessionManager } from "./agent-session.js";
 import type { ToolRegistry, ToolExecutionResult } from "./tool-registry.js";
 import type { RateLimiter } from "./rate-limiter.js";
-import { splitThinking } from "./thinking-text.js";
+import { splitThinking, ensureVisibleReply } from "./thinking-text.js";
 
 import {
   assembleSystemPromptWithBreakdown,
@@ -1301,6 +1301,20 @@ export class AgentInvoker extends EventEmitter {
       const { visibleText: cleanedText, thinking: inlineThinking } =
         splitThinking(taskmasterCleaned);
 
+      // A turn that reduced to empty visible text (all-reasoning output, or an
+      // unclosed <thinking> that swallowed the body) must NEVER become a silent
+      // no-send — that was the Discord "Aion went quiet" bug. Guarantee a visible
+      // reply and log the event so out-of-app drops are observable (never silent).
+      const { text: outboundText, usedFallback: usedEmptyReplyFallback } =
+        ensureVisibleReply(cleanedText);
+      if (usedEmptyReplyFallback) {
+        this.log.warn(
+          `empty visible reply for entity ${entity.id} (coa ${outboundFingerprint}) — ` +
+            `model produced no user-facing text (inlineThinking=${String(inlineThinking.length)} chars, ` +
+            `raw=${String(taskmasterCleaned.length)} chars); sent fallback instead of dropping silently`,
+        );
+      }
+
       if (strippedCount > 0) {
         this.emit("taskmaster_emissions", {
           entityId: entity.id,
@@ -1361,7 +1375,7 @@ export class AgentInvoker extends EventEmitter {
 
       return {
         type: "response",
-        text: cleanedText,
+        text: outboundText,
         ...(inlineThinking.length > 0 ? { thinking: inlineThinking } : {}),
         toolsUsed,
         coaFingerprint: outboundFingerprint,

@@ -1573,6 +1573,15 @@ export async function startGatewayServer(
             } else {
               queueLog.warn("no channelUserId — cannot send response");
             }
+          } else if (outcome.type === "response" && !outcome.text) {
+            // Defensive: a "response" with empty text must never fall through
+            // silently (the Discord "Aion went quiet" bug — replies vanished with
+            // zero trace). agent-invoker now guarantees non-empty text, so this is
+            // a backstop that stays LOUD for out-of-app visibility.
+            queueLog.error(
+              `empty-text response for entity ${entityId} (coa ${outcome.coaFingerprint ?? "?"}) — ` +
+                `dropped instead of sent; investigate (this should not happen post-fix)`,
+            );
           } else if (outcome.type === "rate_limited") {
             queueLog.info(`rate limited: ${outcome.entityNotification}`);
           } else if (outcome.type === "error") {
