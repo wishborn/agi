@@ -444,7 +444,13 @@ const OwnerConfigSchema = z
   .object({
     /** Owner display name. */
     displayName: z.string().default("Owner"),
-    /** Channel-specific user IDs that identify the owner. */
+    /**
+     * @deprecated (s234 P3) Owner identity is now a DURABLE marker set via the
+     * dashboard "claim owner" flow, NOT this config. These channel IDs are read
+     * ONCE on first boot after the upgrade to seed the durable owner marker
+     * (non-disruptive migration for existing installs), then ignored. Fresh
+     * installs leave this empty and claim ownership in the dashboard.
+     */
     channels: OwnerChannelsSchema.default({}),
     /**
      * DM policy for non-owner users.

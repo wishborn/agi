@@ -18,6 +18,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
+import { randomBytes } from "node:crypto";
 import { ulid } from "ulid";
 import { dispatchJobsDir } from "./dispatch-paths.js";
 import { resolveMarketplaceSource } from "./dev-mode-sources.js";
@@ -59,7 +60,6 @@ import { registerWorkflowsRoutes } from "./workflows-api.js";
 import { registerAdminRoutes } from "./admin-api.js";
 import { ScanProviderRegistry, ScanStore, ScanRunner, sastScanner, scaScanner, secretsScanner, configScanner } from "@agi/security";
 import { COAChainLogger } from "@agi/coa-chain";
-import { PairingStore } from "./pairing-store.js";
 import type { AionimaMessage } from "@agi/plugins";
 import { createLogger, createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger, LogEntry } from "./logger.js";
@@ -289,52 +289,51 @@ async function resolveOwnerEntity(
   entityStore: EntityStore,
   log: ComponentLogger,
 ): Promise<string | undefined> {
-  if (ownerConfig === undefined) return undefined;
+  // s234 P3 — owner identity now comes from a DURABLE marker (set by the
+  // dashboard claim flow), NOT the hand-edited owner.channels config.
 
-  const ownerChannels = ownerConfig.channels;
-  const hasChannels = Object.values(ownerChannels).some((v) => v !== undefined);
-
-  if (!hasChannels) {
-    log.warn("owner.channels is empty — owner recognition disabled");
-    return undefined;
-  }
-
-  const channelEntries = Object.entries(ownerChannels).filter(
-    (entry): entry is [string, string] => entry[1] !== undefined,
-  );
-
-  let ownerEntity: Entity | undefined;
-
-  for (const [channel, channelUserId] of channelEntries) {
-    const existing = await entityStore.getEntityByChannel(channel, channelUserId);
-    if (existing !== null) {
-      ownerEntity = existing;
-      break;
+  // 1) Durable marker wins.
+  const marked = await entityStore.getOwnerEntityId();
+  if (marked !== undefined) {
+    const e = await entityStore.getEntity(marked);
+    if (e !== null) {
+      if (e.verificationTier !== "sealed") await entityStore.updateEntity(e.id, { verificationTier: "sealed" });
+      log.info(`owner entity (durable marker): ${e.coaAlias} (${e.displayName}) — sealed`);
+      return e.id;
     }
+    log.warn(`owner marker points at missing entity ${marked} — falling through`);
   }
 
-  if (ownerEntity === undefined) {
-    const [firstChannel, firstUserId] = channelEntries[0]!;
-    ownerEntity = await entityStore.resolveOrCreate(firstChannel, firstUserId, ownerConfig.displayName);
+  // 2) One-time migration: no marker yet, but legacy owner.channels is still
+  //    configured → resolve the owner from config ONCE, persist the durable
+  //    marker, then the config is dead. Keeps THIS install's owner intact.
+  const channelEntries = ownerConfig !== undefined
+    ? Object.entries(ownerConfig.channels).filter((entry): entry is [string, string] => entry[1] !== undefined)
+    : [];
+  if (channelEntries.length > 0 && ownerConfig !== undefined) {
+    let ownerEntity: Entity | undefined;
+    for (const [channel, channelUserId] of channelEntries) {
+      const existing = await entityStore.getEntityByChannel(channel, channelUserId);
+      if (existing !== null) { ownerEntity = existing; break; }
+    }
+    if (ownerEntity === undefined) {
+      const [firstChannel, firstUserId] = channelEntries[0]!;
+      ownerEntity = await entityStore.resolveOrCreate(firstChannel, firstUserId, ownerConfig.displayName);
+    }
+    for (const [channel, channelUserId] of channelEntries) {
+      await entityStore.upsertChannelAccount({ entityId: ownerEntity.id, channel, channelUserId });
+    }
+    if (ownerEntity.verificationTier !== "sealed") await entityStore.updateEntity(ownerEntity.id, { verificationTier: "sealed" });
+    if (ownerEntity.displayName === "Unknown") await entityStore.updateEntity(ownerEntity.id, { displayName: ownerConfig.displayName });
+    await entityStore.setOwnerEntityId(ownerEntity.id);
+    log.info(`owner migrated from owner.channels → durable marker: ${ownerEntity.coaAlias} (${ownerEntity.displayName})`);
+    return ownerEntity.id;
   }
 
-  for (const [channel, channelUserId] of channelEntries) {
-    await entityStore.upsertChannelAccount({
-      entityId: ownerEntity.id,
-      channel,
-      channelUserId,
-    });
-  }
-
-  if (ownerEntity.verificationTier !== "sealed") {
-    await entityStore.updateEntity(ownerEntity.id, { verificationTier: "sealed" });
-  }
-  if (ownerEntity.displayName === "Unknown") {
-    await entityStore.updateEntity(ownerEntity.id, { displayName: ownerConfig.displayName });
-  }
-
-  log.info(`owner entity resolved: ${ownerEntity.coaAlias} (${ownerEntity.displayName}) — sealed`);
-  return ownerEntity.id;
+  // 3) Fresh install, no owner: leave UNCLAIMED. The dashboard claim flow (gated
+  //    by the one-time console claim token) will designate the owner.
+  log.warn("no owner designated — claim owner from the dashboard using the one-time claim token printed at boot");
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -657,11 +656,24 @@ export async function startGatewayServer(
   const ownerConfig = config.owner;
   let ownerEntityId: string | undefined = await resolveOwnerEntity(ownerConfig, entityStore, log);
 
-  // Pairing store — manages DM access grants for non-owner users
-  const pairingStore = new PairingStore({
-    persistPath: "./data/paired.json",
-    logger,
-  });
+  // s234 P3 — fresh install with no owner designated: mint a ONE-TIME claim
+  // token and print it prominently. The first LAN dashboard admin claims
+  // ownership by entering it (POST /api/owner/claim). Persisted so it survives
+  // restarts until claimed; cleared on claim.
+  if (ownerEntityId === undefined) {
+    let claimToken = await entityStore.getOwnerClaimToken();
+    if (claimToken === undefined) {
+      claimToken = randomBytes(24).toString("base64url");
+      await entityStore.setOwnerClaimToken(claimToken);
+    }
+    log.warn(
+      `\n╔══════════════════ OWNER CLAIM REQUIRED ══════════════════╗\n` +
+      `  No owner is set for this install. Open the dashboard on the\n` +
+      `  local network and claim ownership with this one-time token:\n\n` +
+      `      ${claimToken}\n\n` +
+      `╚══════════════════════════════════════════════════════════╝`,
+    );
+  }
 
   // -------------------------------------------------------------------------
   // Step 5a: Core routing services
@@ -778,20 +790,11 @@ export async function startGatewayServer(
     voicePipeline,
     getGatewayState: () => stateMachine.getState(),
     ownerConfig,
-    pairingStore,
     ownerEntityId,
     commsLog,
     channelEventDispatcher: inboundChannelEventDispatcher,
     pendingApprovalStore: inboundPendingApprovalStore,
     logger,
-    outboundSender: async (channelId, channelUserId, content) => {
-      await outboundDispatcher.dispatch({
-        channelId,
-        channelUserId,
-        entityId: ownerEntityId ?? "system",
-        content,
-      });
-    },
   });
 
   // -------------------------------------------------------------------------
@@ -3438,6 +3441,9 @@ export async function startGatewayServer(
       resourceId,
       nodeId,
       ownerEntityId,
+      // s234 P3 — the claim-owner endpoint updates the running owner id live
+      // (the critical isOwner check reads this `let`), no restart needed.
+      onOwnerClaimed: (id: string) => { ownerEntityId = id; },
       wsRef,
       db,
       configPath: opts?.configPath,
