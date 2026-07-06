@@ -58,6 +58,11 @@ export interface ToolExecutionContext {
   /** Chat session id that spawned this tool call (if any). Used alongside
    *  sessionKey for UI-side event routing. */
   chatSessionId?: string;
+  /** The invocation's memory scope-stack (most-specific → broadest). Scope-aware
+   *  recall tools (search_memory) default their confinement to this so active
+   *  recall can't bleed one channel's memories into another. Absent for
+   *  headless/background tool calls. */
+  memoryScopes?: string[];
 }
 
 /** Worker emission extracted from response text. */
