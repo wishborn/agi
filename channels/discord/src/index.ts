@@ -460,7 +460,7 @@ export function createDiscordPlugin(
     /** Log every raw channel message to the ambient daily session (s189). */
     logMessage?: (channelId: string, entry: AmbientEntry) => void;
     /** Return recent messages from today's ambient log for context injection (s189). */
-    getContext?: (channelId: string, limit: number) => AmbientEntry[];
+    getContext?: (channelId: string, limit: number, roomId?: string) => AmbientEntry[];
     /** s194: Check whether a user is verified in the entity store. */
     isEntityVerified?: (channelId: string, userId: string) => Promise<boolean>;
     /** s194: Retrieve an in-progress DM registration session. */
@@ -667,7 +667,12 @@ export function createDiscordPlugin(
     // what the channel has been discussing (s189). Prepended to the message
     // text so it flows through the existing agent pipeline without changes.
     if (opts?.getContext && normalizedWithMeta.content.type === "text") {
-      const recent = opts.getContext(DISCORD_CHANNEL_ID, 30);
+      // Scope the injected preamble to THIS channel/room. The ambient log is
+      // provider-keyed (one daily file for all Discord channels), so without the
+      // roomId filter one channel's conversation bleeds into another's prompt
+      // (e.g. #Leadership topics surfacing in #water-cooler).
+      const myRoom = msg.guildId !== null ? `${msg.guildId}:${msg.channelId}` : `dm:${msg.author.id}`;
+      const recent = opts.getContext(DISCORD_CHANNEL_ID, 30, myRoom);
       if (recent.length > 0) {
         const preamble = `[Today's channel conversation]\n${formatAmbientPreamble(recent)}\n\n---\n`;
         normalizedWithMeta = {

@@ -65,8 +65,14 @@ export function createSearchMemoryHandler(config: SearchMemoryConfig): ToolHandl
       : typeof input.scope === "string" && input.scope.length > 0
         ? [input.scope]
         : undefined;
+    // The OWNER's in-app console is the unified "one mind" view: an unscoped
+    // search there spans ALL scopes (so the console can search Discord/channel
+    // memories). Everywhere else, an omitted scope stays confined to the request
+    // stack (no cross-channel bleed). Explicit scope always wins.
     const scopes = explicitScopes
-      ?? (ctx?.memoryScopes !== undefined && ctx.memoryScopes.length > 0 ? ctx.memoryScopes : undefined);
+      ?? (ctx?.ownerConsole === true
+        ? undefined
+        : (ctx?.memoryScopes !== undefined && ctx.memoryScopes.length > 0 ? ctx.memoryScopes : undefined));
 
     try {
       const events = await config.graphAdapter.queryGraphEvents({

@@ -62,7 +62,7 @@ export interface PluginLoaderDeps {
   /** Log a raw channel message to the ambient daily session file (s189). */
   logAmbientMessage?: (channelId: string, entry: import("./types.js").AmbientEntry) => void;
   /** Return recent messages from today's ambient log (s189). */
-  getAmbientContext?: (channelId: string, limit: number) => import("./types.js").AmbientEntry[];
+  getAmbientContext?: (channelId: string, limit: number, roomId?: string) => import("./types.js").AmbientEntry[];
   /** s194: Check whether a channel user is verified in the entity store. */
   isEntityVerified?: (channelId: string, userId: string) => Promise<boolean>;
   /** s194: Retrieve an in-progress DM registration session. */

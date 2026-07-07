@@ -969,7 +969,7 @@ export interface AionimaPluginAPI {
    * Used by channel plugins to inject wake-up context when Aion is mentioned.
    * Optional — only wired alongside logAmbientMessage (s189).
    */
-  getAmbientContext?: (channelId: string, limit: number) => AmbientEntry[];
+  getAmbientContext?: (channelId: string, limit: number, roomId?: string) => AmbientEntry[];
   /** s194: Check whether a channel user is verified in the entity store. */
   isEntityVerified?: (channelId: string, userId: string) => Promise<boolean>;
   /** s194: Retrieve an active registration session by sessionId. */

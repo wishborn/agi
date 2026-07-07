@@ -63,6 +63,11 @@ export interface ToolExecutionContext {
    *  recall can't bleed one channel's memories into another. Absent for
    *  headless/background tool calls. */
   memoryScopes?: string[];
+  /** True when this is the OWNER's in-app console (owner + no channel context).
+   *  search_memory then searches ALL scopes by default (the owner's unified "one
+   *  mind" view) — but inside a channel the owner stays channel-confined, and
+   *  non-owners are always confined. */
+  ownerConsole?: boolean;
 }
 
 /** Worker emission extracted from response text. */
