@@ -99,4 +99,22 @@ describe("search_memory confinement (s234)", () => {
     await handler({ query: "x" }); // no ctx
     expect(calls[0]!.scopes).toBeUndefined();
   });
+
+  it("owner in-app console (ownerConsole) searches ALL scopes — the unified 'one mind' view", async () => {
+    const { adapter, calls } = fakeAdapter([EV()]);
+    const handler = createSearchMemoryHandler({ graphAdapter: adapter });
+    // Owner console scope-stack is narrow (gestalt/prime, no channel), but the
+    // console must be able to search Discord/channel memories.
+    const ctxConsole = { ...ctxRoomB, ownerConsole: true, memoryScopes: ["gestalt", "prime"] } as typeof ctxRoomB;
+    await handler({ query: "WEDC" }, ctxConsole);
+    expect(calls[0]!.scopes).toBeUndefined(); // unconfined — all scopes
+  });
+
+  it("owner INSIDE a channel (ownerConsole false) stays channel-confined", async () => {
+    const { adapter, calls } = fakeAdapter([EV()]);
+    const handler = createSearchMemoryHandler({ graphAdapter: adapter });
+    // ctxRoomB has no ownerConsole flag → confined to its stack even for owner.
+    await handler({ query: "x" }, ctxRoomB);
+    expect(calls[0]!.scopes).toEqual(["room:discord:B", "provider:discord", "gestalt", "prime"]);
+  });
 });

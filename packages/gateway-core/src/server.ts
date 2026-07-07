@@ -1989,7 +1989,7 @@ export async function startGatewayServer(
         circuitBreaker: circuitBreakerTracker,
         createChannelUser,
         logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
-        getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+        getAmbientContext: (channelId, limit, roomId) => channelAmbientLog.getTodayContext(channelId, limit, roomId),
         isEntityVerified: async (channelId, userId) => {
           const entity = await entityStore.getEntityByChannel(channelId, userId);
           return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
@@ -2059,7 +2059,7 @@ export async function startGatewayServer(
                       circuitBreaker: circuitBreakerTracker,
                       createChannelUser,
                       logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
-                      getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+                      getAmbientContext: (channelId, limit, roomId) => channelAmbientLog.getTodayContext(channelId, limit, roomId),
                       isEntityVerified: async (channelId, userId) => {
                         const entity = await entityStore.getEntityByChannel(channelId, userId);
                         return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
@@ -3524,7 +3524,7 @@ export async function startGatewayServer(
             circuitBreaker: circuitBreakerTracker,
             createChannelUser,
             logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
-            getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+            getAmbientContext: (channelId, limit, roomId) => channelAmbientLog.getTodayContext(channelId, limit, roomId),
             isEntityVerified: async (channelId, userId) => {
               const entity = await entityStore.getEntityByChannel(channelId, userId);
               return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
@@ -3579,7 +3579,7 @@ export async function startGatewayServer(
             circuitBreaker: circuitBreakerTracker,
             createChannelUser,
             logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
-            getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+            getAmbientContext: (channelId, limit, roomId) => channelAmbientLog.getTodayContext(channelId, limit, roomId),
             isEntityVerified: async (channelId, userId) => {
               const entity = await entityStore.getEntityByChannel(channelId, userId);
               return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
@@ -3671,7 +3671,7 @@ export async function startGatewayServer(
             circuitBreaker: circuitBreakerTracker,
             createChannelUser,
             logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
-            getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+            getAmbientContext: (channelId, limit, roomId) => channelAmbientLog.getTodayContext(channelId, limit, roomId),
             isEntityVerified: async (channelId, userId) => {
               const entity = await entityStore.getEntityByChannel(channelId, userId);
               return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";

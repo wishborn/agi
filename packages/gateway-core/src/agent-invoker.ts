@@ -505,6 +505,11 @@ export class AgentInvoker extends EventEmitter {
       projectPath,
     });
 
+    // The OWNER's in-app console (owner + no channel context) is the unified
+    // "one mind" view: search_memory there may search ALL scopes. Inside a
+    // channel the owner stays channel-confined (no passive cross-channel bleed).
+    const ownerConsole = request.isOwner === true && request.channelContext === undefined;
+
     if (this.deps.graphAdapter !== undefined) {
       try {
         const graph = this.deps.graphAdapter;
@@ -997,6 +1002,7 @@ export class AgentInvoker extends EventEmitter {
             sKey,
             request.chatSessionId,
             requestMemoryScopes,
+            ownerConsole,
           );
           toolsUsed.push(toolCall.name);
 
@@ -1204,7 +1210,7 @@ export class AgentInvoker extends EventEmitter {
           for (let i = 0; i < result.toolCalls.length; i++) {
             const toolCall = result.toolCalls[i]!;
             this.emit("tool_start", { sessionKey: sKey, toolName: toolCall.name, toolIndex: i, loopIteration: loopCount, toolInput: sanitizeToolInput(toolCall.input ?? {}) });
-            const execResult = await this.executeToolSafe(toolCall, entity, coaFingerprint, state, sKey, request.chatSessionId, requestMemoryScopes);
+            const execResult = await this.executeToolSafe(toolCall, entity, coaFingerprint, state, sKey, request.chatSessionId, requestMemoryScopes, ownerConsole);
             toolsUsed.push(toolCall.name);
             // Merge result data into detail for tools that return structured output
             let acDetail = extractToolDetail(toolCall.name, toolCall.input ?? {});
@@ -1457,6 +1463,7 @@ export class AgentInvoker extends EventEmitter {
     sessionKey?: string,
     chatSessionId?: string,
     memoryScopes?: string[],
+    ownerConsole?: boolean,
   ): Promise<ToolExecutionResult> {
     try {
       return await this.deps.toolRegistry.execute(
@@ -1473,6 +1480,7 @@ export class AgentInvoker extends EventEmitter {
           sessionKey,
           chatSessionId,
           memoryScopes,
+          ownerConsole,
         },
       );
     } catch (err) {
