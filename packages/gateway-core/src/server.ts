@@ -675,6 +675,17 @@ export async function startGatewayServer(
     );
   }
 
+  // Pre-fetch the owner's per-channel user IDs so channel plugins can tag
+  // ambient log entries with isOwner at write time (s234 Fix-A authority model).
+  // Stored as Map<channelId, channelUserId>; updated when onOwnerClaimed fires.
+  const ownerChannelUserIds = new Map<string, string>();
+  if (ownerEntityId !== undefined) {
+    const accounts = await entityStore.getChannelAccounts(ownerEntityId).catch(() => []);
+    for (const acc of accounts) {
+      ownerChannelUserIds.set(acc.channel, acc.channelUserId);
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Step 5a: Core routing services
   // -------------------------------------------------------------------------
@@ -1990,6 +2001,7 @@ export async function startGatewayServer(
         createChannelUser,
         logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
         getAmbientContext: (channelId, limit, roomId) => channelAmbientLog.getTodayContext(channelId, limit, roomId),
+        getOwnerChannelUserId: (channelId) => ownerChannelUserIds.get(channelId),
         isEntityVerified: async (channelId, userId) => {
           const entity = await entityStore.getEntityByChannel(channelId, userId);
           return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
@@ -3443,7 +3455,14 @@ export async function startGatewayServer(
       ownerEntityId,
       // s234 P3 — the claim-owner endpoint updates the running owner id live
       // (the critical isOwner check reads this `let`), no restart needed.
-      onOwnerClaimed: (id: string) => { ownerEntityId = id; },
+      onOwnerClaimed: (id: string) => {
+        ownerEntityId = id;
+        entityStore.getChannelAccounts(id).then((accounts) => {
+          for (const acc of accounts) {
+            ownerChannelUserIds.set(acc.channel, acc.channelUserId);
+          }
+        }).catch(() => { /* non-critical */ });
+      },
       wsRef,
       db,
       configPath: opts?.configPath,

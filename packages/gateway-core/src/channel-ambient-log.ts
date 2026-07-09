@@ -18,6 +18,8 @@ export interface AmbientEntry {
   displayName: string;
   text: string;
   roomId: string;
+  /** True when this message was sent by the owner entity (resolved at log time). */
+  isOwner?: boolean;
 }
 
 export class ChannelAmbientLog {

@@ -443,12 +443,19 @@ async function startRegistration(
   );
 }
 
-/** Format a list of ambient log entries as a timestamped conversation preamble. */
+/**
+ * Format a list of ambient log entries as a timestamped conversation preamble.
+ * Entries carry an `isOwner` flag (set at log time) so the model can
+ * distinguish owner directives from participant messages. Format:
+ *   HH:MM [owner] Glenn: directive text
+ *   HH:MM [participant] Alice: their question
+ */
 function formatAmbientPreamble(entries: AmbientEntry[]): string {
   return entries
     .map((e) => {
       const time = new Date(e.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      return `${time} ${e.displayName}: ${e.text}`;
+      const role = e.isOwner === true ? "[owner]" : "[participant]";
+      return `${time} ${role} ${e.displayName}: ${e.text}`;
     })
     .join("\n");
 }
@@ -471,6 +478,12 @@ export function createDiscordPlugin(
     deleteRegistrationSession?: (sessionId: string) => void;
     /** s194: Capture a pending approval record from the registration flow. */
     capturePendingApproval?: (input: PendingApprovalCaptureInput) => void;
+    /**
+     * Return the owner entity's Discord authorId (channelUserId), if known.
+     * When provided, ambient log entries are tagged with `isOwner: true/false`
+     * so the model can distinguish owner directives from participant messages.
+     */
+    getOwnerChannelUserId?: (channelId: string) => string | undefined;
   },
 ): AionimaChannelPlugin & {
   __client: Client;
@@ -542,13 +555,17 @@ export function createDiscordPlugin(
 
     // Ambient log — record every message from configured channels regardless of
     // mode or mention so Aion can wake up with today's conversation context (s189).
+    // isOwner is tagged at write time so historical entries loaded from disk
+    // carry the flag and formatAmbientPreamble can label them correctly.
     if (opts?.logMessage) {
+      const ownerUserId = opts.getOwnerChannelUserId?.(DISCORD_CHANNEL_ID);
       opts.logMessage(DISCORD_CHANNEL_ID, {
         ts: new Date().toISOString(),
         authorId: msg.author.id,
         displayName: buildDisplayName(msg),
         text: msg.content,
         roomId: msg.guildId !== null ? `${msg.guildId}:${msg.channelId}` : `dm:${msg.author.id}`,
+        isOwner: ownerUserId !== undefined ? msg.author.id === ownerUserId : undefined,
       });
     }
 
@@ -944,6 +961,7 @@ export default {
     const setRegistrationSession = api.setRegistrationSession?.bind(api);
     const deleteRegistrationSession = api.deleteRegistrationSession?.bind(api);
     const capturePendingApproval = api.capturePendingApproval?.bind(api);
+    const getOwnerChannelUserId = api.getOwnerChannelUserId?.bind(api);
     const plugin = createDiscordPlugin(
       discordConfig,
       {
@@ -955,6 +973,7 @@ export default {
         ...(setRegistrationSession ? { setRegistrationSession } : {}),
         ...(deleteRegistrationSession ? { deleteRegistrationSession } : {}),
         ...(capturePendingApproval ? { capturePendingApproval } : {}),
+        ...(getOwnerChannelUserId ? { getOwnerChannelUserId } : {}),
       },
     );
     api.registerChannel(plugin);

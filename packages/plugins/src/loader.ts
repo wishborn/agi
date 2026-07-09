@@ -73,6 +73,8 @@ export interface PluginLoaderDeps {
   deleteRegistrationSession?: (sessionId: string) => void;
   /** s194: Capture a pending approval from the registration flow. */
   capturePendingApproval?: (input: import("./types.js").PendingApprovalCaptureInput) => void;
+  /** s234 Fix-A: Return the owner entity's channelUserId for tagging ambient log entries. */
+  getOwnerChannelUserId?: (channelId: string) => string | undefined;
 }
 
 export interface LoadResult {
@@ -400,5 +402,6 @@ function createPluginAPI(
     setRegistrationSession: deps.setRegistrationSession,
     deleteRegistrationSession: deps.deleteRegistrationSession,
     capturePendingApproval: deps.capturePendingApproval,
+    getOwnerChannelUserId: deps.getOwnerChannelUserId,
   };
 }
