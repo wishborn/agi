@@ -434,11 +434,11 @@ importers:
   packages/mapp-desktop:
     dependencies:
       '@particle-academy/fancy-screens':
-        specifier: ^0.3.0
-        version: 0.3.0(@particle-academy/react-fancy@3.2.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        specifier: ^0.4.2
+        version: 0.4.2(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@particle-academy/react-fancy':
-        specifier: ^3.2.1
-        version: 3.2.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
+        specifier: ^4.13.1
+        version: 4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
       '@tailwindcss/vite':
         specifier: ^4.3.2
         version: 4.3.2(vite@6.4.3(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.23.0)(yaml@2.9.0))
@@ -562,59 +562,59 @@ importers:
         specifier: workspace:*
         version: link:../../packages/trpc-api
       '@particle-academy/agent-integrations':
-        specifier: ^0.19.0
-        version: 0.19.0(cc31843ee535f30bc49da194c18743e5)
+        specifier: ^0.26.0
+        version: 0.26.0(4a5f9e8da89957c853df88aee927cc14)
       '@particle-academy/fancy-3d':
         specifier: ^0.4.2
-        version: 0.4.2(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        version: 0.4.2(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@particle-academy/fancy-3d-babylon':
         specifier: ^0.1.2
-        version: 0.1.2(@babylonjs/core@9.12.0)(@particle-academy/fancy-3d@0.4.2(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        version: 0.1.2(@babylonjs/core@9.12.0)(@particle-academy/fancy-3d@0.4.2(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@particle-academy/fancy-3d-three':
         specifier: ^0.1.1
-        version: 0.1.1(@particle-academy/fancy-3d@0.4.2(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(three@0.184.0)
+        version: 0.1.1(@particle-academy/fancy-3d@0.4.2(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(three@0.184.0)
       '@particle-academy/fancy-app-update':
         specifier: ^0.1.1
         version: 0.1.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@particle-academy/fancy-artboard':
         specifier: ^0.1.1
-        version: 0.1.1(@particle-academy/fancy-screens@0.4.1(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        version: 0.1.1(@particle-academy/fancy-screens@0.4.2(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@particle-academy/fancy-auto-common':
-        specifier: ^0.1.1
-        version: 0.1.1(react@19.2.7)
+        specifier: ^0.1.2
+        version: 0.1.2(react@19.2.7)
       '@particle-academy/fancy-code':
-        specifier: ^0.5.0
-        version: 0.5.0(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        specifier: ^0.8.0
+        version: 0.8.0(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@particle-academy/fancy-diff':
-        specifier: ^0.2.3
-        version: 0.2.3(@particle-academy/fancy-auto-common@0.1.1(react@19.2.7))(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        specifier: ^0.3.0
+        version: 0.3.0(@particle-academy/fancy-auto-common@0.1.2(react@19.2.7))(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@particle-academy/fancy-echarts':
         specifier: ^5.0.0
         version: 5.0.0(echarts-gl@2.1.0(echarts@6.1.0))(echarts@6.1.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@particle-academy/fancy-flow':
-        specifier: ^0.5.2
-        version: 0.5.2(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        specifier: ^0.5.3
+        version: 0.5.3(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@particle-academy/fancy-pwa':
-        specifier: ^0.1.5
-        version: 0.1.5(@particle-academy/fancy-app-update@0.1.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/fancy-auto-common@0.1.1(react@19.2.7))(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vite@6.4.3(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.23.0)(yaml@2.9.0))
+        specifier: ^0.1.7
+        version: 0.1.7(@particle-academy/fancy-app-update@0.1.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/fancy-auto-common@0.1.2(react@19.2.7))(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vite@6.4.3(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.23.0)(yaml@2.9.0))
       '@particle-academy/fancy-screens':
-        specifier: ^0.4.1
-        version: 0.4.1(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        specifier: ^0.4.2
+        version: 0.4.2(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@particle-academy/fancy-sheets':
         specifier: ^0.9.0
-        version: 0.9.0(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        version: 0.9.0(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@particle-academy/fancy-slides':
         specifier: ^0.15.2
-        version: 0.15.2(@particle-academy/fancy-code@0.5.0(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/fancy-echarts@5.0.0(echarts-gl@2.1.0(echarts@6.1.0))(echarts@6.1.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        version: 0.15.2(@particle-academy/fancy-code@0.8.0(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/fancy-echarts@5.0.0(echarts-gl@2.1.0(echarts@6.1.0))(echarts@6.1.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@particle-academy/fancy-term':
-        specifier: ^0.3.0
-        version: 0.3.0(@xterm/addon-fit@0.11.0)(@xterm/xterm@6.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        specifier: ^0.4.1
+        version: 0.4.1(@xterm/addon-fit@0.11.0)(@xterm/xterm@6.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@particle-academy/fancy-whiteboard':
         specifier: ^0.2.1
-        version: 0.2.1(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        version: 0.2.1(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@particle-academy/react-fancy':
-        specifier: ^4.7.1
-        version: 4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
+        specifier: ^4.13.1
+        version: 4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
       '@tailwindcss/vite':
         specifier: ^4.3.2
         version: 4.3.2(vite@6.4.3(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.23.0)(yaml@2.9.0))
@@ -2776,19 +2776,31 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@particle-academy/agent-integrations@0.19.0':
-    resolution: {integrity: sha512-5liIhbSyqMcb/kFmsa618xBXJ18dJktdiDEKvNtRqH0Dj1Sw0dGwY/r9NUd/p0JHMvWQZDUfEovPWK7iMtxFtw==}
+  '@particle-academy/agent-integrations@0.26.0':
+    resolution: {integrity: sha512-PsewtcrE417bnpc2Y2vhTFCeoO4phAsKB8curMogWRDX/CFGLWtci/fOY1CTrgUHj2CINexJ0sFhnNS/h9iIRw==}
     hasBin: true
     peerDependencies:
       '@particle-academy/fancy-artboard': '>=0.1.0'
+      '@particle-academy/fancy-catalog': '>=0.1.0'
+      '@particle-academy/fancy-cf-relay': '>=0.1'
+      '@particle-academy/fancy-echarts': '>=5.0.0'
+      '@particle-academy/fancy-features': '>=0.1.0'
       '@particle-academy/fancy-flow': '>=0.2.0'
-      '@particle-academy/fancy-sheets': '>=0.1.0'
-      '@particle-academy/fancy-slides': '>=0.1.4'
+      '@particle-academy/fancy-sheets': '>=0.9.0'
+      '@particle-academy/fancy-slides': '>=0.13.0'
       '@particle-academy/fancy-whiteboard': '>=0.1.0'
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
     peerDependenciesMeta:
       '@particle-academy/fancy-artboard':
+        optional: true
+      '@particle-academy/fancy-catalog':
+        optional: true
+      '@particle-academy/fancy-cf-relay':
+        optional: true
+      '@particle-academy/fancy-echarts':
+        optional: true
+      '@particle-academy/fancy-features':
         optional: true
       '@particle-academy/fancy-flow':
         optional: true
@@ -2851,23 +2863,23 @@ packages:
       '@particle-academy/fancy-screens':
         optional: true
 
-  '@particle-academy/fancy-auto-common@0.1.1':
-    resolution: {integrity: sha512-pBpPVKIlEeIZFZFdIc9tilpbsU4D6zCuht7Bdccf0LxqAFcPoGunzhjSdBcD6M+e4loJF1WzBM51tJ3aL5AcDQ==}
+  '@particle-academy/fancy-auto-common@0.1.2':
+    resolution: {integrity: sha512-FBYcnDfCntNHhVg+tKCaxN4PeaO60MC+/ssPKMdGFnhBo1Ai2dlJndYIkFR9sNlJVGCLXwdK5EnQHkro33l4Aw==}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
     peerDependenciesMeta:
       react:
         optional: true
 
-  '@particle-academy/fancy-code@0.5.0':
-    resolution: {integrity: sha512-LleAYm75JmWSL30qaK4Auzgk5+IKu6QEDGRWQUu1eL50d0sBefHPjsp8KWiLureREETyk1KByU9+IWbRJC9DbQ==}
+  '@particle-academy/fancy-code@0.8.0':
+    resolution: {integrity: sha512-nFryDdoJixQKfrIyjjvcpuOvdmwg4PALWU2WTztbEeyDtwhfLh6K/00Tk+vZOAIaUu3oyf6V55ZJTQdcmR9OaA==}
     peerDependencies:
-      '@particle-academy/react-fancy': '>=2'
+      '@particle-academy/react-fancy': '>=4.9.0'
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
 
-  '@particle-academy/fancy-diff@0.2.3':
-    resolution: {integrity: sha512-bFHToAAV4bHDbqBv0iN+bOTAeyrNjCmv2m61x9TFIkNQTlQ/9b6MOsItElyysg1nMcGbkUGd2o7qiB5YAnjVqA==}
+  '@particle-academy/fancy-diff@0.3.0':
+    resolution: {integrity: sha512-BH8KgrGMgNTNFN/tB8e5IVwiXemI9pEbpKjtbzqUzAjd9wYdIunN8BVTQaWDCFu5NrXKPSyIQrz0ZcGIQDJSVw==}
     peerDependencies:
       '@particle-academy/fancy-auto-common': '>=0.1.0'
       '@particle-academy/react-fancy': '>=2'
@@ -2888,14 +2900,17 @@ packages:
       echarts-gl:
         optional: true
 
-  '@particle-academy/fancy-flow@0.5.2':
-    resolution: {integrity: sha512-L+z6YbGfsHLl5ANbM+sCVQW05trmw0S7OOZr83oUcH6Xt5OieuTbM4fQ1XppbJ/gUjCJvDLEZEHl68gsWJz+cg==}
+  '@particle-academy/fancy-file-commons@0.1.1':
+    resolution: {integrity: sha512-KFeBBXmSGKxSkB5/9C/sR4gkVRUy9jDEHIAHYyK7catpsC/0K8qSSzFWebRruf0Id9DDmmzimlEtkr/0vf1mVA==}
+
+  '@particle-academy/fancy-flow@0.5.3':
+    resolution: {integrity: sha512-oSZsPGTPdyqLKpoqQaJ3guxGCg/pKOOEvMjE2d+B44Z+6hjvCZQqeZGxb0MnBzSIrC8T8K9rEp8MxOmUvoRtdw==}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
 
-  '@particle-academy/fancy-pwa@0.1.5':
-    resolution: {integrity: sha512-fB4C0sJ+znP5tiQocUEQWzRJURwBI1zeodwCDN9g+1TnUhPBSLGGHxFjp1drNw8jJ139fTd7zMuX6wv3cYg4gQ==}
+  '@particle-academy/fancy-pwa@0.1.7':
+    resolution: {integrity: sha512-zHKu4j3JdZKwZzSU4rU4vzhkgqt9H5JTJb/oFqVULGHQKbMdC6HMQo44Bs8ZpjwOaJZeKacJ0rMY2lHtC3pilQ==}
     peerDependencies:
       '@particle-academy/fancy-app-update': '>=0.1'
       '@particle-academy/fancy-auto-common': '>=0.1'
@@ -2911,23 +2926,13 @@ packages:
       vite:
         optional: true
 
-  '@particle-academy/fancy-screens@0.3.0':
-    resolution: {integrity: sha512-6E3IXZEVmCeiPRKH7k5pcIx4H7+7rWIO7iLuTk2jcERu3bYmDR2etj6nwjEMN3R7GoJkbfrNXKS7hTcMWWw7Aw==}
-    peerDependencies:
-      '@particle-academy/react-fancy': ^3.0.0
-      react: ^18.0.0 || ^19.0.0
-      react-dom: ^18.0.0 || ^19.0.0
-    peerDependenciesMeta:
-      '@particle-academy/react-fancy':
-        optional: true
-
-  '@particle-academy/fancy-screens@0.4.1':
-    resolution: {integrity: sha512-+z1s7yqJ8oAW/Dc7KBkPacLYh3Odd/C4B4+17ZBP77a6X+eusZuQsCet32gZj2o2MgMz4t0t5CxxNGdE9fvRDQ==}
+  '@particle-academy/fancy-screens@0.4.2':
+    resolution: {integrity: sha512-YDF/edkr3qtjOtLlrLQ4o7d/kzXXiDGz86mu1DDHttjTc5uPw/ZgmVlPxf1gyo2Lj/CZvmE4KnDkk1PZizXRhA==}
     peerDependencies:
       '@particle-academy/react-fancy': '>=3'
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
-      zustand: ^5.0.13
+      zustand: ^5.0.0
     peerDependenciesMeta:
       '@particle-academy/react-fancy':
         optional: true
@@ -2950,8 +2955,8 @@ packages:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
 
-  '@particle-academy/fancy-term@0.3.0':
-    resolution: {integrity: sha512-w/r0P6NrmUr3iFAHnN7cauUvJSlMXZpai9zJ4zOd97jlzpWAnXrIuzPnA241rplcKLxMmySrGDx1j2tTW0WtnA==}
+  '@particle-academy/fancy-term@0.4.1':
+    resolution: {integrity: sha512-mytyGnKtGKvyDQ/wm3WTy7cqAGwrs/OEWWukqwiXs4N+AlfFO6Jai7Db/zv42pWCw5eskSZE8DGoq36sDqifFw==}
     peerDependencies:
       '@xterm/addon-fit': '>=0.10.0'
       '@xterm/xterm': '>=5.0.0'
@@ -2965,15 +2970,8 @@ packages:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
 
-  '@particle-academy/react-fancy@3.2.1':
-    resolution: {integrity: sha512-NXMxlz13phds54HlJnl4ymVqwIHzclmS/TTvX/bknCw+dCshLM0xADxTG3OH1KEfObkmhhK5txJKfJGlPmhTmg==}
-    peerDependencies:
-      react: ^18.0.0 || ^19.0.0
-      react-dom: ^18.0.0 || ^19.0.0
-      tailwindcss: ^4.0.0
-
-  '@particle-academy/react-fancy@4.7.1':
-    resolution: {integrity: sha512-V64MdJV13U7+KQ60LwLCXePXwu9K1JhHRcTQFl0c3JLXTmsfPTepInm7H773uVn2wOh015A6UzxxqfQhCL6T7w==}
+  '@particle-academy/react-fancy@4.13.1':
+    resolution: {integrity: sha512-7oq+O+QdJe13KkqiiAodfc7iZm7pHxbTv+cpW9Q9ZsaG3HmYhV+RhPkzF5Jwg72MKMlu6puzdfjFubViIoEG6w==}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
@@ -10599,73 +10597,76 @@ snapshots:
   '@oxlint/win32-x64@0.16.12':
     optional: true
 
-  '@particle-academy/agent-integrations@0.19.0(cc31843ee535f30bc49da194c18743e5)':
+  '@particle-academy/agent-integrations@0.26.0(4a5f9e8da89957c853df88aee927cc14)':
     dependencies:
-      '@particle-academy/fancy-auto-common': 0.1.1(react@19.2.7)
+      '@particle-academy/fancy-auto-common': 0.1.2(react@19.2.7)
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
     optionalDependencies:
-      '@particle-academy/fancy-artboard': 0.1.1(@particle-academy/fancy-screens@0.4.1(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@particle-academy/fancy-flow': 0.5.2(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@particle-academy/fancy-sheets': 0.9.0(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@particle-academy/fancy-slides': 0.15.2(@particle-academy/fancy-code@0.5.0(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/fancy-echarts@5.0.0(echarts-gl@2.1.0(echarts@6.1.0))(echarts@6.1.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@particle-academy/fancy-whiteboard': 0.2.1(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@particle-academy/fancy-artboard': 0.1.1(@particle-academy/fancy-screens@0.4.2(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@particle-academy/fancy-echarts': 5.0.0(echarts-gl@2.1.0(echarts@6.1.0))(echarts@6.1.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@particle-academy/fancy-flow': 0.5.3(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@particle-academy/fancy-sheets': 0.9.0(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@particle-academy/fancy-slides': 0.15.2(@particle-academy/fancy-code@0.8.0(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/fancy-echarts@5.0.0(echarts-gl@2.1.0(echarts@6.1.0))(echarts@6.1.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@particle-academy/fancy-whiteboard': 0.2.1(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
 
-  '@particle-academy/fancy-3d-babylon@0.1.2(@babylonjs/core@9.12.0)(@particle-academy/fancy-3d@0.4.2(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@particle-academy/fancy-3d-babylon@0.1.2(@babylonjs/core@9.12.0)(@particle-academy/fancy-3d@0.4.2(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@babylonjs/core': 9.12.0
-      '@particle-academy/fancy-3d': 0.4.2(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@particle-academy/fancy-3d': 0.4.2(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
     optionalDependencies:
-      '@particle-academy/react-fancy': 4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
+      '@particle-academy/react-fancy': 4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
 
-  '@particle-academy/fancy-3d-three@0.1.1(@particle-academy/fancy-3d@0.4.2(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(three@0.184.0)':
+  '@particle-academy/fancy-3d-three@0.1.1(@particle-academy/fancy-3d@0.4.2(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(three@0.184.0)':
     dependencies:
-      '@particle-academy/fancy-3d': 0.4.2(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@particle-academy/fancy-3d': 0.4.2(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
       three: 0.184.0
     optionalDependencies:
-      '@particle-academy/react-fancy': 4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
+      '@particle-academy/react-fancy': 4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
 
-  '@particle-academy/fancy-3d@0.4.2(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@particle-academy/fancy-3d@0.4.2(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
     optionalDependencies:
-      '@particle-academy/react-fancy': 4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
+      '@particle-academy/react-fancy': 4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
 
   '@particle-academy/fancy-app-update@0.1.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
 
-  '@particle-academy/fancy-artboard@0.1.1(@particle-academy/fancy-screens@0.4.1(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@particle-academy/fancy-artboard@0.1.1(@particle-academy/fancy-screens@0.4.2(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
-      '@particle-academy/react-fancy': 4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
+      '@particle-academy/react-fancy': 4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
     optionalDependencies:
-      '@particle-academy/fancy-screens': 0.4.1(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@particle-academy/fancy-screens': 0.4.2(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
 
-  '@particle-academy/fancy-auto-common@0.1.1(react@19.2.7)':
+  '@particle-academy/fancy-auto-common@0.1.2(react@19.2.7)':
     optionalDependencies:
       react: 19.2.7
 
-  '@particle-academy/fancy-code@0.5.0(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@particle-academy/fancy-code@0.8.0(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
-      '@particle-academy/react-fancy': 4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
+      '@particle-academy/fancy-file-commons': 0.1.1
+      '@particle-academy/react-fancy': 4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
 
-  '@particle-academy/fancy-diff@0.2.3(@particle-academy/fancy-auto-common@0.1.1(react@19.2.7))(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@particle-academy/fancy-diff@0.3.0(@particle-academy/fancy-auto-common@0.1.2(react@19.2.7))(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
-      '@particle-academy/react-fancy': 4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
+      '@particle-academy/fancy-file-commons': 0.1.1
+      '@particle-academy/react-fancy': 4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
     optionalDependencies:
-      '@particle-academy/fancy-auto-common': 0.1.1(react@19.2.7)
+      '@particle-academy/fancy-auto-common': 0.1.2(react@19.2.7)
 
   '@particle-academy/fancy-echarts@5.0.0(echarts-gl@2.1.0(echarts@6.1.0))(echarts@6.1.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
@@ -10675,9 +10676,11 @@ snapshots:
     optionalDependencies:
       echarts-gl: 2.1.0(echarts@6.1.0)
 
-  '@particle-academy/fancy-flow@0.5.2(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@particle-academy/fancy-file-commons@0.1.1': {}
+
+  '@particle-academy/fancy-flow@0.5.3(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
-      '@particle-academy/fancy-auto-common': 0.1.1(react@19.2.7)
+      '@particle-academy/fancy-auto-common': 0.1.2(react@19.2.7)
       '@xyflow/react': 12.11.2(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       clsx: 2.1.1
       react: 19.2.7
@@ -10687,69 +10690,52 @@ snapshots:
       - '@types/react-dom'
       - immer
 
-  '@particle-academy/fancy-pwa@0.1.5(@particle-academy/fancy-app-update@0.1.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/fancy-auto-common@0.1.1(react@19.2.7))(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vite@6.4.3(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.23.0)(yaml@2.9.0))':
+  '@particle-academy/fancy-pwa@0.1.7(@particle-academy/fancy-app-update@0.1.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/fancy-auto-common@0.1.2(react@19.2.7))(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vite@6.4.3(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.23.0)(yaml@2.9.0))':
     dependencies:
       '@particle-academy/fancy-app-update': 0.1.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
     optionalDependencies:
-      '@particle-academy/fancy-auto-common': 0.1.1(react@19.2.7)
-      '@particle-academy/react-fancy': 4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
+      '@particle-academy/fancy-auto-common': 0.1.2(react@19.2.7)
+      '@particle-academy/react-fancy': 4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
       vite: 6.4.3(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.23.0)(yaml@2.9.0)
 
-  '@particle-academy/fancy-screens@0.3.0(@particle-academy/react-fancy@3.2.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@particle-academy/fancy-screens@0.4.2(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
     optionalDependencies:
-      '@particle-academy/react-fancy': 3.2.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
+      '@particle-academy/react-fancy': 4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
 
-  '@particle-academy/fancy-screens@0.4.1(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@particle-academy/fancy-sheets@0.9.0(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
-      react: 19.2.7
-      react-dom: 19.2.7(react@19.2.7)
-    optionalDependencies:
-      '@particle-academy/react-fancy': 4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
-
-  '@particle-academy/fancy-sheets@0.9.0(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
-    dependencies:
-      '@particle-academy/react-fancy': 4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
+      '@particle-academy/react-fancy': 4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
 
-  '@particle-academy/fancy-slides@0.15.2(@particle-academy/fancy-code@0.5.0(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/fancy-echarts@5.0.0(echarts-gl@2.1.0(echarts@6.1.0))(echarts@6.1.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@particle-academy/fancy-slides@0.15.2(@particle-academy/fancy-code@0.8.0(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/fancy-echarts@5.0.0(echarts-gl@2.1.0(echarts@6.1.0))(echarts@6.1.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
-      '@particle-academy/fancy-code': 0.5.0(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@particle-academy/fancy-code': 0.8.0(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@particle-academy/fancy-echarts': 5.0.0(echarts-gl@2.1.0(echarts@6.1.0))(echarts@6.1.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@particle-academy/react-fancy': 4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
+      '@particle-academy/react-fancy': 4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
 
-  '@particle-academy/fancy-term@0.3.0(@xterm/addon-fit@0.11.0)(@xterm/xterm@6.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@particle-academy/fancy-term@0.4.1(@xterm/addon-fit@0.11.0)(@xterm/xterm@6.0.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@xterm/addon-fit': 0.11.0
       '@xterm/xterm': 6.0.0
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
 
-  '@particle-academy/fancy-whiteboard@0.2.1(@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@particle-academy/fancy-whiteboard@0.2.1(@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
-      '@particle-academy/react-fancy': 4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
+      '@particle-academy/react-fancy': 4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
       clsx: 2.1.1
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
 
-  '@particle-academy/react-fancy@3.2.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)':
-    dependencies:
-      clsx: 2.1.1
-      lucide-react: 0.511.0(react@19.2.7)
-      marked: 15.0.12
-      react: 19.2.7
-      react-dom: 19.2.7(react@19.2.7)
-      tailwind-merge: 3.5.0
-      tailwindcss: 4.3.2
-
-  '@particle-academy/react-fancy@4.7.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)':
+  '@particle-academy/react-fancy@4.13.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)':
     dependencies:
       clsx: 2.1.1
       lucide-react: 0.511.0(react@19.2.7)
@@ -11511,13 +11497,13 @@ snapshots:
 
   '@types/better-sqlite3@7.6.13':
     dependencies:
-      '@types/node': 26.1.1
+      '@types/node': 22.19.11
     optional: true
 
   '@types/body-parser@1.19.6':
     dependencies:
       '@types/connect': 3.4.38
-      '@types/node': 26.1.1
+      '@types/node': 22.19.11
 
   '@types/cacheable-request@6.0.3':
     dependencies:
@@ -11533,7 +11519,7 @@ snapshots:
 
   '@types/connect@3.4.38':
     dependencies:
-      '@types/node': 26.1.1
+      '@types/node': 22.19.11
 
   '@types/d3-array@3.2.2': {}
 
@@ -11590,7 +11576,7 @@ snapshots:
 
   '@types/express-serve-static-core@5.1.2':
     dependencies:
-      '@types/node': 26.1.1
+      '@types/node': 22.19.11
       '@types/qs': 6.15.1
       '@types/range-parser': 1.2.7
       '@types/send': 1.2.1
@@ -11658,6 +11644,7 @@ snapshots:
   '@types/node@26.1.1':
     dependencies:
       undici-types: 8.3.0
+    optional: true
 
   '@types/pg@8.20.0':
     dependencies:
@@ -11685,12 +11672,12 @@ snapshots:
 
   '@types/send@1.2.1':
     dependencies:
-      '@types/node': 26.1.1
+      '@types/node': 22.19.11
 
   '@types/serve-static@2.2.0':
     dependencies:
       '@types/http-errors': 2.0.5
-      '@types/node': 26.1.1
+      '@types/node': 22.19.11
 
   '@types/stack-utils@2.0.3': {}
 
@@ -16371,7 +16358,8 @@ snapshots:
 
   undici-types@6.21.0: {}
 
-  undici-types@8.3.0: {}
+  undici-types@8.3.0:
+    optional: true
 
   undici@8.5.0: {}
 

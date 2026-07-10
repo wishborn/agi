@@ -9,8 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@particle-academy/fancy-screens": "^0.3.0",
-    "@particle-academy/react-fancy": "^3.2.1",
+    "@particle-academy/fancy-screens": "^0.4.2",
+    "@particle-academy/react-fancy": "^4.13.1",
     "@tailwindcss/vite": "^4.3.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
