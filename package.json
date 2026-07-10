@@ -1,6 +1,6 @@
 {
   "name": "agi",
-  "version": "0.4.999",
+  "version": "0.4.1000",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",
@@ -58,7 +58,7 @@
     "@agi/db-schema": "workspace:*",
     "@types/pg": "^8.20.0",
     "ansi-to-html": "^0.7.2",
-    "drizzle-kit": "^0.30.4",
+    "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.45.2",
     "node-pty": "^1.1.0",
     "pg": "^8.22.0",
