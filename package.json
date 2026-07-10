@@ -1,11 +1,11 @@
 {
   "name": "agi",
-  "version": "0.4.991",
+  "version": "0.4.1001",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "build": "pnpm --filter @agi/db-schema build && pnpm --filter @agi/dashboard build && tsdown",
@@ -58,21 +58,21 @@
     "@agi/db-schema": "workspace:*",
     "@types/pg": "^8.20.0",
     "ansi-to-html": "^0.7.2",
-    "drizzle-kit": "^0.30.4",
+    "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.45.2",
     "node-pty": "^1.1.0",
-    "pg": "^8.20.0",
-    "playwright": "^1.58.2"
+    "pg": "^8.22.0",
+    "playwright": "^1.61.1"
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.2",
+    "@playwright/test": "^1.61.1",
     "@types/node": "^22.0.0",
     "esbuild": "^0.25.0",
     "oxlint": "^0.16.0",
     "tsdown": "^0.12.0",
-    "tsx": "^4.22.4",
+    "tsx": "^4.23.0",
     "typescript": "^5.7.0",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.10"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -109,9 +109,9 @@
     },
     "peerDependencyRules": {
       "allowedVersions": {
-        "@particle-academy/fancy-code>@particle-academy/react-fancy": "4.7.1",
+        "@particle-academy/fancy-code>@particle-academy/react-fancy": "4.13.1",
         "@particle-academy/agent-integrations>@particle-academy/fancy-sheets": "0.9.0",
-        "@particle-academy/fancy-slides>@particle-academy/fancy-code": "0.5.0"
+        "@particle-academy/fancy-slides>@particle-academy/fancy-code": "0.8.0"
       }
     }
   }
