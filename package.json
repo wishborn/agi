@@ -1,6 +1,6 @@
 {
   "name": "agi",
-  "version": "0.4.1002",
+  "version": "0.4.1003",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",
@@ -68,7 +68,7 @@
     "@playwright/test": "^1.61.1",
     "@types/node": "^22.0.0",
     "esbuild": "^0.25.0",
-    "oxlint": "^0.16.0",
+    "oxlint": "^1.73.0",
     "tsdown": "^0.12.0",
     "tsx": "^4.23.0",
     "typescript": "^5.7.0",
