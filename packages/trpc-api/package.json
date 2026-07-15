@@ -8,7 +8,7 @@
   },
   "dependencies": {
     "@trpc/server": "^11.18.0",
-    "zod": "^3.25.76"
+    "zod": "^4.4.3"
   },
   "peerDependencies": {
     "@agi/gateway-core": "workspace:*"
