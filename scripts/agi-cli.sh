@@ -2388,6 +2388,9 @@ cmd_help() {
   echo "                    logs [--lines N]             Tail recent logs + surface known crash patterns"
   echo "                    config get <key>             Read a gateway.json dotted key with validation"
   echo "                    config set <key> <value>     Write a gateway.json key (atomic + Zod pre-validation)"
+  echo "  taskmaster [CMD] Taskmaster job status and control (Genie-execution):"
+  echo "                    (no arg) [--project <path>] [--json]   One-shot job listing"
+  echo "                    menu                         Interactive TUI — projects, job status, approve/reject checkpoints"
   echo "  safemode        Show safemode status (or: safemode exit)"
   echo "  incidents       List incident reports (or: incidents view <id>)"
   echo "  config [key]    Read config (full or dot-path key)"
@@ -2508,6 +2511,13 @@ case "${1:-help}" in
   scan) shift; cmd_scan "$@" ;;
   config)   cmd_config "${2:-}" ;;
   projects) shift; cmd_projects "$@" ;;
+  taskmaster)
+    # Taskmaster job status + control (Genie-execution ship) — the TS
+    # commander surface (one-shot listing + `menu` interactive TUI), same
+    # routing pattern as `doctor`'s dump|logs|config|menu subcommands above.
+    shift
+    cd "$DEPLOY_DIR" && exec npx tsx cli/src/index.ts taskmaster "$@"
+    ;;
   iw)       shift; cmd_iw "$@" ;;
   issue)    shift; cmd_issue "$@" ;;
   models)    shift; cmd_models "$@" ;;

@@ -202,6 +202,34 @@ Reads from `~/.agi/logs/` (top 5 most-recent .log/.jsonl files) and
 
 ---
 
+### agi taskmaster
+
+Taskmaster job status and control. Every Taskmaster worker executes via a
+project's paired [Genie](../agents/mcp-integration.md) workspace's `runAgent`
+MCP tool (see `docs/agents/taskmaster.md`'s "Genie Pairing" section for the
+one-time per-project setup this requires).
+
+```bash
+agi taskmaster                        # one-shot job listing, all projects
+agi taskmaster --project /path/to/proj  # scope to one project
+agi taskmaster --json                 # machine-readable for scripting / CI
+```
+
+#### agi taskmaster menu
+
+Interactive arrow-key TUI (built on the same raw-TTY primitives as
+`agi doctor menu`): a Projects screen (browse/select) and a Taskmaster screen
+per project (live job/phase status, `[a]pprove`/`[r]eject` a paused
+checkpoint gate, Enter to view a job's full description/summary/error).
+Requires an interactive terminal — falls back to a one-line notice (use the
+bare `agi taskmaster` form instead) when stdin isn't a TTY.
+
+```bash
+agi taskmaster menu
+```
+
+---
+
 ### agi iw — iterative-work operator commands
 
 Operator kill switch for runaway iterative-work loops (s159 t692).

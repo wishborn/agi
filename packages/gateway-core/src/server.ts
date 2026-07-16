@@ -1376,15 +1376,8 @@ export async function startGatewayServer(
       promptDir: resolvePath(workspaceRoot, "prompts", "workers"),
       stateDir: join(homedir(), ".agi", "state"),
       workspaceRoot,
-      resourceId,
-      nodeId,
-      workerTier: "verified",
     },
-    {
-      llmProvider: getLLMProvider(),
-      toolRegistry,
-      getState: () => stateMachine.getState(),
-    },
+    {},
   );
 
   // Wire the late-bound ref so onJobCreated callbacks reach the runtime.
@@ -2775,6 +2768,10 @@ export async function startGatewayServer(
   // command/env (stdio), url (http/ws), authToken (env-resolvable via
   // $VAR), autoConnect: bool }.
   const mcpClient = new McpClient();
+  // Taskmaster workers execute via a project's paired Genie workspace's
+  // `runAgent` MCP tool — WorkerRuntime is constructed earlier in boot (step
+  // 5b-workers, above) than mcpClient, so it's wired in here, late-bound.
+  workerRuntime.setMcpClient(mcpClient);
   // Merge baked-in default MCP servers (e.g. Fancy UI) with gateway.json's —
   // always-on for Aion across all projects + chats; an owner can override or
   // disable a default by re-declaring its id in gateway.json (story #215).
@@ -5752,7 +5749,7 @@ export async function startGatewayServer(
               opus: "claude-opus-4-6",
               default: fc.agent?.model ?? "claude-sonnet-4-6",
             },
-          }, llmProvider);
+          });
           log.info("worker runtime config hot-swapped");
         } catch (err) {
           log.error(`failed to hot-swap worker runtime: ${err instanceof Error ? err.message : String(err)}`);

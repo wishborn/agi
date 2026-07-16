@@ -32,6 +32,26 @@ export interface LemonadeStatus {
   activeModel?: string | null;
 }
 
+/** Trimmed shape of one /api/projects entry — only the fields the CLI needs. */
+export interface ProjectSummary {
+  name: string;
+  path: string;
+}
+
+/** Shape of one /api/taskmaster/jobs[/:jobId] entry (worker-api.ts JobSummary). */
+export interface TaskmasterJobSummary {
+  id: string;
+  description: string;
+  status: "pending" | "running" | "checkpoint" | "complete" | "failed";
+  currentPhase: string | null;
+  workers: string[];
+  gate: "auto" | "checkpoint" | "terminal";
+  createdAt: string;
+  summary?: string;
+  completedAt?: string;
+  error?: string;
+}
+
 export class GatewayClient {
   private readonly baseUrl: string;
 
@@ -80,11 +100,61 @@ export class GatewayClient {
     }
   }
 
+  /** List projects the gateway knows about (used by `agi taskmaster menu`'s Projects screen). */
+  async projects(): Promise<ProjectSummary[]> {
+    const res = await this.fetch("/api/projects");
+    return res as ProjectSummary[];
+  }
+
+  /** List Taskmaster jobs, scoped to a project when `projectPath` is given (server-side filter). */
+  async taskmasterJobs(projectPath?: string): Promise<TaskmasterJobSummary[]> {
+    const qs = projectPath ? `?projectPath=${encodeURIComponent(projectPath)}` : "";
+    const res = await this.fetch(`/api/taskmaster/jobs${qs}`);
+    return res as TaskmasterJobSummary[];
+  }
+
+  /** Fetch one job's detail. Returns `{status:"not_found"}` if it doesn't exist — never throws for that case. */
+  async taskmasterJob(jobId: string): Promise<TaskmasterJobSummary | { id: string; status: "not_found" }> {
+    const res = await this.fetch(`/api/taskmaster/jobs/${encodeURIComponent(jobId)}`);
+    return res as TaskmasterJobSummary | { id: string; status: "not_found" };
+  }
+
+  /** Approve a paused checkpoint gate, resuming the job at its next phase. */
+  async approveTaskmasterJob(jobId: string): Promise<void> {
+    await this.post(`/api/taskmaster/approve/${encodeURIComponent(jobId)}`);
+  }
+
+  /** Reject a paused checkpoint gate, marking the job failed. */
+  async rejectTaskmasterJob(jobId: string, reason?: string): Promise<void> {
+    await this.post(`/api/taskmaster/reject/${encodeURIComponent(jobId)}`, reason ? { reason } : undefined);
+  }
+
   private async fetch(path: string): Promise<unknown> {
     let res: Response;
 
     try {
       res = await fetch(`${this.baseUrl}${path}`, {
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch {
+      throw new GatewayUnreachableError(this.baseUrl);
+    }
+
+    if (!res.ok) {
+      throw new Error(`Gateway returned ${String(res.status)}: ${await res.text()}`);
+    }
+
+    return res.json();
+  }
+
+  private async post(path: string, body?: unknown): Promise<unknown> {
+    let res: Response;
+
+    try {
+      res = await fetch(`${this.baseUrl}${path}`, {
+        method: "POST",
+        headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(5000),
       });
     } catch {
