@@ -202,6 +202,47 @@ Reads from `~/.agi/logs/` (top 5 most-recent .log/.jsonl files) and
 
 ---
 
+### agi taskmaster
+
+One-shot Taskmaster job status listing. Every Taskmaster worker executes via
+a project's paired [Genie](../agents/mcp-integration.md) workspace's
+`runAgent` MCP tool (see `docs/agents/taskmaster.md`'s "Genie Pairing" section
+for the one-time per-project setup this requires). Interactive control —
+dispatching work, approving/rejecting a checkpoint gate — happens through
+conversation with Aion in [`agi chat`](#agi-chat), not a dedicated screen.
+
+```bash
+agi taskmaster                        # one-shot job listing, all projects
+agi taskmaster --project /path/to/proj  # scope to one project
+agi taskmaster --json                 # machine-readable for scripting / CI
+```
+
+---
+
+### agi chat
+
+Interactive terminal chat with Aion — modeled closely on Claude Code itself.
+The folder `agi chat` is launched in is the **Chat Container** (not a picker
+over registered projects); access is the same owner/sealed tier as the
+dashboard's chat, with the same full tool registry (including Taskmaster
+dispatch through normal conversation — there's no separate approve/reject
+screen). See `docs/agents/chat-tui.md` for the container model, `.agi`
+envelope context, and on-demand `.mcp.json` loading this depends on.
+
+```bash
+cd ~/projects/my-app
+agi chat                  # container = ~/projects/my-app
+agi chat --cwd /some/path # override the container explicitly
+```
+
+In the REPL: type a message and press Enter; `/quit` or `/exit` (or Ctrl-C)
+ends the session. Tool activity (`chat:tool_start`/`chat:tool_result`) and
+Aion's intermediate thoughts print above the response as they happen — there
+is no token-by-token streaming yet (the gateway's own chat protocol delivers
+the final answer in one `chat:response` frame, same as the dashboard).
+
+---
+
 ### agi iw — iterative-work operator commands
 
 Operator kill switch for runaway iterative-work loops (s159 t692).

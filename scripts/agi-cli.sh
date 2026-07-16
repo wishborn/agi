@@ -2388,6 +2388,9 @@ cmd_help() {
   echo "                    logs [--lines N]             Tail recent logs + surface known crash patterns"
   echo "                    config get <key>             Read a gateway.json dotted key with validation"
   echo "                    config set <key> <value>     Write a gateway.json key (atomic + Zod pre-validation)"
+  echo "  taskmaster [CMD] Taskmaster job status (one-shot listing; Genie-execution):"
+  echo "                    (no arg) [--project <path>] [--json]   One-shot job listing"
+  echo "  chat [--cwd P]  Interactive chat with Aion — full owner-tier access, current folder as container"
   echo "  safemode        Show safemode status (or: safemode exit)"
   echo "  incidents       List incident reports (or: incidents view <id>)"
   echo "  config [key]    Read config (full or dot-path key)"
@@ -2508,6 +2511,26 @@ case "${1:-help}" in
   scan) shift; cmd_scan "$@" ;;
   config)   cmd_config "${2:-}" ;;
   projects) shift; cmd_projects "$@" ;;
+  taskmaster)
+    # Taskmaster one-shot job status listing (Genie-execution ship) — the
+    # TS commander surface, same routing pattern as `doctor`'s dump|logs|
+    # config|menu subcommands above. Interactive control happens via `agi
+    # chat`, not a dedicated Taskmaster screen.
+    shift
+    cd "$DEPLOY_DIR" && exec npx tsx cli/src/index.ts taskmaster "$@"
+    ;;
+  chat)
+    # Interactive Aion Chat TUI — the launch folder (cwd) is the "Chat
+    # Container", exactly like Claude Code. Unlike doctor/taskmaster above,
+    # this command's whole point IS the caller's cwd, so it must be
+    # captured BEFORE the `cd "$DEPLOY_DIR"` below (needed to run the dev
+    # TS source) — otherwise the container would always resolve to
+    # DEPLOY_DIR instead of wherever the user actually ran `agi chat`.
+    # `export` + `exec` in the same shell preserves it across the `cd`.
+    shift
+    export AGI_CHAT_CALLER_CWD="$PWD"
+    cd "$DEPLOY_DIR" && exec npx tsx cli/src/index.ts chat "$@"
+    ;;
   iw)       shift; cmd_iw "$@" ;;
   issue)    shift; cmd_issue "$@" ;;
   models)    shift; cmd_models "$@" ;;
