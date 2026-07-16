@@ -12,8 +12,11 @@ import type { Command } from "commander";
 import { createInterface } from "node:readline/promises";
 import { existsSync, statSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
-import { ChatClient, ChatWsUnreachableError, ChatTurnError, type ChatToolStartEvent, type ChatToolResultEvent } from "../chat-client.js";
+import { ChatClient, ChatWsUnreachableError, ChatTurnError, ChatTimeoutError, type ChatToolStartEvent, type ChatToolResultEvent } from "../chat-client.js";
 import { bold, dim, red } from "../output.js";
+
+/** How often to remind the user a turn is still running (and how to cancel) while waiting. */
+const STILL_WAITING_REMINDER_MS = 20_000;
 
 /** How many parent directories to check for an `.agi` envelope root — mirrors gateway-core's own readAgiEnvelopeContext search depth. Purely cosmetic here (a startup banner); the gateway does its own detection for system-prompt context. */
 const AGI_ENVELOPE_SEARCH_DEPTH = 4;
@@ -40,8 +43,11 @@ export function registerChatCommand(program: Command): void {
     .command("chat")
     .description("Interactive chat with Aion — full owner-tier access, scoped to the current folder")
     .option("--cwd <path>", "Container folder (defaults to the current directory)")
-    .action(async (cmdOpts: { cwd?: string }) => {
+    .option("--quiet", "Suppress intermediate activity (thinking/tool/progress lines) — just show Aion's final response")
+    .option("--timeout <seconds>", "Max time to wait for a turn before giving up locally (default 120)", "120")
+    .action(async (cmdOpts: { cwd?: string; quiet?: boolean; timeout?: string }) => {
       const opts = program.opts<{ host?: string; port?: number }>();
+      const sendTimeoutMs = Math.max(1, Number(cmdOpts.timeout) || 120) * 1000;
       // scripts/agi-cli.sh's `chat` route `cd`s into the dev source tree
       // before exec-ing this file, so `process.cwd()` alone would always
       // resolve to that tree rather than wherever the user actually ran
@@ -68,13 +74,14 @@ export function registerChatCommand(program: Command): void {
       console.log(dim("/quit or Ctrl-C to exit"));
       console.log();
 
-      const client = new ChatClient({ host: opts.host ?? "127.0.0.1", port: opts.port ?? 3100 });
+      const quiet = cmdOpts.quiet === true;
+      const client = new ChatClient({ host: opts.host ?? "127.0.0.1", port: opts.port ?? 3100, sendTimeoutMs });
       client.on({
-        onThinking: () => process.stdout.write(dim("  …thinking\n")),
-        onToolStart: (e: ChatToolStartEvent) => process.stdout.write(dim(`  → ${e.toolName}\n`)),
-        onToolResult: (e: ChatToolResultEvent) => process.stdout.write(dim(`  ${e.success ? "✓" : "✗"} ${e.toolName}: ${e.summary}\n`)),
-        onProgress: (e) => process.stdout.write(dim(`  ${e.text}\n`)),
-        onThought: (content) => process.stdout.write(dim(`  ${content.length > 200 ? `${content.slice(0, 200)}…` : content}\n`)),
+        onThinking: () => { if (!quiet) process.stdout.write(dim("  …thinking\n")); },
+        onToolStart: (e: ChatToolStartEvent) => { if (!quiet) process.stdout.write(dim(`  → ${e.toolName}\n`)); },
+        onToolResult: (e: ChatToolResultEvent) => { if (!quiet) process.stdout.write(dim(`  ${e.success ? "✓" : "✗"} ${e.toolName}: ${e.summary}\n`)); },
+        onProgress: (e) => { if (!quiet) process.stdout.write(dim(`  ${e.text}\n`)); },
+        onThought: (content) => { if (!quiet) process.stdout.write(dim(`  ${content.length > 200 ? `${content.slice(0, 200)}…` : content}\n`)); },
         onUnsolicitedResponse: (text) => process.stdout.write(`\n${bold("Aion:")} ${text}\n\n`),
         onClosed: () => console.log(dim("\nConnection closed.")),
       });
@@ -113,17 +120,25 @@ export function registerChatCommand(program: Command): void {
           if (trimmed === "") continue;
           if (trimmed === "/quit" || trimmed === "/exit") break;
 
+          const reminder = setInterval(() => {
+            console.log(dim(`  …still waiting (Ctrl-C to cancel, or it'll time out after ${String(sendTimeoutMs / 1000)}s)`));
+          }, STILL_WAITING_REMINDER_MS);
+
           try {
             const text = await client.send(trimmed);
             console.log();
             console.log(`${bold("Aion:")} ${text}`);
             console.log();
           } catch (err) {
-            if (err instanceof ChatTurnError) {
+            if (err instanceof ChatTimeoutError) {
+              console.log(red(`Timed out: ${err.message}`));
+            } else if (err instanceof ChatTurnError) {
               console.log(red(`Error: ${err.message}`));
             } else {
               console.log(red(err instanceof Error ? err.message : String(err)));
             }
+          } finally {
+            clearInterval(reminder);
           }
         }
       } finally {

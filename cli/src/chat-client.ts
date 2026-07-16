@@ -27,6 +27,16 @@ export interface ChatClientOptions {
   port?: number;
   /** Injectable WebSocket constructor — defaults to the global `WebSocket` (stable in Node >=22). Tests pass a mock here instead of stubbing the global. */
   webSocketImpl?: new (url: string) => WebSocketLike;
+  /**
+   * Max ms to wait for a turn's terminal event (`chat:response`/`chat:error`/
+   * `chat:cancelled`) before `send()` gives up locally and rejects with
+   * `ChatTimeoutError`. A stuck server-side LLM call (or a Ctrl-C that never
+   * reaches this process through a nested terminal layer) would otherwise
+   * hang the REPL forever with no way out. Also fires a best-effort
+   * `cancel()` on timeout, though it doesn't wait for the server to confirm.
+   * Default 120_000 (2 min).
+   */
+  sendTimeoutMs?: number;
 }
 
 export interface ChatSessionOpened {
@@ -77,6 +87,9 @@ export class ChatWsUnreachableError extends Error {
 /** A chat turn ended in a gateway-reported error (not a transport failure). */
 export class ChatTurnError extends Error {}
 
+/** No terminal event arrived for a turn within `sendTimeoutMs` — the client gave up locally rather than hang forever. */
+export class ChatTimeoutError extends Error {}
+
 interface PendingTurn {
   resolve: (text: string) => void;
   reject: (err: Error) => void;
@@ -91,12 +104,14 @@ export class ChatClient {
   private context = "general";
   private pendingOpen: { resolve: (v: ChatSessionOpened) => void; reject: (err: Error) => void } | null = null;
   private pendingTurn: PendingTurn | null = null;
+  private readonly sendTimeoutMs: number;
 
   constructor(opts: ChatClientOptions = {}) {
     const host = opts.host ?? "127.0.0.1";
     const port = opts.port ?? 3100;
     this.url = `ws://${host}:${port}/ws`;
     this.webSocketImpl = opts.webSocketImpl ?? (WebSocket as unknown as new (url: string) => WebSocketLike);
+    this.sendTimeoutMs = opts.sendTimeoutMs ?? 120_000;
   }
 
   on(handlers: ChatClientHandlers): void {
@@ -134,20 +149,50 @@ export class ChatClient {
     });
   }
 
-  /** Send a message and wait for that turn's terminal response text. Progress along the way arrives via the handlers registered with `on()`. */
+  /**
+   * Send a message and wait for that turn's terminal response text.
+   * Progress along the way arrives via the handlers registered with
+   * `on()`. Never hangs forever: if no terminal event arrives within
+   * `sendTimeoutMs`, rejects with `ChatTimeoutError` and fires a
+   * best-effort `cancel()` (not awaited — the server may or may not
+   * actually stop, but this call returns regardless).
+   */
   async send(text: string): Promise<string> {
     if (this.sessionId === null) throw new Error("ChatClient.send() called before open() resolved");
     if (this.pendingTurn !== null) throw new Error("ChatClient.send() called while a previous turn is still in flight");
     return new Promise((resolve, reject) => {
-      this.pendingTurn = { resolve, reject };
+      const timer = setTimeout(() => {
+        if (this.pendingTurn === turn) {
+          this.pendingTurn = null;
+          this.cancel();
+          reject(new ChatTimeoutError(`No response after ${String(this.sendTimeoutMs)}ms — sent a cancel request, but the server may still be running this turn.`));
+        }
+      }, this.sendTimeoutMs);
+      const turn: PendingTurn = {
+        resolve: (result) => { clearTimeout(timer); resolve(result); },
+        reject: (err) => { clearTimeout(timer); reject(err); },
+      };
+      this.pendingTurn = turn;
       this.wsSend({ type: "chat:send", payload: { sessionId: this.sessionId!, text, context: this.context } });
     });
   }
 
-  /** Cancel the in-flight turn started by `send()`, if any. */
+  /**
+   * Cancel the in-flight turn started by `send()`, if any. Rejects
+   * `send()`'s promise immediately (client-side) rather than waiting for
+   * the server's `chat:cancelled` echo — that round-trip can itself hang
+   * if the server is genuinely stuck, and the caller (a Ctrl-C handler,
+   * typically) needs to unblock right away either way. The `chat:cancel`
+   * message is still sent so the server gets a chance to actually stop.
+   */
   cancel(): void {
     if (this.sessionId === null) return;
     this.wsSend({ type: "chat:cancel", payload: { sessionId: this.sessionId } });
+    if (this.pendingTurn !== null) {
+      const turn = this.pendingTurn;
+      this.pendingTurn = null;
+      turn.reject(new Error("Turn cancelled"));
+    }
   }
 
   /** Close the session and the underlying WebSocket. */

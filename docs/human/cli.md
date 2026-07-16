@@ -231,15 +231,24 @@ envelope context, and on-demand `.mcp.json` loading this depends on.
 
 ```bash
 cd ~/projects/my-app
-agi chat                  # container = ~/projects/my-app
-agi chat --cwd /some/path # override the container explicitly
+agi chat                     # container = ~/projects/my-app
+agi chat --cwd /some/path    # override the container explicitly
+agi chat --quiet             # suppress thinking/tool/progress lines — just the final answer
+agi chat --timeout 60        # give up locally after 60s instead of the 120s default
 ```
 
 In the REPL: type a message and press Enter; `/quit` or `/exit` (or Ctrl-C)
 ends the session. Tool activity (`chat:tool_start`/`chat:tool_result`) and
-Aion's intermediate thoughts print above the response as they happen — there
-is no token-by-token streaming yet (the gateway's own chat protocol delivers
-the final answer in one `chat:response` frame, same as the dashboard).
+Aion's intermediate thoughts print above the response as they happen (pass
+`--quiet` to suppress all of it and only see the final answer) — there is no
+token-by-token streaming yet (the gateway's own chat protocol delivers the
+final answer in one `chat:response` frame, same as the dashboard).
+
+A turn never hangs forever: if nothing comes back within `--timeout` seconds
+(default 120), the client gives up locally, tells the server to cancel, and
+returns you to the prompt with a clear timeout message. Ctrl-C cancels the
+current turn immediately (without waiting for the server to confirm) rather
+than waiting on that same timeout.
 
 ---
 

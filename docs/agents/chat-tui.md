@@ -103,6 +103,19 @@ requires `>=22.12.0` — no new dependency). No auth token is needed for a
 localhost connection: `ws-server.ts`'s `verifyClient` auto-allows any
 private-network IP (loopback included) before it ever checks for a token.
 
+**A turn never hangs forever.** `ChatClient.send()` takes a `sendTimeoutMs`
+option (default 120s, `agi chat --timeout <seconds>`) — if no terminal event
+(`chat:response`/`chat:error`/`chat:cancelled`) arrives in time, it rejects
+locally with `ChatTimeoutError` and fires a best-effort `chat:cancel` (not
+awaited). `cancel()` also rejects the in-flight turn's promise immediately,
+client-side, rather than waiting for the server's `chat:cancelled` echo —
+that round-trip can itself hang if the server is genuinely stuck. This
+matters because a real (2026-07-16) production hang surfaced exactly this
+gap: a turn stuck at `chat:thinking` with no further events, and Ctrl-C
+didn't recover it either (through whatever terminal layer was in front of
+the process at the time). Without a client-side timeout, there was no way
+out short of killing the terminal.
+
 ## Scope of this ship
 
 - Single active session per launched container. Multi-session list/switch/
