@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ChatClient, ChatWsUnreachableError, ChatTurnError } from "./chat-client.js";
+import { ChatClient, ChatWsUnreachableError, ChatTurnError, ChatTimeoutError } from "./chat-client.js";
 
 type Listener = (event: { data?: string }) => void;
 
@@ -76,8 +76,8 @@ function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-async function openedClient(context = "/some/project"): Promise<{ client: ChatClient; ws: MockWebSocket }> {
-  const client = new ChatClient({ host: "127.0.0.1", port: 3100, webSocketImpl: MockWebSocket });
+async function openedClient(context = "/some/project", sendTimeoutMs?: number): Promise<{ client: ChatClient; ws: MockWebSocket }> {
+  const client = new ChatClient({ host: "127.0.0.1", port: 3100, webSocketImpl: MockWebSocket, sendTimeoutMs });
   const openPromise = client.open(context);
   const ws = MockWebSocket.instances[0]!;
   ws.simulateOpen();
@@ -188,5 +188,54 @@ describe("ChatClient — close()", () => {
     const sent = ws.lastSentPayload();
     expect(sent.type).toBe("chat:close");
     expect(sent.payload?.sessionId).toBe("sess-1");
+  });
+});
+
+describe("ChatClient — send() never hangs forever", () => {
+  it("rejects with ChatTimeoutError and fires chat:cancel when nothing responds within sendTimeoutMs", async () => {
+    // Open the connection with REAL timers first — vi.useFakeTimers() also
+    // fakes setImmediate, which openedClient()'s flushMicrotasks() helper
+    // relies on; faking too early would hang the open() handshake itself.
+    const { client, ws } = await openedClient("/some/project", 5000);
+    vi.useFakeTimers();
+    try {
+      const sendPromise = client.send("hello");
+      // Attach the rejection assertion BEFORE advancing timers (matching
+      // real usage) so there's no unhandled-rejection window between the
+      // timer firing and the assertion being in place.
+      const assertion = expect(sendPromise).rejects.toThrow(ChatTimeoutError);
+      await vi.advanceTimersByTimeAsync(5000);
+      await assertion;
+
+      const actions = ws.sent.map((s) => (JSON.parse(s) as { type: string }).type);
+      expect(actions).toContain("chat:cancel");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not fire a spurious timeout after the turn already resolved", async () => {
+    const { client, ws } = await openedClient("/some/project", 5000);
+    vi.useFakeTimers();
+    try {
+      const sendPromise = client.send("hello");
+      ws.simulateServerMessage({ type: "chat:response", payload: { sessionId: "sess-1", text: "quick answer", timestamp: "t" } });
+      await expect(sendPromise).resolves.toBe("quick answer");
+
+      // Advancing past the timeout window now must NOT throw or emit a
+      // second chat:cancel — the timer should have been cleared on resolve.
+      await vi.advanceTimersByTimeAsync(6000);
+      const actions = ws.sent.map((s) => (JSON.parse(s) as { type: string }).type);
+      expect(actions).not.toContain("chat:cancel");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancel() rejects the in-flight turn immediately, without waiting for chat:cancelled", async () => {
+    const { client } = await openedClient();
+    const sendPromise = client.send("hello");
+    client.cancel();
+    await expect(sendPromise).rejects.toThrow(/cancelled/i);
   });
 });
