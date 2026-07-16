@@ -7,8 +7,8 @@
  * `scripts/agi-cli.sh` is the real dispatcher; it execs into this file
  * (via `npx tsx cli/src/index.ts <command> ...`) for the commander-based
  * subcommands registered below (run, setup, channels, schema, doctor,
- * taskmaster) rather than reimplementing them in bash. Everything else
- * (status, logs, upgrade, restart, config, projects) is implemented
+ * taskmaster, chat) rather than reimplementing them in bash. Everything
+ * else (status, logs, upgrade, restart, config, projects) is implemented
  * directly in scripts/agi-cli.sh.
  */
 
@@ -19,6 +19,7 @@ import { registerChannelsCommand } from "./commands/channels.js";
 import { registerSchemaCommand } from "./commands/schema.js";
 import { registerDoctorCommand } from "./commands/doctor.js";
 import { registerTaskmasterCommand } from "./commands/taskmaster.js";
+import { registerChatCommand } from "./commands/chat.js";
 
 const program = new Command();
 
@@ -38,5 +39,6 @@ registerChannelsCommand(program);
 registerSchemaCommand(program);
 registerDoctorCommand(program);
 registerTaskmasterCommand(program);
+registerChatCommand(program);
 
 program.parse();

@@ -2833,81 +2833,113 @@ export async function startGatewayServer(
   // Per-project MCP servers (Wish #7 / s125 t478) — register each project's
   // mcp.servers block under namespaced ids `<slug>:<id>`. Auth tokens + env
   // values resolve from the project's .env file via $VAR notation.
-  try {
-    const { readProjectEnv, resolveDollarVars, resolveDollarVarsObject } = await import("./project-env-store.js");
-    const { projectConfigPath: pcp, projectSlug: pslug } = await import("./project-config-path.js");
-    // s131 t682 — read MCP servers via the dual-read API. Prefers
-    // `<projectPath>/.mcp.json` (Claude Code convention) over the legacy
-    // `project.json mcp.servers[]` block. Boot-time migration (t681)
-    // already brings unmigrated projects forward, so by this point most
-    // projects read from .mcp.json directly.
-    const { readProjectMcpServers: readMcpDual } = await import("./mcp-config-store.js");
-    for (const projectDir of projectPaths) {
-      try {
-        const { readdirSync, statSync } = await import("node:fs");
-        for (const entry of readdirSync(projectDir)) {
-          const fullPath = `${projectDir}/${entry}`;
-          if (!statSync(fullPath).isDirectory()) continue;
-          const cfgPath = pcp(fullPath);
-          if (!existsSync(cfgPath)) continue;
-          const raw = JSON.parse(readFileSync(cfgPath, "utf-8")) as { mcp?: { servers?: Array<{ id: string; name?: string; transport: "stdio" | "http" | "websocket"; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }> } };
-          const dualResult = readMcpDual(fullPath, raw.mcp?.servers as Parameters<typeof readMcpDual>[1]);
-          const projectServers = dualResult.servers as Array<{ id: string; name?: string; transport: "stdio" | "http" | "websocket"; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }>;
-          if (projectServers.length === 0) continue;
-          if (dualResult.source === "legacy") {
-            log.info(`mcp: project ${entry} still using legacy project.json mcp.servers — migration will run on next restart`);
-          }
-          const projectEnv = readProjectEnv(fullPath);
-          // s128 cycle 86 — per-project secret resolver. $VAR reads from the
-          // project's .env (legacy); vault://<id> resolves through VaultResolver
-          // with the project's path as the scope context (so project-scoped
-          // entries stay scoped, gateway-scoped entries pass).
-          const resolveProjectSecretRef = async (raw: string | undefined): Promise<string | undefined> => {
-            if (raw === undefined) return undefined;
-            if (raw.startsWith("$")) return resolveDollarVars(raw, projectEnv);
-            if (raw.startsWith("vault://")) {
-              try {
-                const resolved = await vaultResolver.resolve(raw, { projectPath: fullPath });
-                return typeof resolved === "string" ? resolved : raw;
-              } catch (err) {
-                log.warn(`mcp: vault reference "${raw}" for project ${fullPath} failed to resolve: ${err instanceof Error ? err.message : String(err)}`);
-                return undefined;
-              }
-            }
-            return raw;
-          };
-          for (const s of projectServers) {
-            if (s.autoConnect === false) continue;
-            try {
-              const projectEnvResolved = s.env !== undefined
-                ? Object.fromEntries(
-                    await Promise.all(
-                      Object.entries(s.env).map(async ([k, v]) => [k, (await resolveProjectSecretRef(v)) ?? ""] as [string, string]),
-                    ),
-                  )
-                : undefined;
-              await mcpClient.registerServer({
-                id: `${pslug(fullPath)}:${s.id}`,
-                name: s.name,
-                transport: s.transport,
-                command: s.command,
-                env: projectEnvResolved ?? resolveDollarVarsObject(s.env, projectEnv),
-                url: s.url ? (await resolveProjectSecretRef(s.url)) : undefined,
-                autoConnect: true,
-                authToken: s.authToken ? (await resolveProjectSecretRef(s.authToken)) : undefined,
-              });
-              log.info(`mcp: registered project-server "${pslug(fullPath)}:${s.id}" (project=${entry})`);
-            } catch (err) {
-              log.warn(`mcp: failed to register project-server "${pslug(fullPath)}:${s.id}": ${err instanceof Error ? err.message : String(err)}`);
-            }
+  /**
+   * Read one folder's MCP config (`.mcp.json`, or legacy `project.json`
+   * `mcp.servers[]`) and register any entries not already registered.
+   * Reusable across two call sites: the boot-time sweep below (which
+   * enumerates every subdirectory of each configured workspace) and, on
+   * demand, `chat:open` for a folder that was never enumerated there —
+   * an ad hoc Chat TUI container, most often. Registering `.mcp.json`
+   * alone (no `project.json` requirement) mirrors how Claude Code itself
+   * only cares about `.mcp.json`.
+   *
+   * Idempotent by construction: `McpClient.registerServer` id-keys by
+   * `<projectSlug>:<serverId>`, so calling this twice for the same
+   * folder just re-registers (harmless) rather than double-adding.
+   */
+  const ensureProjectMcpRegistered = async (
+    fullPath: string,
+    label: string,
+    registerOpts: { requireProjectJson?: boolean } = {},
+  ): Promise<void> => {
+    try {
+      const { readProjectEnv, resolveDollarVars, resolveDollarVarsObject } = await import("./project-env-store.js");
+      const { projectConfigPath: pcp, projectSlug: pslug } = await import("./project-config-path.js");
+      const { readProjectMcpServers: readMcpDual } = await import("./mcp-config-store.js");
+
+      const cfgPath = pcp(fullPath);
+      const cfgExists = existsSync(cfgPath);
+      // Boot-sweep call site preserves its original behavior — only
+      // subdirectories recognized as Aionima projects (project.json
+      // present) get swept. The on-demand call site (chat:open, for an
+      // ad hoc Chat TUI container) does not require this — `.mcp.json`
+      // alone is enough, same as Claude Code itself only caring about
+      // `.mcp.json`.
+      if (registerOpts.requireProjectJson === true && !cfgExists) return;
+      let legacyServers: Array<{ id: string; name?: string; transport: "stdio" | "http" | "websocket"; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }> | undefined;
+      if (cfgExists) {
+        try {
+          const raw = JSON.parse(readFileSync(cfgPath, "utf-8")) as { mcp?: { servers?: typeof legacyServers } };
+          legacyServers = raw.mcp?.servers;
+        } catch { /* malformed project.json — .mcp.json (if any) still applies */ }
+      }
+
+      const dualResult = readMcpDual(fullPath, legacyServers as Parameters<typeof readMcpDual>[1]);
+      const projectServers = dualResult.servers as Array<{ id: string; name?: string; transport: "stdio" | "http" | "websocket"; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }>;
+      if (projectServers.length === 0) return;
+      if (dualResult.source === "legacy") {
+        log.info(`mcp: project ${label} still using legacy project.json mcp.servers — migration will run on next restart`);
+      }
+      const projectEnv = readProjectEnv(fullPath);
+      // s128 cycle 86 — per-project secret resolver. $VAR reads from the
+      // project's .env (legacy); vault://<id> resolves through VaultResolver
+      // with the project's path as the scope context (so project-scoped
+      // entries stay scoped, gateway-scoped entries pass).
+      const resolveProjectSecretRef = async (raw: string | undefined): Promise<string | undefined> => {
+        if (raw === undefined) return undefined;
+        if (raw.startsWith("$")) return resolveDollarVars(raw, projectEnv);
+        if (raw.startsWith("vault://")) {
+          try {
+            const resolved = await vaultResolver.resolve(raw, { projectPath: fullPath });
+            return typeof resolved === "string" ? resolved : raw;
+          } catch (err) {
+            log.warn(`mcp: vault reference "${raw}" for project ${fullPath} failed to resolve: ${err instanceof Error ? err.message : String(err)}`);
+            return undefined;
           }
         }
-      } catch (err) {
-        log.warn(`mcp: project enumeration failed for ${projectDir}: ${err instanceof Error ? err.message : String(err)}`);
+        return raw;
+      };
+      for (const s of projectServers) {
+        if (s.autoConnect === false) continue;
+        try {
+          const projectEnvResolved = s.env !== undefined
+            ? Object.fromEntries(
+                await Promise.all(
+                  Object.entries(s.env).map(async ([k, v]) => [k, (await resolveProjectSecretRef(v)) ?? ""] as [string, string]),
+                ),
+              )
+            : undefined;
+          await mcpClient.registerServer({
+            id: `${pslug(fullPath)}:${s.id}`,
+            name: s.name,
+            transport: s.transport,
+            command: s.command,
+            env: projectEnvResolved ?? resolveDollarVarsObject(s.env, projectEnv),
+            url: s.url ? (await resolveProjectSecretRef(s.url)) : undefined,
+            autoConnect: true,
+            authToken: s.authToken ? (await resolveProjectSecretRef(s.authToken)) : undefined,
+          });
+          log.info(`mcp: registered project-server "${pslug(fullPath)}:${s.id}" (project=${label})`);
+        } catch (err) {
+          log.warn(`mcp: failed to register project-server "${pslug(fullPath)}:${s.id}": ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
+    } catch (err) {
+      log.warn(`mcp: per-folder wiring failed for ${label}: ${err instanceof Error ? err.message : String(err)}`);
     }
-  } catch (err) {
-    log.warn(`mcp: per-project wiring init failed: ${err instanceof Error ? err.message : String(err)}`);
+  };
+
+  for (const projectDir of projectPaths) {
+    try {
+      const { readdirSync, statSync } = await import("node:fs");
+      for (const entry of readdirSync(projectDir)) {
+        const fullPath = `${projectDir}/${entry}`;
+        if (!statSync(fullPath).isDirectory()) continue;
+        await ensureProjectMcpRegistered(fullPath, entry, { requireProjectJson: true });
+      }
+    } catch (err) {
+      log.warn(`mcp: project enumeration failed for ${projectDir}: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // s118 t432 cycle 36 — PM provider resolution + `pm` agent tool.
@@ -4064,6 +4096,20 @@ export async function startGatewayServer(
 
         // Track session context for plan approval lookups
         chatSessionContexts.set(chatSessionId, chatContext);
+
+        // On-demand MCP registration — a project context that was never
+        // enumerated in the boot-time sweep (an ad hoc Chat TUI container,
+        // most commonly) still gets its `.mcp.json` servers registered
+        // here, so this session's turns can reach them via the `mcp` tool.
+        // Non-fatal: the chat session still opens if this fails.
+        const chatContextLooksLikeProjectPath = chatContext !== "general"
+          && !chatContext.startsWith("builder:")
+          && !chatContext.startsWith("mapp:")
+          && !chatContext.startsWith("help:")
+          && existsSync(chatContext);
+        if (chatContextLooksLikeProjectPath) {
+          await ensureProjectMcpRegistered(chatContext, chatContext.split("/").pop() ?? chatContext);
+        }
 
         // Check for persisted session on disk first
         const persisted = chatPersistence.load(chatSessionId);

@@ -32,12 +32,6 @@ export interface LemonadeStatus {
   activeModel?: string | null;
 }
 
-/** Trimmed shape of one /api/projects entry — only the fields the CLI needs. */
-export interface ProjectSummary {
-  name: string;
-  path: string;
-}
-
 /** Shape of one /api/taskmaster/jobs[/:jobId] entry (worker-api.ts JobSummary). */
 export interface TaskmasterJobSummary {
   id: string;
@@ -98,12 +92,6 @@ export class GatewayClient {
     } catch {
       return null;
     }
-  }
-
-  /** List projects the gateway knows about (used by `agi taskmaster menu`'s Projects screen). */
-  async projects(): Promise<ProjectSummary[]> {
-    const res = await this.fetch("/api/projects");
-    return res as ProjectSummary[];
   }
 
   /** List Taskmaster jobs, scoped to a project when `projectPath` is given (server-side filter). */

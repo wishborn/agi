@@ -1,10 +1,10 @@
 /**
- * `agi taskmaster` — Taskmaster job status and control.
+ * `agi taskmaster` — Taskmaster job status.
  *
- * `agi taskmaster` prints a one-shot job listing (optionally scoped to one
- * project via `--project`, or `--json`). `agi taskmaster menu` launches the
- * interactive arrow-key TUI (Projects screen → Taskmaster screen) built on
- * the same raw-TTY primitives as `agi doctor menu`.
+ * Prints a one-shot job listing (optionally scoped to one project via
+ * `--project`, or `--json`). Interactive control (dispatch, checkpoint
+ * approve/reject) happens through conversation with Aion in `agi chat`,
+ * not a dedicated TUI screen.
  */
 
 import type { Command } from "commander";
@@ -12,9 +12,9 @@ import { GatewayClient, GatewayUnreachableError } from "../gateway-client.js";
 import { bold, red } from "../output.js";
 
 export function registerTaskmasterCommand(program: Command): void {
-  const taskmaster = program
+  program
     .command("taskmaster")
-    .description("Taskmaster job status and control")
+    .description("Taskmaster job status")
     .option("--project <path>", "Scope to one project's jobs (absolute path)")
     .option("--json", "Output as JSON")
     .action(async (cmdOpts: { project?: string; json?: boolean }) => {
@@ -54,17 +54,5 @@ export function registerTaskmasterCommand(program: Command): void {
         // explicitly rather than have every invocation hang until killed.
         process.exit(process.exitCode ?? 0);
       }
-    });
-
-  taskmaster
-    .command("menu")
-    .description("Interactive Taskmaster TUI — browse projects, view job status, approve/reject checkpoints")
-    .action(async () => {
-      const opts = program.opts<{ host?: string; port?: number }>();
-      const { runTaskmasterMenu } = await import("./taskmaster-menu.js");
-      await runTaskmasterMenu({ client: new GatewayClient(opts.host ?? "127.0.0.1", opts.port ?? 3100) });
-      // See the one-shot action's comment above — a fetch() call anywhere
-      // in this process leaves the event loop alive after the TUI quits.
-      process.exit(0);
     });
 }

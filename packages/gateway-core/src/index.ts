@@ -369,6 +369,15 @@ export type {
   VersioningStrategy,
 } from "./protocol-stability.js";
 
+// Chat WebSocket protocol (shared types for Node/non-browser clients)
+export type {
+  ChatClientMessage,
+  ChatServerMessage,
+  ChatHistoryMessage,
+  ChatImageAttachment,
+  ChatDocumentAttachment,
+} from "./chat-ws-types.js";
+
 // Heartbeat Scheduler
 export { HeartbeatScheduler } from "./heartbeat.js";
 export type { HeartbeatSchedulerDeps } from "./heartbeat.js";
