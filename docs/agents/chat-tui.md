@@ -116,6 +116,51 @@ didn't recover it either (through whatever terminal layer was in front of
 the process at the time). Without a client-side timeout, there was no way
 out short of killing the terminal.
 
+## Rendering: full-window layout on `@particle-academy/fancy-tui`
+
+`agi chat`'s interactive UI (`cli/src/chat-tui/App.tsx`) is a full-window Ink
+app built entirely on `@particle-academy/fancy-tui` — the terminal/Ink
+counterpart to the Fancy UI kit already used throughout the dashboard. No
+custom Ink components were written for this: the library already provides
+everything a Claude-Code-style chat surface needs.
+
+- **`useChatSession.ts`** (`cli/src/chat-tui/useChatSession.ts`) is the only
+  file that touches `ChatClient` directly — it translates the client's
+  callback-based events (`onThinking`/`onToolStart`/`onToolResult`/
+  `onProgress`/`onThought`/`onUnsolicitedResponse`) into React state shaped
+  for the library's components: `messages: MessageData[]` (committed
+  scrollback — user/agent/tool/error entries), `thinking`/`statusText` (the
+  current turn's live status), `liveToolCalls: ToolCallData[]` (in-flight
+  tool calls, folded into `messages` once each resolves).
+- **`App.tsx`** composes `FancyTuiProvider` → `Screen` → `Header` (container
+  path + connection status) → `MessageList` (scrollback, backed by Ink
+  `Static` inside the library) → `LiveRegion` (thinking spinner + in-flight
+  `ToolCall` rows, hidden entirely under `--quiet`) → `Composer` (the
+  multi-line input box) → `StatusBar` (key hints, `.agi` envelope badge).
+- **Multi-line composition and its terminal-support caveat are handled by the
+  library, not this codebase.** `Composer` submits on Enter and inserts a
+  newline on Alt+Enter (works on every terminal) or Shift+Enter (only when
+  the terminal reports "enhanced keyboard" support — most terminals send an
+  identical byte sequence for Enter and Shift+Enter without it). Query
+  `useFancyTui().capabilities.shiftEnter` to check a given terminal's actual
+  support rather than assuming — `App.tsx` shows an "Alt+Enter: newline" key
+  hint in the status bar specifically when `shiftEnter` is `false`.
+- **`Composer` does not auto-focus itself.** It calls Ink's own `useFocus()`
+  internally without `autoFocus: true` (Ink's default), so nothing is
+  focused until something calls the focus manager explicitly — otherwise the
+  box renders with a single border and every keystroke is silently dropped
+  (confirmed by isolating a bare `<Composer>` outside `App.tsx` entirely:
+  `useInput` fired correctly, but `isFocused` never went `true`). `App.tsx`
+  calls Ink's own `useFocusManager().focus("prompt")` in a mount effect to
+  claim focus for the Composer explicitly.
+- **Non-TTY fallback is a hard requirement, not a nicety.** Ink cannot render
+  a full-screen layout without a real terminal. `chat.ts` checks
+  `process.stdin.isTTY` and runs the *original* plain-text `readline` REPL
+  (`runReadlineChat`) for piped/non-interactive invocation — the same
+  `ChatClient`, same timeout/cancel behavior, just printed output instead of
+  a rendered layout. `runInkChat` (the `fancy-tui` path) is the default only
+  when stdin is a real TTY.
+
 ## Scope of this ship
 
 - Single active session per launched container. Multi-session list/switch/
@@ -124,7 +169,8 @@ out short of killing the terminal.
 - No real token-by-token streaming — `chat:response` delivers the full
   answer in one frame (the gateway's `AnthropicClient` call is
   non-streaming today), same as the dashboard. Tool activity/thinking/
-  progress events are what make a turn feel live.
+  progress events (rendered live via `LiveRegion`/`Spinner`/`ToolCall`) are
+  what make a turn feel live.
 - `.agi` envelope awareness is detection + context only. Actual
   Claude-Code-style hook *execution* (SessionStart/Stop-equivalent hooks)
   is explicitly out of scope for this pass.
