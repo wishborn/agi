@@ -124,6 +124,14 @@ counterpart to the Fancy UI kit already used throughout the dashboard. No
 custom Ink components were written for this: the library already provides
 everything a Claude-Code-style chat surface needs.
 
+- **`chat.ts`'s `runInkChat` takes over the terminal's alternate screen
+  buffer** (`\x1b[?1049h` on start, `\x1b[?1049l` on exit, the same mechanism
+  vim/htop/less use) so `agi chat` starts from a blank canvas exactly the
+  size of the terminal — like Claude Code — rather than printing inline
+  wherever the shell cursor happened to be. The prior shell scrollback is
+  preserved underneath and reappears untouched on exit. Ink's `render()` has
+  no notion of this on its own; it's applied imperatively around `render()`/
+  `waitUntilExit()` in a `try/finally`, gated on `process.stdout.isTTY`.
 - **`useChatSession.ts`** (`cli/src/chat-tui/useChatSession.ts`) is the only
   file that touches `ChatClient` directly — it translates the client's
   callback-based events (`onThinking`/`onToolStart`/`onToolResult`/
@@ -133,10 +141,15 @@ everything a Claude-Code-style chat surface needs.
   current turn's live status), `liveToolCalls: ToolCallData[]` (in-flight
   tool calls, folded into `messages` once each resolves).
 - **`App.tsx`** composes `FancyTuiProvider` → `Screen` → `Header` (container
-  path + connection status) → `MessageList` (scrollback, backed by Ink
+  path + connection status) → a message list (scrollback, backed by Ink
   `Static` inside the library) → `LiveRegion` (thinking spinner + in-flight
   `ToolCall` rows, hidden entirely under `--quiet`) → `Composer` (the
   multi-line input box) → `StatusBar` (key hints, `.agi` envelope badge).
+  The message list composes `StaticList` + `Message` directly (both public
+  exports) instead of `fancy-tui`'s own `<MessageList>`, which renders
+  entries back-to-back with zero gap and exposes no spacing prop — wrapping
+  each `Message` in a `Box marginBottom={1}` adds the blank line between
+  entries that `<MessageList>` doesn't.
 - **Multi-line composition and its terminal-support caveat are handled by the
   library, not this codebase.** `Composer` submits on Enter and inserts a
   newline on Alt+Enter (works on every terminal) or Shift+Enter (only when

@@ -11,7 +11,9 @@ import {
   FancyTuiProvider,
   Screen,
   Header,
-  MessageList,
+  StaticList,
+  Message,
+  Box,
   LiveRegion,
   Spinner,
   ToolCall,
@@ -99,7 +101,19 @@ function ConnectedApp({ containerPath, envelopeRoot, chatClientOptions, quiet = 
             : <Badge tone="success">connected</Badge>
         }
       />
-      <MessageList messages={messages} />
+      {/* fancy-tui's <MessageList> renders <Message> back-to-back with zero
+          gap and exposes no spacing prop, so entries run together. Composing
+          StaticList + Message directly (both public exports) lets us add a
+          blank line between them. */}
+      <StaticList
+        items={messages}
+        getKey={(m) => m.id}
+        renderItem={(m) => (
+          <Box marginBottom={1}>
+            <Message message={m} />
+          </Box>
+        )}
+      />
       {!quiet && (
         <LiveRegion>
           {thinking && <Spinner label={statusText ?? "Aion is thinking…"} />}
