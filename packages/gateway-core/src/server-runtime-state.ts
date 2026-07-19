@@ -185,6 +185,9 @@ export interface RuntimeStateDeps {
   nodeId?: string;
   /** Owner entity ID — used for audit logging. */
   ownerEntityId?: string;
+  /** s234 P3 — called by POST /api/owner/claim after a fresh-install owner is
+   *  claimed, to update the running owner id live (no restart). */
+  onOwnerClaimed?: (entityId: string) => void;
   /** Late-bound WS server reference for broadcasting events from HTTP handlers. */
   wsRef?: { server: GatewayWebSocketServer | null };
   /** Callback invoked on POST /api/reload — re-indexes PRIME, re-discovers skills, etc. */
@@ -2279,27 +2282,47 @@ export async function createGatewayRuntimeState(
     return reply.send({ pending, count: pending.length });
   });
 
-  fastify.post<{ Params: { id: string }; Body: { projectPaths?: string[] } }>("/api/identity/pending/:id/approve", async (request, reply) => {
+  fastify.post<{ Params: { id: string }; Body: { projectPaths?: string[]; mode?: "register" | "associate"; targetEntityId?: string; profile?: { name?: string; email?: string; pronouns?: string } } }>("/api/identity/pending/:id/approve", async (request, reply) => {
     const clientIp = getClientIp(request.raw);
     if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
     if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
     const { id } = request.params;
-    const { projectPaths } = (request.body as { projectPaths?: string[] } | undefined) ?? {};
+    const body = (request.body as { projectPaths?: string[]; mode?: "register" | "associate"; targetEntityId?: string; profile?: { name?: string } } | undefined) ?? {};
+    const { projectPaths } = body;
+    const mode = body.mode ?? "register";
+    if (mode === "associate" && (body.targetEntityId === undefined || body.targetEntityId === "")) {
+      return reply.code(400).send({ error: "approve failed: targetEntityId is required for mode 'associate'" });
+    }
     try {
       const { approval, decision } = deps.pendingApprovalStore.approve(id, { projectPaths });
-      // CHN-E slice 5: composite entity-tier promotion. When an entity
-      // already exists for this (channelId, channelUserId), bump its
-      // verificationTier to "verified". Approval = verified is the
-      // contract; doing it here keeps "approve" atomic from the
-      // caller's perspective.
+      // s234 P2 — resolve the person to a LOCAL IDENTITY per the Owner's choice:
+      //   associate → reassign this channel account onto an existing entity;
+      //   register  → keep the auto-created entity (optionally rename), promote.
+      // Approval == verified tier is the contract; done here so approve is atomic.
       let entityPromoted: { id: string; tier: string } | null = null;
       if (deps.entityStore !== undefined) {
-        const entity = await deps.entityStore.resolveEntityByChannel(approval.channelId, approval.channelUserId);
-        if (entity !== null && entity.verificationTier !== "verified") {
-          await deps.entityStore.updateEntity(entity.id, { verificationTier: "verified" });
-          entityPromoted = { id: entity.id, tier: "verified" };
-        } else if (entity !== null) {
-          entityPromoted = { id: entity.id, tier: entity.verificationTier };
+        if (mode === "associate" && body.targetEntityId !== undefined) {
+          const target = await deps.entityStore.associateChannelAccount({
+            channel: approval.channelId,
+            channelUserId: approval.channelUserId,
+            targetEntityId: body.targetEntityId,
+          });
+          if (target.verificationTier !== "verified" && target.verificationTier !== "sealed") {
+            await deps.entityStore.updateEntity(target.id, { verificationTier: "verified" });
+          }
+          entityPromoted = { id: target.id, tier: "verified" };
+        } else {
+          const entity = await deps.entityStore.resolveEntityByChannel(approval.channelId, approval.channelUserId);
+          if (entity !== null) {
+            const displayName = body.profile?.name?.trim();
+            if (displayName !== undefined && displayName !== "" && displayName !== entity.displayName) {
+              await deps.entityStore.updateEntity(entity.id, { displayName });
+            }
+            if (entity.verificationTier !== "verified" && entity.verificationTier !== "sealed") {
+              await deps.entityStore.updateEntity(entity.id, { verificationTier: "verified" });
+            }
+            entityPromoted = { id: entity.id, tier: "verified" };
+          }
         }
       }
       return reply.send({ ok: true, approval, decision, entityPromoted });
@@ -2307,6 +2330,61 @@ export async function createGatewayRuntimeState(
       const msg = err instanceof Error ? err.message : String(err);
       const code = msg.includes("not found") ? 404 : 400;
       return reply.code(code).send({ error: `approve failed: ${msg}` });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Owner claim (s234 P3) — owner identity is a DURABLE marker, no longer the
+  // hand-edited owner.channels config. A fresh install has no owner; the first
+  // LAN admin claims it with the one-time token printed to the console at boot.
+  //   GET  /api/owner/status  — { hasOwner, ownerEntityId, claimable }
+  //   POST /api/owner/claim   — { token, entityId | (channelId, channelUserId) }
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/owner/status", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+    if (!deps.entityStore) return reply.code(503).send({ error: "Entity store not available" });
+    const ownerEntityId = await deps.entityStore.getOwnerEntityId();
+    const claimable = ownerEntityId === undefined && (await deps.entityStore.getOwnerClaimToken()) !== undefined;
+    return reply.send({ hasOwner: ownerEntityId !== undefined, ownerEntityId: ownerEntityId ?? null, claimable });
+  });
+
+  fastify.post("/api/owner/claim", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+    if (!deps.entityStore) return reply.code(503).send({ error: "Entity store not available" });
+    const body = (request.body as { token?: string; channelId?: string; channelUserId?: string; entityId?: string; displayName?: string } | undefined) ?? {};
+
+    const existingOwner = await deps.entityStore.getOwnerEntityId();
+    if (existingOwner !== undefined) return reply.code(409).send({ error: "owner already claimed" });
+
+    const expected = await deps.entityStore.getOwnerClaimToken();
+    if (expected === undefined) return reply.code(400).send({ error: "no owner-claim token is active" });
+    const provided = Buffer.from(typeof body.token === "string" ? body.token : "");
+    const expectedBuf = Buffer.from(expected);
+    if (provided.length !== expectedBuf.length || !timingSafeEqual(provided, expectedBuf)) {
+      return reply.code(403).send({ error: "invalid claim token" });
+    }
+
+    try {
+      let owner;
+      if (typeof body.entityId === "string" && body.entityId.length > 0) {
+        owner = await deps.entityStore.getEntity(body.entityId);
+        if (owner === null) return reply.code(404).send({ error: "entity not found" });
+      } else if (typeof body.channelId === "string" && body.channelId.length > 0 && typeof body.channelUserId === "string" && body.channelUserId.length > 0) {
+        owner = await deps.entityStore.resolveOrCreate(body.channelId, body.channelUserId, body.displayName ?? "Owner");
+      } else {
+        return reply.code(400).send({ error: "provide entityId, or channelId + channelUserId" });
+      }
+      await deps.entityStore.setOwnerEntityId(owner.id);
+      await deps.entityStore.updateEntity(owner.id, { verificationTier: "sealed" });
+      await deps.entityStore.clearOwnerClaimToken();
+      deps.onOwnerClaimed?.(owner.id); // live-update the running owner id (no restart)
+      return reply.send({ ok: true, ownerEntityId: owner.id, displayName: owner.displayName });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(400).send({ error: `claim failed: ${msg}` });
     }
   });
 

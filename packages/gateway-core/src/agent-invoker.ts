@@ -28,7 +28,7 @@ import type { GatewayStateMachine } from "./state-machine.js";
 import type { AgentSessionManager } from "./agent-session.js";
 import type { ToolRegistry, ToolExecutionResult } from "./tool-registry.js";
 import type { RateLimiter } from "./rate-limiter.js";
-import { splitThinking } from "./thinking-text.js";
+import { splitThinking, ensureVisibleReply } from "./thinking-text.js";
 
 import {
   assembleSystemPromptWithBreakdown,
@@ -493,18 +493,28 @@ export class AgentInvoker extends EventEmitter {
     const projectPath = request.projectContext ?? null;
     const queryText = typeof content === "string" ? content.slice(0, 300) : "";
 
+    // The request's memory scope-stack (most-specific → broadest). A memory is
+    // recallable iff its scope is in this stack: broader layers cascade DOWN,
+    // narrower layers stay CONFINED (a room memory never surfaces outside its
+    // room). Computed ONCE and reused for passive recall AND as the default
+    // confinement for the search_memory tool — so active recall can't bypass
+    // channel confinement and bleed one channel's memories into another.
+    const requestMemoryScopes = resolveScopeStack({
+      channelId: request.channelContext?.channelId,
+      roomId: request.channelContext?.roomId,
+      projectPath,
+    });
+
+    // The OWNER's in-app console (owner + no channel context) is the unified
+    // "one mind" view: search_memory there may search ALL scopes. Inside a
+    // channel the owner stays channel-confined (no passive cross-channel bleed).
+    const ownerConsole = request.isOwner === true && request.channelContext === undefined;
+
     if (this.deps.graphAdapter !== undefined) {
       try {
         const graph = this.deps.graphAdapter;
 
-        // Resolve the request's scope-stack (most-specific → broadest). A memory is
-        // recallable iff its scope is in this stack: broader layers cascade DOWN,
-        // narrower layers stay CONFINED (a room memory never surfaces outside its room).
-        const scopeStack = resolveScopeStack({
-          channelId: request.channelContext?.channelId,
-          roomId: request.channelContext?.roomId,
-          projectPath,
-        });
+        const scopeStack = requestMemoryScopes;
 
         // Episodic events across the stack (relevance-ordered; budget-capped).
         const stackEvents = await graph.queryGraphEvents({
@@ -991,6 +1001,8 @@ export class AgentInvoker extends EventEmitter {
             state,
             sKey,
             request.chatSessionId,
+            requestMemoryScopes,
+            ownerConsole,
           );
           toolsUsed.push(toolCall.name);
 
@@ -1198,7 +1210,7 @@ export class AgentInvoker extends EventEmitter {
           for (let i = 0; i < result.toolCalls.length; i++) {
             const toolCall = result.toolCalls[i]!;
             this.emit("tool_start", { sessionKey: sKey, toolName: toolCall.name, toolIndex: i, loopIteration: loopCount, toolInput: sanitizeToolInput(toolCall.input ?? {}) });
-            const execResult = await this.executeToolSafe(toolCall, entity, coaFingerprint, state, sKey, request.chatSessionId);
+            const execResult = await this.executeToolSafe(toolCall, entity, coaFingerprint, state, sKey, request.chatSessionId, requestMemoryScopes, ownerConsole);
             toolsUsed.push(toolCall.name);
             // Merge result data into detail for tools that return structured output
             let acDetail = extractToolDetail(toolCall.name, toolCall.input ?? {});
@@ -1301,6 +1313,20 @@ export class AgentInvoker extends EventEmitter {
       const { visibleText: cleanedText, thinking: inlineThinking } =
         splitThinking(taskmasterCleaned);
 
+      // A turn that reduced to empty visible text (all-reasoning output, or an
+      // unclosed <thinking> that swallowed the body) must NEVER become a silent
+      // no-send — that was the Discord "Aion went quiet" bug. Guarantee a visible
+      // reply and log the event so out-of-app drops are observable (never silent).
+      const { text: outboundText, usedFallback: usedEmptyReplyFallback } =
+        ensureVisibleReply(cleanedText);
+      if (usedEmptyReplyFallback) {
+        this.log.warn(
+          `empty visible reply for entity ${entity.id} (coa ${outboundFingerprint}) — ` +
+            `model produced no user-facing text (inlineThinking=${String(inlineThinking.length)} chars, ` +
+            `raw=${String(taskmasterCleaned.length)} chars); sent fallback instead of dropping silently`,
+        );
+      }
+
       if (strippedCount > 0) {
         this.emit("taskmaster_emissions", {
           entityId: entity.id,
@@ -1361,7 +1387,7 @@ export class AgentInvoker extends EventEmitter {
 
       return {
         type: "response",
-        text: cleanedText,
+        text: outboundText,
         ...(inlineThinking.length > 0 ? { thinking: inlineThinking } : {}),
         toolsUsed,
         coaFingerprint: outboundFingerprint,
@@ -1436,6 +1462,8 @@ export class AgentInvoker extends EventEmitter {
     state: GatewayState,
     sessionKey?: string,
     chatSessionId?: string,
+    memoryScopes?: string[],
+    ownerConsole?: boolean,
   ): Promise<ToolExecutionResult> {
     try {
       return await this.deps.toolRegistry.execute(
@@ -1451,6 +1479,8 @@ export class AgentInvoker extends EventEmitter {
           nodeId: this.deps.nodeId,
           sessionKey,
           chatSessionId,
+          memoryScopes,
+          ownerConsole,
         },
       );
     } catch (err) {

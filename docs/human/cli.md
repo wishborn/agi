@@ -202,6 +202,66 @@ Reads from `~/.agi/logs/` (top 5 most-recent .log/.jsonl files) and
 
 ---
 
+### agi taskmaster
+
+One-shot Taskmaster job status listing. Every Taskmaster worker executes via
+a project's paired [Genie](../agents/mcp-integration.md) workspace's
+`runAgent` MCP tool (see `docs/agents/taskmaster.md`'s "Genie Pairing" section
+for the one-time per-project setup this requires). Interactive control —
+dispatching work, approving/rejecting a checkpoint gate — happens through
+conversation with Aion in [`agi chat`](#agi-chat), not a dedicated screen.
+
+```bash
+agi taskmaster                        # one-shot job listing, all projects
+agi taskmaster --project /path/to/proj  # scope to one project
+agi taskmaster --json                 # machine-readable for scripting / CI
+```
+
+---
+
+### agi chat
+
+Interactive terminal chat with Aion — a full-window layout modeled closely on
+Claude Code itself: scrollable message history, a persistent bordered
+multi-line input box, live tool-activity while a turn is running. The folder
+`agi chat` is launched in is the **Chat Container** (not a picker over
+registered projects); access is the same owner/sealed tier as the
+dashboard's chat, with the same full tool registry (including Taskmaster
+dispatch through normal conversation — there's no separate approve/reject
+screen). See `docs/agents/chat-tui.md` for the container model, `.agi`
+envelope context, the on-demand `.mcp.json` loading this depends on, and how
+the layout itself is built on `@particle-academy/fancy-tui`.
+
+```bash
+cd ~/projects/my-app
+agi chat                     # container = ~/projects/my-app
+agi chat --cwd /some/path    # override the container explicitly
+agi chat --quiet             # hide the live thinking/tool-activity region — just committed messages
+agi chat --timeout 60        # give up locally after 60s instead of the 120s default
+```
+
+Type a message and press **Enter** to send; **Alt+Enter** (or **Shift+Enter**,
+when your terminal reports support for it — check the status bar's key hint)
+inserts a newline for multi-line composition. `/quit` or `/exit` (or Ctrl-C)
+ends the session; Ctrl-C also cancels a turn that's still in flight. Tool
+activity and Aion's current status show live above the input box while a
+turn runs (`--quiet` hides that region entirely, leaving just the message
+history) — there is no token-by-token streaming yet (the gateway's own chat
+protocol delivers the final answer in one `chat:response` frame, same as the
+dashboard).
+
+A turn never hangs forever: if nothing comes back within `--timeout` seconds
+(default 120), the client gives up locally, tells the server to cancel, and
+shows a clear timeout message in the transcript. Ctrl-C cancels the current
+turn immediately (without waiting for the server to confirm) rather than
+waiting on that same timeout.
+
+Piped or non-interactive input (scripting, CI, `agi chat < /dev/null`) falls
+back automatically to a plain-text REPL — Ink can't render the full-window
+layout without a real terminal.
+
+---
+
 ### agi iw — iterative-work operator commands
 
 Operator kill switch for runaway iterative-work loops (s159 t692).
