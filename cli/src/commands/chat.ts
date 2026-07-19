@@ -54,16 +54,29 @@ interface ChatCommandOptions {
   quiet: boolean;
 }
 
+/** Enter/exit the terminal's alternate screen buffer — the same mechanism vim/htop/less use for a full-terminal takeover (a blank canvas exactly the size of the terminal; the prior shell scrollback is preserved underneath and restored on exit). Ink's `render()` has no notion of this on its own — by default it just starts printing wherever the cursor already sits. */
+const ENTER_ALT_SCREEN = "[?1049h";
+const EXIT_ALT_SCREEN = "[?1049l";
+
 async function runInkChat(opts: ChatCommandOptions): Promise<void> {
-  const { waitUntilExit } = render(
-    createElement(App, {
-      containerPath: opts.containerPath,
-      envelopeRoot: opts.envelopeRoot,
-      chatClientOptions: opts.chatClientOptions,
-      quiet: opts.quiet,
-    }),
-  );
-  await waitUntilExit();
+  if (process.stdout.isTTY) {
+    process.stdout.write(ENTER_ALT_SCREEN);
+  }
+  try {
+    const { waitUntilExit } = render(
+      createElement(App, {
+        containerPath: opts.containerPath,
+        envelopeRoot: opts.envelopeRoot,
+        chatClientOptions: opts.chatClientOptions,
+        quiet: opts.quiet,
+      }),
+    );
+    await waitUntilExit();
+  } finally {
+    if (process.stdout.isTTY) {
+      process.stdout.write(EXIT_ALT_SCREEN);
+    }
+  }
   // See the readline fallback's comment below — a persistent WS connection
   // anywhere in this process leaves the event loop alive after the app
   // genuinely exits. Exit explicitly.
