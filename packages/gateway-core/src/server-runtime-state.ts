@@ -6148,8 +6148,28 @@ export async function createGatewayRuntimeState(
     );
     const behindCount = parseInt(countResult.stdout.trim(), 10) || 0;
 
+    // Same version gate as /api/system/fork-status's `isUpgrade` (see the
+    // comment there): a custodian's content flows fork/dev → upstream/dev →
+    // upstream/main, so origin/{channel} can be topologically "ahead" by pure
+    // merge-bubble commits — carrying no new content — while still tripping
+    // `behindCount > 0`. Without this gate the alert fires on those no-op
+    // merges and the wizard (which already has the gate) then shows nothing
+    // to upgrade. Unreadable versions fall back to trusting topology.
+    let currentVersion = "0.0.0";
+    try {
+      currentVersion = (JSON.parse(readFileSync(join(repoPath, "package.json"), "utf-8")) as { version?: string }).version ?? "0.0.0";
+    } catch { /* best-effort */ }
+    let remoteVersion: string | null = null;
+    try {
+      const pkgResult = await execGitDashboard(["show", `${ref}:package.json`], repoPath);
+      if (pkgResult.exitCode === 0) {
+        remoteVersion = (JSON.parse(pkgResult.stdout) as { version?: string }).version ?? null;
+      }
+    } catch { /* best-effort */ }
+    const versionIsNewer = remoteVersion == null ? true : isVersionNewer(remoteVersion, currentVersion);
+
     let commits: { hash: string; message: string }[] = [];
-    if (behindCount > 0) {
+    if (behindCount > 0 && versionIsNewer) {
       const logResult = await execGitDashboard(
         ["log", `${deployedCommit}..${ref}`, "--oneline"], repoPath,
       );
@@ -6187,7 +6207,7 @@ export async function createGatewayRuntimeState(
     }
 
     return {
-      updateAvailable: behindCount > 0 || totalServiceBehind > 0,
+      updateAvailable: (behindCount > 0 && versionIsNewer) || totalServiceBehind > 0,
       localCommit: deployedCommit,
       remoteCommit,
       behindCount,
