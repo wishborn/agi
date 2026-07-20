@@ -239,3 +239,45 @@ describe("ChatClient — send() never hangs forever", () => {
     await expect(sendPromise).rejects.toThrow(/cancelled/i);
   });
 });
+
+describe("ChatClient — debugSink", () => {
+  it("captures connection lifecycle, every outbound send, and every inbound frame", async () => {
+    const events: { direction: string; label: string }[] = [];
+    const client = new ChatClient({
+      host: "127.0.0.1",
+      port: 3100,
+      webSocketImpl: MockWebSocket,
+      debugSink: (event) => { events.push({ direction: event.direction, label: event.label }); },
+    });
+    const openPromise = client.open("/some/project");
+    const ws = MockWebSocket.instances[0]!;
+    ws.simulateOpen();
+    await flushMicrotasks();
+    ws.simulateServerMessage({ type: "chat:opened", payload: { sessionId: "sess-1", context: "/some/project", messages: [] } });
+    await openPromise;
+
+    expect(events).toContainEqual({ direction: "lifecycle", label: "ws:connecting" });
+    expect(events).toContainEqual({ direction: "lifecycle", label: "ws:open" });
+    expect(events).toContainEqual({ direction: "send", label: "chat:open" });
+    expect(events).toContainEqual({ direction: "recv", label: "chat:opened" });
+  });
+
+  it("logs a parse-error event instead of throwing when a frame isn't valid JSON", async () => {
+    const events: { direction: string; label: string }[] = [];
+    const client = new ChatClient({
+      host: "127.0.0.1",
+      port: 3100,
+      webSocketImpl: MockWebSocket,
+      debugSink: (event) => { events.push({ direction: event.direction, label: event.label }); },
+    });
+    const openPromise = client.open("/some/project");
+    const ws = MockWebSocket.instances[0]!;
+    ws.simulateOpen();
+    await flushMicrotasks();
+    ws.simulateServerMessage({ type: "chat:opened", payload: { sessionId: "sess-1", context: "/some/project", messages: [] } });
+    await openPromise;
+
+    ws.emit("message", { data: "not json" });
+    expect(events).toContainEqual({ direction: "recv", label: "parse-error" });
+  });
+});

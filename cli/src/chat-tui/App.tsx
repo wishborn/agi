@@ -14,18 +14,32 @@ import {
   StaticList,
   Message,
   Box,
+  Avatar,
   LiveRegion,
   Spinner,
   ToolCall,
   Composer,
+  Command,
+  Row,
+  Text,
   StatusBar,
   KeyHint,
   Badge,
   Callout,
   useFancyTui,
+  type Option,
 } from "@particle-academy/fancy-tui";
 import { useChatSession } from "./useChatSession.js";
+import { parseRealtalk } from "./realtalk-reader.js";
 import type { ChatClientOptions } from "../chat-client.js";
+
+/** Known `/`-prefixed commands — deliberately small; extend here as new ones earn a slot. */
+const SLASH_COMMANDS: Option[] = [
+  { id: "/quit", label: "/quit", description: "Exit agi chat" },
+  { id: "/exit", label: "/exit", description: "Exit agi chat (alias for /quit)" },
+  { id: "/clear", label: "/clear", description: "Clear the visible conversation — local only, the server's saved history is untouched" },
+  { id: "/help", label: "/help", description: "List available commands" },
+];
 
 export interface AppProps {
   containerPath: string;
@@ -33,13 +47,16 @@ export interface AppProps {
   chatClientOptions: ChatClientOptions;
   /** Suppress the live thinking/tool-activity region — just committed messages. */
   quiet?: boolean;
+  /** A saved session to resume — its history hydrates into the transcript on open. */
+  resumeSessionId?: string;
 }
 
-function ConnectedApp({ containerPath, envelopeRoot, chatClientOptions, quiet = false }: AppProps): React.JSX.Element {
+function ConnectedApp({ containerPath, envelopeRoot, chatClientOptions, quiet = false, resumeSessionId }: AppProps): React.JSX.Element {
   const { exit } = useApp();
   const { focus } = useFocusManager();
   const { capabilities } = useFancyTui();
   const [draft, setDraft] = useState("");
+  const [showHelp, setShowHelp] = useState(false);
 
   // fancy-tui's Composer calls Ink's useFocus() without autoFocus — nothing
   // is focused by default (the user would otherwise have to press Tab first).
@@ -53,9 +70,11 @@ function ConnectedApp({ containerPath, envelopeRoot, chatClientOptions, quiet = 
     liveToolCalls,
     connectionState,
     connectionError,
+    sessionId,
     send,
     cancel,
-  } = useChatSession(containerPath, chatClientOptions);
+    clearMessages,
+  } = useChatSession(containerPath, { ...chatClientOptions, resumeSessionId });
 
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
@@ -67,11 +86,47 @@ function ConnectedApp({ containerPath, envelopeRoot, chatClientOptions, quiet = 
     }
   });
 
+  const trimmedDraft = draft.trim();
+  const isComposingCommand = trimmedDraft.startsWith("/");
+  const commandQuery = isComposingCommand ? trimmedDraft.slice(1) : "";
+  // Decoded live, never alters what actually gets sent — a first-pass
+  // 0READER (repos/prime/core/0TERMS.md + 0ACCESSOR.md), Phase 1 scope only
+  // (recognize known lexicon patterns, decode for the human typing them).
+  // Mutually exclusive with the slash-command palette so they never overlap.
+  const realtalkMatch = isComposingCommand ? null : parseRealtalk(trimmedDraft);
+
+  const handleDraftChange = (value: string): void => {
+    setDraft(value);
+    if (showHelp) setShowHelp(false);
+  };
+
+  const runSlashCommand = (id: string): void => {
+    switch (id) {
+      case "/quit":
+      case "/exit":
+        exit();
+        return;
+      case "/clear":
+        clearMessages();
+        return;
+      case "/help":
+        setShowHelp(true);
+        return;
+      default:
+        return;
+    }
+  };
+
   const handleSubmit = (value: string): void => {
     const trimmed = value.trim();
     if (trimmed === "") return;
-    if (trimmed === "/quit" || trimmed === "/exit") {
-      exit();
+    if (trimmed.startsWith("/")) {
+      // Exact match only — an ambiguous/partial slash command (e.g. just
+      // "/" or "/qu") leaves the palette open below instead of guessing.
+      const match = SLASH_COMMANDS.find((c) => c.id === trimmed.toLowerCase());
+      if (!match) return;
+      setDraft("");
+      runSlashCommand(match.id);
       return;
     }
     setDraft("");
@@ -104,13 +159,24 @@ function ConnectedApp({ containerPath, envelopeRoot, chatClientOptions, quiet = 
       {/* fancy-tui's <MessageList> renders <Message> back-to-back with zero
           gap and exposes no spacing prop, so entries run together. Composing
           StaticList + Message directly (both public exports) lets us add a
-          blank line between them. */}
+          blank line between them. Agent replies get a small mushroom Avatar
+          alongside — Message itself is sealed (no avatar slot), so it's a
+          sibling in the same Row rather than something injected inside it. */}
       <StaticList
         items={messages}
         getKey={(m) => m.id}
         renderItem={(m) => (
           <Box marginBottom={1}>
-            <Message message={m} />
+            {m.role === "agent" ? (
+              <Row>
+                <Avatar name="Aion" glyph="🍄" />
+                <Box flexGrow={1}>
+                  <Message message={m} />
+                </Box>
+              </Row>
+            ) : (
+              <Message message={m} />
+            )}
           </Box>
         )}
       />
@@ -122,17 +188,35 @@ function ConnectedApp({ containerPath, envelopeRoot, chatClientOptions, quiet = 
           ))}
         </LiveRegion>
       )}
+      {showHelp && (
+        <Callout title="Commands" tone="info">
+          {SLASH_COMMANDS.map((c) => `${c.label} — ${c.description ?? ""}`).join("\n")}
+        </Callout>
+      )}
+      {isComposingCommand && !thinking && (
+        <Command id="slash-commands" query={commandQuery} onQueryChange={() => {}} commands={SLASH_COMMANDS} onSelect={runSlashCommand} />
+      )}
+      {realtalkMatch !== null && !thinking && (
+        <Callout title="0REALTALK" tone={realtalkMatch.kind === "unrecognizedRootTerm" ? "warning" : "info"}>
+          {realtalkMatch.summary}
+        </Callout>
+      )}
       <Composer
         id="prompt"
         value={draft}
-        onChange={setDraft}
+        onChange={handleDraftChange}
         onSubmit={handleSubmit}
-        placeholder="Message Aion… (/quit to exit)"
+        placeholder="Message Aion… (/quit to exit, /help for commands)"
       />
       <StatusBar
         left={<KeyHint keys="Ctrl+C" label={thinking ? "cancel" : "exit"} />}
         center={capabilities.shiftEnter ? undefined : <KeyHint keys="Alt+Enter" label="newline" />}
-        right={envelopeRoot !== null ? <Badge tone="info">.agi envelope</Badge> : undefined}
+        right={
+          <Row>
+            {sessionId !== null && <Text tone="muted">sess:{sessionId.slice(0, 8)}</Text>}
+            {envelopeRoot !== null && <Badge tone="info">.agi envelope</Badge>}
+          </Row>
+        }
       />
     </Screen>
   );

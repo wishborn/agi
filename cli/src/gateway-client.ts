@@ -32,6 +32,17 @@ export interface LemonadeStatus {
   activeModel?: string | null;
 }
 
+/** Shape of one /api/chat/sessions entry (chat-persistence.ts ChatSessionSummary). */
+export interface ChatSessionSummary {
+  id: string;
+  context: string;
+  contextLabel: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  lastPreview: string;
+}
+
 /** Shape of one /api/taskmaster/jobs[/:jobId] entry (worker-api.ts JobSummary). */
 export interface TaskmasterJobSummary {
   id: string;
@@ -115,6 +126,12 @@ export class GatewayClient {
   /** Reject a paused checkpoint gate, marking the job failed. */
   async rejectTaskmasterJob(jobId: string, reason?: string): Promise<void> {
     await this.post(`/api/taskmaster/reject/${encodeURIComponent(jobId)}`, reason ? { reason } : undefined);
+  }
+
+  /** List saved chat sessions (global + s130-migrated per-project, server-side). Used by `agi chat` to auto-resume the most recent session for a container. */
+  async chatSessions(): Promise<ChatSessionSummary[]> {
+    const res = (await this.fetch("/api/chat/sessions")) as { sessions: ChatSessionSummary[] };
+    return res.sessions;
   }
 
   private async fetch(path: string): Promise<unknown> {

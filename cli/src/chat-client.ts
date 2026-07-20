@@ -13,6 +13,7 @@
  */
 
 import type { ChatClientMessage, ChatServerMessage, ChatHistoryMessage } from "@agi/gateway-core";
+export type { ChatHistoryMessage } from "@agi/gateway-core";
 
 /** Structural subset of the global `WebSocket` this client actually uses — lets tests inject a mock instead of relying on global stubbing. */
 export interface WebSocketLike {
@@ -37,6 +38,15 @@ export interface ChatClientOptions {
    * Default 120_000 (2 min).
    */
   sendTimeoutMs?: number;
+  /** Fires for every outbound send, inbound frame, and connection-lifecycle event — `agi chat --debug <path>`'s hook for streaming a diagnostic log. No-op when omitted; adds no overhead to normal use. */
+  debugSink?: (event: ChatDebugEvent) => void;
+}
+
+export interface ChatDebugEvent {
+  ts: string;
+  direction: "send" | "recv" | "lifecycle";
+  label: string;
+  detail?: unknown;
 }
 
 export interface ChatSessionOpened {
@@ -105,6 +115,7 @@ export class ChatClient {
   private pendingOpen: { resolve: (v: ChatSessionOpened) => void; reject: (err: Error) => void } | null = null;
   private pendingTurn: PendingTurn | null = null;
   private readonly sendTimeoutMs: number;
+  private readonly debugSink: (event: ChatDebugEvent) => void;
 
   constructor(opts: ChatClientOptions = {}) {
     const host = opts.host ?? "127.0.0.1";
@@ -112,6 +123,11 @@ export class ChatClient {
     this.url = `ws://${host}:${port}/ws`;
     this.webSocketImpl = opts.webSocketImpl ?? (WebSocket as unknown as new (url: string) => WebSocketLike);
     this.sendTimeoutMs = opts.sendTimeoutMs ?? 120_000;
+    this.debugSink = opts.debugSink ?? (() => {});
+  }
+
+  private debug(direction: ChatDebugEvent["direction"], label: string, detail?: unknown): void {
+    this.debugSink({ ts: new Date().toISOString(), direction, label, detail });
   }
 
   on(handlers: ChatClientHandlers): void {
@@ -120,19 +136,23 @@ export class ChatClient {
 
   private connect(): Promise<WebSocketLike> {
     return new Promise((resolve, reject) => {
+      this.debug("lifecycle", "ws:connecting", { url: this.url });
       const ws = new this.webSocketImpl(this.url);
       const onOpen = () => {
         ws.removeEventListener("error", onError);
+        this.debug("lifecycle", "ws:open");
         resolve(ws);
       };
       const onError = () => {
         ws.removeEventListener("open", onOpen);
+        this.debug("lifecycle", "ws:error", { url: this.url });
         reject(new ChatWsUnreachableError(this.url));
       };
       ws.addEventListener("open", onOpen, { once: true });
       ws.addEventListener("error", onError, { once: true });
       ws.addEventListener("message", (event: { data?: unknown }) => { this.handleMessage(event); });
       ws.addEventListener("close", () => {
+        this.debug("lifecycle", "ws:close");
         this.ws = null;
         this.handlers.onClosed?.();
       });
@@ -164,6 +184,7 @@ export class ChatClient {
       const timer = setTimeout(() => {
         if (this.pendingTurn === turn) {
           this.pendingTurn = null;
+          this.debug("lifecycle", "send:timeout", { sendTimeoutMs: this.sendTimeoutMs });
           this.cancel();
           reject(new ChatTimeoutError(`No response after ${String(this.sendTimeoutMs)}ms — sent a cancel request, but the server may still be running this turn.`));
         }
@@ -187,6 +208,7 @@ export class ChatClient {
    */
   cancel(): void {
     if (this.sessionId === null) return;
+    this.debug("lifecycle", "cancel()");
     this.wsSend({ type: "chat:cancel", payload: { sessionId: this.sessionId } });
     if (this.pendingTurn !== null) {
       const turn = this.pendingTurn;
@@ -205,6 +227,7 @@ export class ChatClient {
   }
 
   private wsSend(message: ChatClientMessage): void {
+    this.debug("send", message.type, message);
     this.ws?.send(JSON.stringify(message));
   }
 
@@ -213,8 +236,10 @@ export class ChatClient {
     try {
       parsed = JSON.parse(String(event.data)) as ChatServerMessage;
     } catch {
+      this.debug("recv", "parse-error", { raw: event.data });
       return;
     }
+    this.debug("recv", parsed.type, parsed);
 
     switch (parsed.type) {
       case "chat:opened": {
