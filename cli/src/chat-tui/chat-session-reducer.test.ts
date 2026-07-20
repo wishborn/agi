@@ -12,7 +12,7 @@ import {
   toolCallId,
   type ChatSessionState,
 } from "./useChatSession.js";
-import type { ChatToolStartEvent, ChatToolResultEvent } from "../chat-client.js";
+import type { ChatHistoryMessage, ChatToolStartEvent, ChatToolResultEvent } from "../chat-client.js";
 
 const T = "2026-01-01T00:00:00.000Z";
 
@@ -122,5 +122,58 @@ describe("chatSessionReducer — turnFailed", () => {
     expect(s.messages).toEqual([
       { id: "m1", role: "error", content: "Timed out: no response after 120000ms", name: undefined, timestamp: T },
     ]);
+  });
+});
+
+describe("chatSessionReducer — historyLoaded", () => {
+  function historyMsg(overrides: Partial<ChatHistoryMessage> = {}): ChatHistoryMessage {
+    return { role: "user", content: "hi", timestamp: T, ...overrides };
+  }
+
+  it("maps each history role onto the fancy-tui MessageRole it renders as", () => {
+    const s = chatSessionReducer(initialChatSessionState, {
+      type: "historyLoaded",
+      messages: [
+        historyMsg({ role: "user", content: "hello" }),
+        historyMsg({ role: "assistant", content: "hi there" }),
+        historyMsg({ role: "tool", content: "grep_search: 3 matches" }),
+        historyMsg({ role: "thought", content: "considering options" }),
+      ],
+    });
+
+    expect(s.messages.map((m) => m.role)).toEqual(["user", "agent", "tool", "system"]);
+    expect(s.messages.map((m) => m.content)).toEqual(["hello", "hi there", "grep_search: 3 matches", "considering options"]);
+  });
+
+  it("assigns monotonically increasing ids continuing from the current sequence", () => {
+    const withPrior = chatSessionReducer(initialChatSessionState, { type: "userSent", text: "already here", timestamp: T });
+    const s = chatSessionReducer(withPrior, { type: "historyLoaded", messages: [historyMsg()] });
+    expect(s.messages.map((m) => m.id)).toEqual(["m1", "m2"]);
+  });
+
+  it("is a no-op on empty history", () => {
+    const s = chatSessionReducer(initialChatSessionState, { type: "historyLoaded", messages: [] });
+    expect(s).toEqual(initialChatSessionState);
+  });
+});
+
+describe("chatSessionReducer — systemMessage", () => {
+  it("appends a local role:system message", () => {
+    const s = chatSessionReducer(initialChatSessionState, { type: "systemMessage", text: "/quit — exit agi chat", timestamp: T });
+    expect(s.messages).toEqual([
+      { id: "m1", role: "system", content: "/quit — exit agi chat", name: undefined, timestamp: T },
+    ]);
+  });
+});
+
+describe("chatSessionReducer — cleared", () => {
+  it("empties messages without resetting thinking/statusText/liveToolCalls/nextMessageSeq", () => {
+    let s: ChatSessionState = chatSessionReducer(initialChatSessionState, { type: "userSent", text: "hi", timestamp: T });
+    s = chatSessionReducer(s, { type: "toolStart", event: toolStart() });
+    const cleared = chatSessionReducer(s, { type: "cleared" });
+
+    expect(cleared.messages).toEqual([]);
+    expect(cleared.liveToolCalls).toEqual(s.liveToolCalls);
+    expect(cleared.nextMessageSeq).toBe(s.nextMessageSeq);
   });
 });

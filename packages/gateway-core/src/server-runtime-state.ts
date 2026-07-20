@@ -4360,7 +4360,6 @@ export async function createGatewayRuntimeState(
 
   {
     const workspaceRoot = deps.workspaceRoot ?? process.cwd();
-    const primeDir = deps.primeDir ?? join(workspaceRoot, ".aionima");
     const marketplaceDir = ((deps.config as Record<string, unknown> | undefined)?.marketplace as Record<string, string> | undefined)?.dir ?? "/opt/agi-marketplace";
     const mappMarketplaceDir = ((deps.config as Record<string, unknown> | undefined)?.mappMarketplace as Record<string, string> | undefined)?.dir ?? "/opt/agi-mapp-marketplace";
 
@@ -4396,8 +4395,6 @@ export async function createGatewayRuntimeState(
           enabled = cfg.dev?.enabled ?? cfg.agent?.devMode ?? false;
         } catch { /* ignore */ }
       }
-
-      const primeEntries = deps.primeLoader !== undefined ? deps.primeLoader.index() : 0;
 
       // Query the connections table directly for the owner's GitHub connection.
       let githubAuthenticated = false;
@@ -4438,7 +4435,6 @@ export async function createGatewayRuntimeState(
       };
 
       const agiDir = pickDir(workspaceRoot, "agi");
-      const effectivePrimeDir = pickDir(primeDir, "prime");
       const effectiveMarketplaceDir = pickDir(marketplaceDir, "marketplace");
       const effectiveMappMarketplaceDir = pickDir(mappMarketplaceDir, "mapp-marketplace");
 
@@ -4465,12 +4461,14 @@ export async function createGatewayRuntimeState(
         try {
           const cfg = deps.configPath
             ? JSON.parse(readFileSync(deps.configPath, "utf-8")) as {
-                dev?: { agiRepo?: string; primeRepo?: string };
+                dev?: { agiRepo?: string };
               }
             : {};
+          // PRIME is intentionally excluded — it's not a dev-mode fork (see
+          // dev-mode-forks.ts's CORE_REPOS comment), so there's no
+          // dev.primeRepo to align against.
           const probes: Array<[string, string, string | undefined]> = [
             ["agi", "/opt/agi", cfg.dev?.agiRepo],
-            ["prime", "/opt/agi-prime", cfg.dev?.primeRepo],
           ];
           let aligned = true;
           for (const [name, dir, expected] of probes) {
@@ -4506,7 +4504,6 @@ export async function createGatewayRuntimeState(
         originsAligned,
         originMisaligned: originMisaligned.length > 0 ? originMisaligned : undefined,
         agi: { remote: getRemote(agiDir), branch: getBranch(agiDir) },
-        prime: { remote: getRemote(effectivePrimeDir), branch: getBranch(effectivePrimeDir), entries: primeEntries },
         marketplace: { remote: getRemote(effectiveMarketplaceDir), branch: getBranch(effectiveMarketplaceDir) },
         mappMarketplace: { remote: getRemote(effectiveMappMarketplaceDir), branch: getBranch(effectiveMappMarketplaceDir) },
         // PAx (Particle-Academy) ADF UI primitive forks — s136 t512.

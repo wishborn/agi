@@ -16,11 +16,12 @@
 
 import type { Command } from "commander";
 import { createInterface } from "node:readline/promises";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, statSync, createWriteStream } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { render } from "ink";
 import { createElement } from "react";
-import { ChatClient, ChatWsUnreachableError, ChatTurnError, ChatTimeoutError, type ChatClientOptions, type ChatToolStartEvent, type ChatToolResultEvent } from "../chat-client.js";
+import { ChatClient, ChatWsUnreachableError, ChatTurnError, ChatTimeoutError, type ChatClientOptions, type ChatDebugEvent, type ChatToolStartEvent, type ChatToolResultEvent } from "../chat-client.js";
+import { GatewayClient } from "../gateway-client.js";
 import { App } from "../chat-tui/App.js";
 import { bold, dim, red } from "../output.js";
 
@@ -52,6 +53,8 @@ interface ChatCommandOptions {
   envelopeRoot: string | null;
   chatClientOptions: ChatClientOptions;
   quiet: boolean;
+  /** A saved session to resume (its history hydrates into the transcript) instead of starting fresh. Resolved in `registerChatCommand` — either explicit (`--session`) or auto-picked as the most recently updated session whose `context` matches this container path. */
+  resumeSessionId?: string;
 }
 
 /** Enter/exit the terminal's alternate screen buffer — the same mechanism vim/htop/less use for a full-terminal takeover (a blank canvas exactly the size of the terminal; the prior shell scrollback is preserved underneath and restored on exit). Ink's `render()` has no notion of this on its own — by default it just starts printing wherever the cursor already sits. */
@@ -69,6 +72,7 @@ async function runInkChat(opts: ChatCommandOptions): Promise<void> {
         envelopeRoot: opts.envelopeRoot,
         chatClientOptions: opts.chatClientOptions,
         quiet: opts.quiet,
+        resumeSessionId: opts.resumeSessionId,
       }),
     );
     await waitUntilExit();
@@ -91,6 +95,9 @@ async function runReadlineChat(opts: ChatCommandOptions): Promise<void> {
     console.log(dim(`.agi envelope detected at ${envelopeRoot}`));
   }
   console.log(dim("(non-interactive stdin — plain-text mode. /quit or Ctrl-C to exit)"));
+  if (opts.resumeSessionId !== undefined) {
+    console.log(dim(`Resuming session ${opts.resumeSessionId}`));
+  }
   console.log();
 
   const sendTimeoutMs = chatClientOptions.sendTimeoutMs ?? 120_000;
@@ -106,7 +113,7 @@ async function runReadlineChat(opts: ChatCommandOptions): Promise<void> {
   });
 
   try {
-    await client.open(containerPath);
+    await client.open(containerPath, opts.resumeSessionId);
   } catch (err) {
     if (err instanceof ChatWsUnreachableError) {
       console.error(red(err.message));
@@ -178,9 +185,20 @@ export function registerChatCommand(program: Command): void {
     .option("--cwd <path>", "Container folder (defaults to the current directory)")
     .option("--quiet", "Suppress intermediate activity (thinking/tool/progress lines) — just show Aion's final response")
     .option("--timeout <seconds>", "Max time to wait for a turn before giving up locally (default 120)", "120")
-    .action(async (cmdOpts: { cwd?: string; quiet?: boolean; timeout?: string }) => {
+    .option("--debug <path>", "Stream every WS send/receive + connection-lifecycle event to this file as JSONL (for diagnosing a stuck or misbehaving turn)")
+    .option("--session <id>", "Resume this specific saved session by id, instead of auto-resuming the container's most recent one")
+    .option("--new-session", "Start fresh even if a prior session exists for this container")
+    .action(async (cmdOpts: { cwd?: string; quiet?: boolean; timeout?: string; debug?: string; session?: string; newSession?: boolean }) => {
       const opts = program.opts<{ host?: string; port?: number }>();
       const sendTimeoutMs = Math.max(1, Number(cmdOpts.timeout) || 120) * 1000;
+
+      let debugSink: ((event: ChatDebugEvent) => void) | undefined;
+      if (cmdOpts.debug !== undefined) {
+        const debugPath = resolve(cmdOpts.debug);
+        const debugStream = createWriteStream(debugPath, { flags: "a" });
+        debugSink = (event) => { debugStream.write(`${JSON.stringify(event)}\n`); };
+        console.log(dim(`(debug log: ${debugPath})`));
+      }
       // scripts/agi-cli.sh's `chat` route `cd`s into the dev source tree
       // before exec-ing this file, so `process.cwd()` alone would always
       // resolve to that tree rather than wherever the user actually ran
@@ -197,11 +215,32 @@ export function registerChatCommand(program: Command): void {
         process.exit(1);
       }
 
+      // Workspace-scoped session resume: an explicit --session id wins;
+      // otherwise auto-pick the most recently updated saved session whose
+      // `context` matches this exact container path. A gateway that's
+      // unreachable (or too old to have this endpoint) just falls through
+      // to a fresh session — the WS open() below surfaces the real error
+      // if the gateway is genuinely down, so failing silently here is safe.
+      let resumeSessionId: string | undefined = cmdOpts.session;
+      if (resumeSessionId === undefined && cmdOpts.newSession !== true) {
+        try {
+          const gatewayClient = new GatewayClient(opts.host ?? "127.0.0.1", opts.port ?? 3100);
+          const sessions = await gatewayClient.chatSessions();
+          const matches = sessions
+            .filter((s) => s.context === containerPath)
+            .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+          resumeSessionId = matches[0]?.id;
+        } catch {
+          // Unreachable gateway or missing endpoint — proceed with a fresh session.
+        }
+      }
+
       const commandOpts: ChatCommandOptions = {
         containerPath,
         envelopeRoot: detectAgiEnvelope(containerPath),
-        chatClientOptions: { host: opts.host ?? "127.0.0.1", port: opts.port ?? 3100, sendTimeoutMs },
+        chatClientOptions: { host: opts.host ?? "127.0.0.1", port: opts.port ?? 3100, sendTimeoutMs, debugSink },
         quiet: cmdOpts.quiet === true,
+        resumeSessionId,
       };
 
       if (process.stdin.isTTY === true) {

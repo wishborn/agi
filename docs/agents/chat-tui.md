@@ -116,6 +116,22 @@ didn't recover it either (through whatever terminal layer was in front of
 the process at the time). Without a client-side timeout, there was no way
 out short of killing the terminal.
 
+**`--debug <path>`** streams every `ChatClient` event — outbound WS sends,
+inbound frames (parsed, or a `parse-error` event if a frame isn't valid
+JSON), and connection-lifecycle events (`ws:connecting`/`ws:open`/
+`ws:error`/`ws:close`, `send:timeout`, `cancel()`) — as JSONL to the given
+file via `ChatClientOptions.debugSink`. This only covers the client's own
+view of the wire; a turn that hangs *server-side* (no response ever sent)
+needs `agi logs` on the gateway, which this flag can't see — a real
+2026-07-19 incident (the same class of hang the timeout above guards
+against) turned out to be exactly that: `AnthropicProvider`'s retry loop had
+no logging at all, so a stuck turn looked identical to a genuinely
+in-progress one from the logs. See `packages/gateway-core/src/llm/
+anthropic-provider.ts`'s `invoke()` for the server-side fix —
+request-lifecycle logging plus disabling the Anthropic SDK's own redundant
+internal retry layer (which compounded on top of the provider's own retry
+loop with nothing logged in between).
+
 ## Rendering: full-window layout on `@particle-academy/fancy-tui`
 
 `agi chat`'s interactive UI (`cli/src/chat-tui/App.tsx`) is a full-window Ink
@@ -176,9 +192,62 @@ everything a Claude-Code-style chat surface needs.
 
 ## Scope of this ship
 
-- Single active session per launched container. Multi-session list/switch/
-  resume (the existing `GET /api/chat/sessions` + `ChatPersistence`) is a
-  planned fast-follow, not built yet.
+- **Workspace-scoped session resume.** `registerChatCommand` calls the
+  existing `GET /api/chat/sessions` (via `GatewayClient.chatSessions()`)
+  before opening the WS connection, filters to sessions whose `context`
+  matches the resolved container path, and auto-picks the most recently
+  updated one as `resumeSessionId` — passed to `ChatClient.open(context,
+  sessionId)`, which already supported resuming (unchanged). `useChatSession`
+  hydrates the resumed session's prior `messages` into the transcript on
+  `chat:opened` via a new `historyLoaded` reducer action.  `--session <id>`
+  overrides the auto-pick explicitly; `--new-session` forces a fresh session
+  even when a prior one exists. A gateway that's unreachable or too old to
+  have this endpoint just falls through to a fresh session — the failure
+  mode is silent-and-safe, not a hard error. Still single active session
+  *per running `agi chat` process* — switching between multiple saved
+  sessions from inside a running session (not just at launch) remains a
+  fast-follow.
+- **Slash-command palette.** `Composer` input starting with `/` renders
+  `fancy-tui`'s `Command` above the input, filtered live — but selection
+  itself is driven by `App.tsx`'s own exact-match-on-Enter logic, not
+  `Command`'s internal `Button` focus/press handling, to avoid a
+  focus-contention problem: `Command`'s buttons and the `Composer` can't
+  usefully hold focus at the same time, and forcing the user to `Tab` into
+  the list to select would break the type-to-filter-then-Enter flow this is
+  meant to match (Claude Code's own slash-command UX). `Command` is used
+  purely for its visual rendering here. Known commands: `/quit`, `/exit`,
+  `/clear` (empties the visible scrollback — local only, the server's saved
+  history is untouched), `/help` (lists commands via a dismissible
+  `Callout`, not injected into the persisted transcript).
+- **Mushroom persona glyph.** Agent-role messages render a `fancy-tui`
+  `Avatar` (glyph `🍄`) alongside `Message` in `App.tsx`'s `StaticList`
+  render — `Message` itself is sealed with no avatar slot, so this is a
+  sibling in the same `Row`, not something injected inside it. `🍄` is the
+  practical fallback for Aion's actual brand mark
+  (`ui/dashboard/public/spore-seed-clear.svg`) — a terminal can't render
+  SVG/vector art at all, so an emoji is the only option; mushroom fits the
+  mycelium/spore branding already present in Aion's own voice.
+- **First-pass 0REALTALK reader** (`cli/src/chat-tui/realtalk-reader.ts`).
+  PRIME documents 0REALTALK as a "SYNAPTIC Programming Language" with a
+  layered PACK/UNPACK design, but every corpus file describing it is
+  explicitly WIP/MUSING status and states outright there's "no formal
+  compiler/interpreter" yet. This is deliberately Phase 1 only, matching
+  the corpus's own scoping (`evolution/musings/0realtalk-engine.md`):
+  *"0READER parses known patterns from lexicon... Validation = lexicon
+  membership."* `parseRealtalk()` is a pure, side-effect-free recognizer
+  against `core/0TERMS.md`'s LAW-status lexicon (32 terms, confidence ≥
+  0.9) and `core/0ACCESSOR.md`'s `<FRAME>STATION>ROLE` accessor grammar
+  (packed abbreviations follow the corpus's own shortest-unique-prefix
+  convention, e.g. `Op`/`Ob` for OPERATOR/OBSERVER — not invented). It
+  recognizes accessors, `|+value|` confidence notation, `:seg:seg:` impact
+  marks, `+$imp`/`-$imp` boon/burn, and known LAW terms, and decodes each
+  into a human-readable summary shown live in a `Callout` above the
+  Composer (mutually exclusive with the slash-command palette) — purely
+  informational, exactly like the confidence-preview it is. It does **not**
+  execute anything, validate alignment, or touch the corpus's own
+  still-open questions (what runs compiled 0REALTALK, whether it's "the
+  language of SENTIENCE") — those stay unresolved on purpose. What actually
+  gets sent to Aion is unchanged; this only decodes for the human typing it.
 - No real token-by-token streaming — `chat:response` delivers the full
   answer in one frame (the gateway's `AnthropicClient` call is
   non-streaming today), same as the dashboard. Tool activity/thinking/
