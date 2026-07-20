@@ -238,17 +238,31 @@ agi chat                     # container = ~/projects/my-app
 agi chat --cwd /some/path    # override the container explicitly
 agi chat --quiet             # hide the live thinking/tool-activity region — just committed messages
 agi chat --timeout 60        # give up locally after 60s instead of the 120s default
+agi chat --debug ~/chat.jsonl # stream every WS send/receive + connection event to a JSONL log
+agi chat --session <id>      # resume a specific saved session instead of auto-resuming the latest
+agi chat --new-session       # start fresh even if a prior session exists for this container
 ```
 
 Type a message and press **Enter** to send; **Alt+Enter** (or **Shift+Enter**,
 when your terminal reports support for it — check the status bar's key hint)
-inserts a newline for multi-line composition. `/quit` or `/exit` (or Ctrl-C)
-ends the session; Ctrl-C also cancels a turn that's still in flight. Tool
-activity and Aion's current status show live above the input box while a
-turn runs (`--quiet` hides that region entirely, leaving just the message
-history) — there is no token-by-token streaming yet (the gateway's own chat
-protocol delivers the final answer in one `chat:response` frame, same as the
-dashboard).
+inserts a newline for multi-line composition. Typing `/` opens a filtered
+command palette — `/quit`/`/exit` (or Ctrl-C) end the session, `/clear`
+empties the visible scrollback (local only — the server's saved history is
+untouched), `/help` lists commands. Ctrl-C also cancels a turn that's still
+in flight. Tool activity and Aion's current status show live above the
+input box while a turn runs (`--quiet` hides that region entirely, leaving
+just the message history) — there is no token-by-token streaming yet (the
+gateway's own chat protocol delivers the final answer in one `chat:response`
+frame, same as the dashboard).
+
+**Sessions resume automatically.** Launching `agi chat` again from the same
+container folder picks up the most recently updated saved session for that
+exact path (auto-detected via `GET /api/chat/sessions`) and hydrates its
+prior messages into the transcript — no flag needed. `--session <id>` picks
+a specific saved session explicitly; `--new-session` skips auto-resume and
+starts clean. The status bar shows the active session's short id
+(`sess:xxxxxxxx`) for cross-referencing against a `--debug` log or a support
+report.
 
 A turn never hangs forever: if nothing comes back within `--timeout` seconds
 (default 120), the client gives up locally, tells the server to cancel, and
@@ -259,6 +273,13 @@ waiting on that same timeout.
 Piped or non-interactive input (scripting, CI, `agi chat < /dev/null`) falls
 back automatically to a plain-text REPL — Ink can't render the full-window
 layout without a real terminal.
+
+`--debug <path>` streams every outbound WS send, inbound frame, and
+connection-lifecycle event (open/close/timeout/cancel) as JSONL to the given
+file — useful for diagnosing a turn that hangs or errors with no obvious
+cause client-side. Note this only covers the client's own view of the wire;
+a turn that hangs *server-side* (no response ever sent) needs `agi logs` on
+the gateway itself, not this flag.
 
 ---
 

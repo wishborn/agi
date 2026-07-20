@@ -18,6 +18,7 @@ import {
   ChatTimeoutError,
   ChatTurnError,
   type ChatClientOptions,
+  type ChatHistoryMessage,
   type ChatToolStartEvent,
   type ChatToolResultEvent,
 } from "../chat-client.js";
@@ -43,6 +44,14 @@ export const initialChatSessionState: ChatSessionState = {
   nextMessageSeq: 1,
 };
 
+/** `ChatHistoryMessage.role` → fancy-tui's `MessageRole`. "thought" (persisted reasoning) has no direct equivalent — "system" tone fits its dim, ephemeral-in-spirit content best. */
+const HISTORY_ROLE_MAP: Record<ChatHistoryMessage["role"], MessageRole> = {
+  user: "user",
+  assistant: "agent",
+  tool: "tool",
+  thought: "system",
+};
+
 export type ChatSessionEvent =
   | { type: "userSent"; text: string; timestamp: string }
   | { type: "thinking" }
@@ -51,7 +60,10 @@ export type ChatSessionEvent =
   | { type: "progress"; text: string }
   | { type: "thought"; content: string }
   | { type: "agentResponded"; text: string; timestamp: string }
-  | { type: "turnFailed"; message: string; timestamp: string };
+  | { type: "turnFailed"; message: string; timestamp: string }
+  | { type: "historyLoaded"; messages: ChatHistoryMessage[] }
+  | { type: "systemMessage"; text: string; timestamp: string }
+  | { type: "cleared" };
 
 /** Correlates a tool's `chat:tool_start` with its later `chat:tool_result` — same convention `server.ts` itself uses for tool-card ids. */
 export function toolCallId(event: ChatToolStartEvent | ChatToolResultEvent): string {
@@ -112,6 +124,18 @@ export function chatSessionReducer(state: ChatSessionState, event: ChatSessionEv
         event.message,
         event.timestamp,
       );
+    case "historyLoaded": {
+      if (event.messages.length === 0) return state;
+      let next = state;
+      for (const m of event.messages) {
+        next = appendMessage(next, HISTORY_ROLE_MAP[m.role], m.content, m.timestamp);
+      }
+      return next;
+    }
+    case "systemMessage":
+      return appendMessage(state, "system", event.text, event.timestamp);
+    case "cleared":
+      return { ...state, messages: [] };
     default:
       return state;
   }
@@ -120,19 +144,31 @@ export function chatSessionReducer(state: ChatSessionState, event: ChatSessionEv
 export interface UseChatSessionResult extends ChatSessionState {
   connectionState: ConnectionState;
   connectionError: string | null;
+  /** Set once `chat:opened` resolves — null before then. Pairs with `--debug`'s JSONL log for cross-referencing a support report. */
+  sessionId: string | null;
   send: (text: string) => void;
   cancel: () => void;
+  /** Append a local, unsent role:system message — e.g. `/help`'s command list. Never reaches the server. */
+  addSystemMessage: (text: string) => void;
+  /** Clear the visible scrollback. Local only — the server's persisted session history is untouched, so a fresh `agi chat` in this container still resumes the full conversation. */
+  clearMessages: () => void;
 }
 
-export function useChatSession(context: string, opts: ChatClientOptions = {}): UseChatSessionResult {
-  const { host, port, sendTimeoutMs, webSocketImpl } = opts;
+export interface UseChatSessionOptions extends ChatClientOptions {
+  /** Resume this session (its prior history hydrates into `messages` once `chat:opened` returns it) instead of starting a fresh one. */
+  resumeSessionId?: string;
+}
+
+export function useChatSession(context: string, opts: UseChatSessionOptions = {}): UseChatSessionResult {
+  const { host, port, sendTimeoutMs, webSocketImpl, debugSink, resumeSessionId } = opts;
   const clientRef = useRef<ChatClient | null>(null);
   const [state, dispatch] = useReducer(chatSessionReducer, initialChatSessionState);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
 
   useEffect(() => {
-    const client = new ChatClient({ host, port, sendTimeoutMs, webSocketImpl });
+    const client = new ChatClient({ host, port, sendTimeoutMs, webSocketImpl, debugSink });
     clientRef.current = client;
     let cancelled = false;
 
@@ -146,8 +182,13 @@ export function useChatSession(context: string, opts: ChatClientOptions = {}): U
       onClosed: () => { if (!cancelled) setConnectionState("closed"); },
     });
 
-    client.open(context)
-      .then(() => { if (!cancelled) setConnectionState("open"); })
+    client.open(context, resumeSessionId)
+      .then((opened) => {
+        if (cancelled) return;
+        setSessionId(opened.sessionId);
+        dispatch({ type: "historyLoaded", messages: opened.messages });
+        setConnectionState("open");
+      })
       .catch((err: unknown) => {
         if (cancelled) return;
         setConnectionState("error");
@@ -158,7 +199,8 @@ export function useChatSession(context: string, opts: ChatClientOptions = {}): U
       cancelled = true;
       client.close();
     };
-  }, [context, host, port, sendTimeoutMs, webSocketImpl]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- resumeSessionId is read once at mount (a session, once opened, isn't meant to be re-resumed mid-App-lifetime); including it would reconnect on every parent re-render if the caller passes a fresh value each time.
+  }, [context, host, port, sendTimeoutMs, webSocketImpl, debugSink]);
 
   const send = useCallback((text: string) => {
     const client = clientRef.current;
@@ -185,5 +227,13 @@ export function useChatSession(context: string, opts: ChatClientOptions = {}): U
     clientRef.current?.cancel();
   }, []);
 
-  return { ...state, connectionState, connectionError, send, cancel };
+  const addSystemMessage = useCallback((text: string) => {
+    dispatch({ type: "systemMessage", text, timestamp: new Date().toISOString() });
+  }, []);
+
+  const clearMessages = useCallback(() => {
+    dispatch({ type: "cleared" });
+  }, []);
+
+  return { ...state, connectionState, connectionError, sessionId, send, cancel, addSystemMessage, clearMessages };
 }
