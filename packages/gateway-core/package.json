@@ -24,7 +24,7 @@
     "@agi/trpc-api": "workspace:*",
     "@agi/voice": "workspace:*",
     "@anthropic-ai/sdk": "^0.100.1",
-    "@fastify/static": "^9.3.0",
+    "@fastify/static": "^10.1.2",
     "@node-rs/argon2": "^2.0.2",
     "@trpc/server": "^11.18.0",
     "drizzle-orm": "^0.45.2",

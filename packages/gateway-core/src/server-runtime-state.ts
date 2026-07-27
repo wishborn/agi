@@ -8703,10 +8703,12 @@ export async function createGatewayRuntimeState(
       // up new asset hashes and service worker updates after upgrades.
       // Without no-cache on sw.js, the browser serves the stale SW from
       // its HTTP cache and never picks up updated precache entries (icons, etc.).
-      setHeaders(res, filePath) {
+      // @fastify/static v10 passes the FastifyReply (v9 passed the raw
+      // ServerResponse) — use reply.header(), not res.setHeader().
+      setHeaders(reply, filePath) {
         const name = filePath.split(/[/\\]/).pop() ?? "";
         if (name === "index.html" || name === "sw.js" || name === "manifest.webmanifest") {
-          res.setHeader("Cache-Control", "no-cache");
+          reply.header("Cache-Control", "no-cache");
         }
       },
     });
