@@ -245,15 +245,25 @@ agi chat --new-session       # start fresh even if a prior session exists for th
 
 Type a message and press **Enter** to send; **Alt+Enter** (or **Shift+Enter**,
 when your terminal reports support for it — check the status bar's key hint)
-inserts a newline for multi-line composition. Typing `/` opens a filtered
-command palette — `/quit`/`/exit` (or Ctrl-C) end the session, `/clear`
-empties the visible scrollback (local only — the server's saved history is
-untouched), `/help` lists commands. Ctrl-C also cancels a turn that's still
-in flight. Tool activity and Aion's current status show live above the
-input box while a turn runs (`--quiet` hides that region entirely, leaving
-just the message history) — there is no token-by-token streaming yet (the
-gateway's own chat protocol delivers the final answer in one `chat:response`
+inserts a newline for multi-line composition. Arrow keys move the cursor;
+**PgUp/PgDn** scroll the conversation history and **Esc** jumps back to the
+latest. Typing `/` shows matching commands — `/quit`/`/exit` (or Ctrl-C) end
+the session, `/clear` empties the visible scrollback (local only — the
+server's saved history is untouched), `/help` lists commands and the
+0REALTALK shorthand reference. **Ctrl+T** collapses/expands Aion's reasoning
+("thinking") blocks. Ctrl-C also cancels a turn that's still in flight. Tool
+activity and Aion's current status show live above the input box while a turn
+runs (`--quiet` hides that region entirely) — there is no token-by-token
+streaming yet (the gateway delivers the final answer in one `chat:response`
 frame, same as the dashboard).
+
+**0REALTALK shorthands.** The input accepts a "stream of consciousness" — pour
+layered context and multiple requests into one message. `n>` splits it into an
+ordered request queue (sent one at a time). `:( … ):` is a terminal whose
+inner expression is unpacked and its output sent to Aion, shown as an
+attachment on your message. `:word:` (and chained `:action:scope:target:`) are
+triggers passed through to Aion. A live `0REALTALK` panel decodes what you're
+typing; `/help` has the full reference.
 
 **Sessions resume automatically.** Launching `agi chat` again from the same
 container folder picks up the most recently updated saved session for that
@@ -264,11 +274,12 @@ starts clean. The status bar shows the active session's short id
 (`sess:xxxxxxxx`) for cross-referencing against a `--debug` log or a support
 report.
 
-A turn never hangs forever: if nothing comes back within `--timeout` seconds
-(default 120), the client gives up locally, tells the server to cancel, and
-shows a clear timeout message in the transcript. Ctrl-C cancels the current
-turn immediately (without waiting for the server to confirm) rather than
-waiting on that same timeout.
+A turn never hangs forever, but long ones are fine: `--timeout` (default 120s)
+is an *inactivity* window, not a total cap — as long as Aion keeps reporting
+progress (thinking, tool calls), the turn stays alive however long it takes.
+Only genuine silence for that long makes the client give up, cancel, and show
+a timeout message. Ctrl-C cancels the current turn immediately (without
+waiting for the server to confirm).
 
 Piped or non-interactive input (scripting, CI, `agi chat < /dev/null`) falls
 back automatically to a plain-text REPL — Ink can't render the full-window

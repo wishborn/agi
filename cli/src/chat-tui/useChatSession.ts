@@ -25,8 +25,20 @@ import {
 
 export type ConnectionState = "connecting" | "open" | "closed" | "error";
 
+/** A 0REALTALK terminal attached to a user message — the raw terminal as typed plus the unpacker's output that was actually sent to Aion. */
+export interface TerminalAttachment {
+  raw: string;
+  output: string;
+}
+
+/** A rendered message; user messages may carry unpacked-terminal attachments, and reasoning ("thought") messages are flagged `thinking` so the UI can collapse them. Superset of fancy-tui's MessageData. */
+export interface ChatMessage extends MessageData {
+  attachments?: TerminalAttachment[];
+  thinking?: boolean;
+}
+
 export interface ChatSessionState {
-  messages: MessageData[];
+  messages: ChatMessage[];
   /** True while a turn is in flight (from send() until its terminal event). */
   thinking: boolean;
   /** Latest thinking/progress/thought text, if any — used as the live spinner's label. */
@@ -53,7 +65,7 @@ const HISTORY_ROLE_MAP: Record<ChatHistoryMessage["role"], MessageRole> = {
 };
 
 export type ChatSessionEvent =
-  | { type: "userSent"; text: string; timestamp: string }
+  | { type: "userSent"; text: string; timestamp: string; attachments?: TerminalAttachment[] }
   | { type: "thinking" }
   | { type: "toolStart"; event: ChatToolStartEvent }
   | { type: "toolResult"; event: ChatToolResultEvent; timestamp: string }
@@ -76,18 +88,19 @@ function appendMessage(
   content: string,
   timestamp: string,
   name?: string,
+  extra?: { attachments?: TerminalAttachment[]; thinking?: boolean },
 ): ChatSessionState {
   return {
     ...state,
     nextMessageSeq: state.nextMessageSeq + 1,
-    messages: [...state.messages, { id: `m${String(state.nextMessageSeq)}`, role, content, name, timestamp }],
+    messages: [...state.messages, { id: `m${String(state.nextMessageSeq)}`, role, content, name, timestamp, ...extra }],
   };
 }
 
 export function chatSessionReducer(state: ChatSessionState, event: ChatSessionEvent): ChatSessionState {
   switch (event.type) {
     case "userSent":
-      return appendMessage(state, "user", event.text, event.timestamp);
+      return appendMessage(state, "user", event.text, event.timestamp, undefined, { attachments: event.attachments });
     case "thinking":
       return { ...state, thinking: true, statusText: "Aion is thinking…" };
     case "toolStart": {
@@ -128,7 +141,9 @@ export function chatSessionReducer(state: ChatSessionState, event: ChatSessionEv
       if (event.messages.length === 0) return state;
       let next = state;
       for (const m of event.messages) {
-        next = appendMessage(next, HISTORY_ROLE_MAP[m.role], m.content, m.timestamp);
+        // A persisted `thought` message is reasoning — flag it so the UI can
+        // collapse it (rendered raw it exposes `<thinking>` tags).
+        next = appendMessage(next, HISTORY_ROLE_MAP[m.role], m.content, m.timestamp, undefined, m.role === "thought" ? { thinking: true } : undefined);
       }
       return next;
     }
@@ -146,7 +161,13 @@ export interface UseChatSessionResult extends ChatSessionState {
   connectionError: string | null;
   /** Set once `chat:opened` resolves — null before then. Pairs with `--debug`'s JSONL log for cross-referencing a support report. */
   sessionId: string | null;
-  send: (text: string) => void;
+  /**
+   * Send a turn. `wireText` is what actually reaches Aion (prose + unpacked
+   * terminal output). `opts.displayText` is what the user's message bubble
+   * shows (the prose alone — defaults to `wireText`); `opts.attachments` are
+   * the unpacked 0REALTALK terminals rendered as distinct blocks on the bubble.
+   */
+  send: (wireText: string, opts?: { displayText?: string; attachments?: TerminalAttachment[] }) => void;
   cancel: () => void;
   /** Append a local, unsent role:system message — e.g. `/help`'s command list. Never reaches the server. */
   addSystemMessage: (text: string) => void;
@@ -202,12 +223,12 @@ export function useChatSession(context: string, opts: UseChatSessionOptions = {}
     // eslint-disable-next-line react-hooks/exhaustive-deps -- resumeSessionId is read once at mount (a session, once opened, isn't meant to be re-resumed mid-App-lifetime); including it would reconnect on every parent re-render if the caller passes a fresh value each time.
   }, [context, host, port, sendTimeoutMs, webSocketImpl, debugSink]);
 
-  const send = useCallback((text: string) => {
+  const send = useCallback((wireText: string, sendOpts?: { displayText?: string; attachments?: TerminalAttachment[] }) => {
     const client = clientRef.current;
     if (!client) return;
-    dispatch({ type: "userSent", text, timestamp: new Date().toISOString() });
+    dispatch({ type: "userSent", text: sendOpts?.displayText ?? wireText, timestamp: new Date().toISOString(), attachments: sendOpts?.attachments });
     dispatch({ type: "thinking" });
-    client.send(text)
+    client.send(wireText)
       .then((responseText) => {
         dispatch({ type: "agentResponded", text: responseText, timestamp: new Date().toISOString() });
       })
