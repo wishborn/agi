@@ -48,6 +48,16 @@ describe("chatSessionReducer — userSent / agentResponded", () => {
     expect(s2.messages[1]?.id).toBe("m2");
   });
 
+  it("carries terminal attachments on a user message", () => {
+    const s = chatSessionReducer(initialChatSessionState, {
+      type: "userSent",
+      text: "check this out",
+      timestamp: T,
+      attachments: [{ raw: ":(TEST(0R 00 0RAW)):", output: "TEST(0R 00 0RAW)" }],
+    });
+    expect(s.messages[0]?.attachments).toEqual([{ raw: ":(TEST(0R 00 0RAW)):", output: "TEST(0R 00 0RAW)" }]);
+  });
+
   it("agentResponded appends an agent message and clears thinking/statusText", () => {
     const thinking = chatSessionReducer(initialChatSessionState, { type: "thinking" });
     expect(thinking.thinking).toBe(true);

@@ -97,12 +97,14 @@ export class ChatWsUnreachableError extends Error {
 /** A chat turn ended in a gateway-reported error (not a transport failure). */
 export class ChatTurnError extends Error {}
 
-/** No terminal event arrived for a turn within `sendTimeoutMs` — the client gave up locally rather than hang forever. */
+/** A turn went `sendTimeoutMs` with NO activity of any kind — the client gave up locally rather than hang forever. Long-but-active turns (many tool calls) never trip this; only genuine silence does. */
 export class ChatTimeoutError extends Error {}
 
 interface PendingTurn {
   resolve: (text: string) => void;
   reject: (err: Error) => void;
+  /** Reset the inactivity timer — called on every inbound turn-activity event so a working turn never times out. */
+  keepAlive: () => void;
 }
 
 export class ChatClient {
@@ -172,26 +174,35 @@ export class ChatClient {
   /**
    * Send a message and wait for that turn's terminal response text.
    * Progress along the way arrives via the handlers registered with
-   * `on()`. Never hangs forever: if no terminal event arrives within
-   * `sendTimeoutMs`, rejects with `ChatTimeoutError` and fires a
-   * best-effort `cancel()` (not awaited — the server may or may not
-   * actually stop, but this call returns regardless).
+   * `on()`.
+   *
+   * Never hangs forever, but is patient with legitimately long turns: the
+   * timeout is an INACTIVITY deadline, not a total-duration cap. Every inbound
+   * turn-activity event (thinking / tool_start / tool_result / progress /
+   * thought) resets it, so an agentic turn making many tool calls over several
+   * minutes stays alive as long as it keeps reporting progress. Only genuine
+   * silence for `sendTimeoutMs` (the original "stuck at chat:thinking with no
+   * further events" failure) rejects with `ChatTimeoutError` and fires a
+   * best-effort `cancel()` (not awaited).
    */
   async send(text: string): Promise<string> {
     if (this.sessionId === null) throw new Error("ChatClient.send() called before open() resolved");
     if (this.pendingTurn !== null) throw new Error("ChatClient.send() called while a previous turn is still in flight");
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      let timer: ReturnType<typeof setTimeout>;
+      const onTimeout = (): void => {
         if (this.pendingTurn === turn) {
           this.pendingTurn = null;
           this.debug("lifecycle", "send:timeout", { sendTimeoutMs: this.sendTimeoutMs });
           this.cancel();
-          reject(new ChatTimeoutError(`No response after ${String(this.sendTimeoutMs)}ms — sent a cancel request, but the server may still be running this turn.`));
+          reject(new ChatTimeoutError(`No activity for ${String(this.sendTimeoutMs)}ms — sent a cancel request, but the server may still be running this turn.`));
         }
-      }, this.sendTimeoutMs);
+      };
+      timer = setTimeout(onTimeout, this.sendTimeoutMs);
       const turn: PendingTurn = {
         resolve: (result) => { clearTimeout(timer); resolve(result); },
         reject: (err) => { clearTimeout(timer); reject(err); },
+        keepAlive: () => { clearTimeout(timer); timer = setTimeout(onTimeout, this.sendTimeoutMs); },
       };
       this.pendingTurn = turn;
       this.wsSend({ type: "chat:send", payload: { sessionId: this.sessionId!, text, context: this.context } });
@@ -249,22 +260,27 @@ export class ChatClient {
         return;
       }
       case "chat:thinking": {
+        this.pendingTurn?.keepAlive();
         this.handlers.onThinking?.();
         return;
       }
       case "chat:tool_start": {
+        this.pendingTurn?.keepAlive();
         this.handlers.onToolStart?.(parsed.payload);
         return;
       }
       case "chat:tool_result": {
+        this.pendingTurn?.keepAlive();
         this.handlers.onToolResult?.(parsed.payload);
         return;
       }
       case "chat:progress": {
+        this.pendingTurn?.keepAlive();
         this.handlers.onProgress?.(parsed.payload);
         return;
       }
       case "chat:thought": {
+        this.pendingTurn?.keepAlive();
         this.handlers.onThought?.(parsed.payload.content);
         return;
       }

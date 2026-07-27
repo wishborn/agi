@@ -192,7 +192,7 @@ describe("ChatClient — close()", () => {
 });
 
 describe("ChatClient — send() never hangs forever", () => {
-  it("rejects with ChatTimeoutError and fires chat:cancel when nothing responds within sendTimeoutMs", async () => {
+  it("rejects with ChatTimeoutError and fires chat:cancel after sendTimeoutMs of NO activity", async () => {
     // Open the connection with REAL timers first — vi.useFakeTimers() also
     // fakes setImmediate, which openedClient()'s flushMicrotasks() helper
     // relies on; faking too early would hang the open() handshake itself.
@@ -227,6 +227,48 @@ describe("ChatClient — send() never hangs forever", () => {
       await vi.advanceTimersByTimeAsync(6000);
       const actions = ws.sent.map((s) => (JSON.parse(s) as { type: string }).type);
       expect(actions).not.toContain("chat:cancel");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does NOT time out a long turn that keeps reporting activity (inactivity, not total-duration)", async () => {
+    const { client, ws } = await openedClient("/some/project", 5000);
+    vi.useFakeTimers();
+    try {
+      const sendPromise = client.send("do a big agentic task");
+      // Simulate an active turn: an activity event every 4s for 20s total —
+      // four full timeout windows, but never 5s of silence.
+      for (let n = 0; n < 5; n++) {
+        await vi.advanceTimersByTimeAsync(4000);
+        ws.simulateServerMessage({ type: "chat:tool_start", payload: { toolName: "grep", toolIndex: n, loopIteration: 0 } });
+      }
+      // No timeout should have fired despite 20s > sendTimeoutMs.
+      let actions = ws.sent.map((s) => (JSON.parse(s) as { type: string }).type);
+      expect(actions).not.toContain("chat:cancel");
+      // The final response still resolves the turn.
+      ws.simulateServerMessage({ type: "chat:response", payload: { sessionId: "sess-1", text: "done", timestamp: "t" } });
+      await expect(sendPromise).resolves.toBe("done");
+      actions = ws.sent.map((s) => (JSON.parse(s) as { type: string }).type);
+      expect(actions).not.toContain("chat:cancel");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("times out when activity STOPS for sendTimeoutMs, even after earlier activity", async () => {
+    const { client, ws } = await openedClient("/some/project", 5000);
+    vi.useFakeTimers();
+    try {
+      const sendPromise = client.send("hello");
+      const assertion = expect(sendPromise).rejects.toThrow(ChatTimeoutError);
+      await vi.advanceTimersByTimeAsync(3000);
+      ws.simulateServerMessage({ type: "chat:thinking", payload: { sessionId: "sess-1" } });
+      // Now go silent — the timer was reset by the thinking event, so a full
+      // 5s of silence from here is what trips the timeout.
+      await vi.advanceTimersByTimeAsync(5000);
+      await assertion;
+      expect(ws.sent.map((s) => (JSON.parse(s) as { type: string }).type)).toContain("chat:cancel");
     } finally {
       vi.useRealTimers();
     }

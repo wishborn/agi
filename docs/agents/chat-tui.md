@@ -103,18 +103,26 @@ requires `>=22.12.0` — no new dependency). No auth token is needed for a
 localhost connection: `ws-server.ts`'s `verifyClient` auto-allows any
 private-network IP (loopback included) before it ever checks for a token.
 
-**A turn never hangs forever.** `ChatClient.send()` takes a `sendTimeoutMs`
-option (default 120s, `agi chat --timeout <seconds>`) — if no terminal event
-(`chat:response`/`chat:error`/`chat:cancelled`) arrives in time, it rejects
-locally with `ChatTimeoutError` and fires a best-effort `chat:cancel` (not
-awaited). `cancel()` also rejects the in-flight turn's promise immediately,
-client-side, rather than waiting for the server's `chat:cancelled` echo —
-that round-trip can itself hang if the server is genuinely stuck. This
-matters because a real (2026-07-16) production hang surfaced exactly this
-gap: a turn stuck at `chat:thinking` with no further events, and Ctrl-C
-didn't recover it either (through whatever terminal layer was in front of
-the process at the time). Without a client-side timeout, there was no way
-out short of killing the terminal.
+**A turn never hangs forever, but is patient with long ones.** The
+`sendTimeoutMs` option (default 120s, `agi chat --timeout <seconds>`) is an
+**INACTIVITY deadline, not a total-duration cap**. Every inbound turn-activity
+event (`chat:thinking`/`tool_start`/`tool_result`/`progress`/`thought`) resets
+the timer via the pending turn's `keepAlive()`, so an agentic turn that keeps
+reporting progress — many tool calls over several minutes — never times out.
+Only genuine silence for `sendTimeoutMs` (the original "stuck at
+`chat:thinking` with no further events" failure) rejects with
+`ChatTimeoutError` and fires a best-effort `chat:cancel` (not awaited).
+`cancel()` also rejects the in-flight turn's promise immediately, client-side,
+rather than waiting for the server's `chat:cancelled` echo — that round-trip
+can itself hang if the server is genuinely stuck.
+
+This replaced an earlier flat 120s cap that surfaced a real (2026-07-23)
+bug: a legitimately long tool-heavy turn timed out with a `ChatTimeoutError`
+even though the server completed it and persisted the response — so
+reconnecting showed the answer that the live session had given up on. The
+flat cap punished long-but-active turns; the inactivity model keeps them
+alive while still catching the genuine-hang case the timeout was added for
+(2026-07-16, a turn stuck at `chat:thinking` with Ctrl-C not recovering it).
 
 **`--debug <path>`** streams every `ChatClient` event — outbound WS sends,
 inbound frames (parsed, or a `parse-error` event if a frame isn't valid
@@ -135,10 +143,11 @@ loop with nothing logged in between).
 ## Rendering: full-window layout on `@particle-academy/fancy-tui`
 
 `agi chat`'s interactive UI (`cli/src/chat-tui/App.tsx`) is a full-window Ink
-app built entirely on `@particle-academy/fancy-tui` — the terminal/Ink
-counterpart to the Fancy UI kit already used throughout the dashboard. No
-custom Ink components were written for this: the library already provides
-everything a Claude-Code-style chat surface needs.
+app built mostly on `@particle-academy/fancy-tui` — the terminal/Ink
+counterpart to the Fancy UI kit used throughout the dashboard. A few small
+owned components exist because sealed fancy-tui components had bugs Aion
+filed (see **Owned components & the focus-freeze rule** below); everything
+else is the library's.
 
 - **`chat.ts`'s `runInkChat` takes over the terminal's alternate screen
   buffer** (`\x1b[?1049h` on start, `\x1b[?1049l` on exit, the same mechanism
@@ -148,47 +157,98 @@ everything a Claude-Code-style chat surface needs.
   preserved underneath and reappears untouched on exit. Ink's `render()` has
   no notion of this on its own; it's applied imperatively around `render()`/
   `waitUntilExit()` in a `try/finally`, gated on `process.stdout.isTTY`.
-- **`useChatSession.ts`** (`cli/src/chat-tui/useChatSession.ts`) is the only
-  file that touches `ChatClient` directly — it translates the client's
-  callback-based events (`onThinking`/`onToolStart`/`onToolResult`/
-  `onProgress`/`onThought`/`onUnsolicitedResponse`) into React state shaped
-  for the library's components: `messages: MessageData[]` (committed
-  scrollback — user/agent/tool/error entries), `thinking`/`statusText` (the
-  current turn's live status), `liveToolCalls: ToolCallData[]` (in-flight
-  tool calls, folded into `messages` once each resolves).
-- **`App.tsx`** composes `FancyTuiProvider` → `Screen` → `Header` (container
-  path + connection status) → a message list (scrollback, backed by Ink
-  `Static` inside the library) → `LiveRegion` (thinking spinner + in-flight
-  `ToolCall` rows, hidden entirely under `--quiet`) → `Composer` (the
-  multi-line input box) → `StatusBar` (key hints, `.agi` envelope badge).
-  The message list composes `StaticList` + `Message` directly (both public
-  exports) instead of `fancy-tui`'s own `<MessageList>`, which renders
-  entries back-to-back with zero gap and exposes no spacing prop — wrapping
-  each `Message` in a `Box marginBottom={1}` adds the blank line between
-  entries that `<MessageList>` doesn't.
-- **Multi-line composition and its terminal-support caveat are handled by the
-  library, not this codebase.** `Composer` submits on Enter and inserts a
-  newline on Alt+Enter (works on every terminal) or Shift+Enter (only when
-  the terminal reports "enhanced keyboard" support — most terminals send an
-  identical byte sequence for Enter and Shift+Enter without it). Query
-  `useFancyTui().capabilities.shiftEnter` to check a given terminal's actual
-  support rather than assuming — `App.tsx` shows an "Alt+Enter: newline" key
-  hint in the status bar specifically when `shiftEnter` is `false`.
-- **`Composer` does not auto-focus itself.** It calls Ink's own `useFocus()`
-  internally without `autoFocus: true` (Ink's default), so nothing is
-  focused until something calls the focus manager explicitly — otherwise the
-  box renders with a single border and every keystroke is silently dropped
-  (confirmed by isolating a bare `<Composer>` outside `App.tsx` entirely:
-  `useInput` fired correctly, but `isFocused` never went `true`). `App.tsx`
-  calls Ink's own `useFocusManager().focus("prompt")` in a mount effect to
-  claim focus for the Composer explicitly.
-- **Non-TTY fallback is a hard requirement, not a nicety.** Ink cannot render
-  a full-screen layout without a real terminal. `chat.ts` checks
-  `process.stdin.isTTY` and runs the *original* plain-text `readline` REPL
-  (`runReadlineChat`) for piped/non-interactive invocation — the same
-  `ChatClient`, same timeout/cancel behavior, just printed output instead of
-  a rendered layout. `runInkChat` (the `fancy-tui` path) is the default only
-  when stdin is a real TTY.
+- **`useChatSession.ts`** is the only file that touches `ChatClient` directly
+  — it translates the client's callback-based events into React state:
+  `messages: ChatMessage[]` (committed scrollback; `ChatMessage` is a
+  superset of fancy-tui's `MessageData` adding `attachments` for unpacked
+  0REALTALK terminals and a `thinking` flag for reasoning blocks),
+  `thinking`/`statusText` (live status), `liveToolCalls` (in-flight tool
+  calls, folded into `messages` on resolve). Its `send(wireText, {displayText,
+  attachments})` splits what reaches Aion from what the bubble shows (see the
+  0REALTALK section).
+- **`App.tsx`** composes `Screen` → `Header` → the scrollable message pane →
+  `LiveRegion` (thinking spinner + in-flight `ToolCall`, hidden under
+  `--quiet`) → the help/decode `Callout`s → `PromptInput` → `StatusBar`. Each
+  message renders directly (not via fancy-tui's `<MessageList>`, which packs
+  entries gap-free), wrapped in `Box marginBottom={1}`; agent replies get a
+  🍄 `Avatar` sibling in the same `Row` (`Message` is sealed with no avatar
+  slot).
+
+### Owned components & the focus-freeze rule
+
+**The hard-won rule: nothing in this TUI may hold Ink keyboard focus except
+the input — and the input must not depend on focus at all.** Ink blurs the
+active component on *every Escape* (`ink/build/components/App.js`: `if (input
+=== escape && isFocusEnabled) setActiveFocusId(undefined)`). Any component
+that gates its `useInput` on `isFocused` therefore goes permanently dead the
+moment Esc (or any focusable stealing focus) blurs it — the whole TUI freezes,
+with no typing/arrows/Esc/recovery. This froze the TUI **twice** during
+development: first via fancy-tui's `Composer` (needed an explicit `focus()`
+call), then via `Command`'s and `Modal`'s focusable `<Button>` children.
+
+Consequences, all deliberate:
+- **`PromptInput`** (`cli/src/chat-tui/PromptInput.tsx`) replaces fancy-tui's
+  `Composer`. It does **not** use Ink's focus system at all — it always
+  accepts input and always shows the caret. It's built on fancy-tui's own
+  exported text-buffer primitives (`createTextBuffer`/`reduceTextBuffer`); the
+  key→action mapping and caret model are the pure, unit-tested
+  `prompt-input-logic.ts`. Fixes i-004 (arrow keys — `Composer` dropped
+  `cursor`/`onCursorChange`) and i-005 (caret invisible on empty input;
+  upstream as fancy-tui#2). Enter submits; Alt+Enter always inserts a newline,
+  Shift+Enter only when `useFancyTui().capabilities.shiftEnter` is true.
+- **No focusable palette / modal / accordion.** Slash-command matches render
+  as plain non-focusable `Text` (selection is exact-match-on-Enter in
+  `handleSubmit`). `/help` is a dismissible `Callout` (Esc or type to close),
+  not a `Modal` (whose `Close` button is focusable). Reasoning blocks collapse
+  via a **global Ctrl+T toggle**, not a focusable per-block `Accordion`. A
+  proper non-focus-stealing `Drawer`/`Accordion` is requested upstream as
+  fancy-tui#4; until then, keyboard-global toggles are the pattern.
+- **Scrollable message pane (i-006).** The alt-screen takeover suppresses the
+  terminal's native scrollback, so history scrolls in-app: a bottom-anchored,
+  overflow-clipped `Box` windowed by `message-viewport.ts` (pure, unit-tested)
+  — PageUp/PageDown page through, Escape jumps to latest, new messages
+  auto-follow when at the bottom. (fancy-tui has no scrollable-viewport
+  primitive; requested as fancy-tui#3.)
+
+### 0REALTALK shorthands (recognize · route · unpack)
+
+The input is a 0REALTALK "stream of consciousness": the user pours layered
+context and multiple chained/unchained requests into one message, and the TUI
+surfaces the structure (owner directive 2026-07-22). Grounded in the corpus
+(`repos/prime/docs/triggers.md`, `core/truth/chained-triggers.md`,
+`lexicon/definitions/magic-terminal.md`, `WIP/knowledge/0R-whitepaper.md` §4/§5).
+`realtalk-stream.ts` tokenizes + folds the stream (all pure, unit-tested):
+
+- **Triggers** (`:word:` and chained `:action:scope:target:`) — passed THROUGH
+  to Aion verbatim; Aion executes their semantics server-side. The TUI only
+  recognizes + live-decodes them in the `0REALTALK` `Callout`.
+- **`n>` switch** — splits the stream into an ordered request queue. Each
+  request is sent one at a time as the previous turn completes (a drain
+  effect); the status bar shows `n> N queued` while draining.
+- **Terminals** (`:( … ):`) — a terminal's inner expression is NOT sent
+  verbatim. `extractTerminals` pulls it from the prose, `realtalk-unpacker.ts`
+  UNPACKS it (first-pass stub — decodes recognized 0REALTALK, else passes the
+  content through under an `⟦0REALTALK unpacked⟧` label; the real de/compiler
+  lands later), and the unpacked OUTPUT is what reaches Aion (`buildWireMessage`).
+  The user's bubble shows the prose plus the raw terminal as a distinct
+  attachment (`▣ 0REALTALK · :( … ):`). Sending the terminal verbatim was a
+  bug — a strip/route pass corrupted terminals with inner parens (e.g.
+  `:(TEST(0R 00 0RAW)):`); the extract→unpack→wire path is the fix, and the
+  message is otherwise sent verbatim so triggers/parens survive.
+- **Reasoning blocks** — persisted `thought`-role messages (and any content
+  leaking `<thinking>` tags) render collapsed by default to a one-line summary
+  (`thinking-display.ts`); **Ctrl+T** toggles all expanded/collapsed.
+
+`/help` lists the slash commands and this shorthand reference.
+
+### Non-TTY fallback
+
+**A hard requirement, not a nicety.** Ink cannot render a full-screen layout
+without a real terminal. `chat.ts` checks `process.stdin.isTTY` and runs the
+*original* plain-text `readline` REPL (`runReadlineChat`) for
+piped/non-interactive invocation — the same `ChatClient`, same timeout/cancel
+behavior, just printed output instead of a rendered layout. `runInkChat` (the
+Ink path) is the default only when stdin is a real TTY.
 
 ## Scope of this ship
 
@@ -207,47 +267,23 @@ everything a Claude-Code-style chat surface needs.
   *per running `agi chat` process* — switching between multiple saved
   sessions from inside a running session (not just at launch) remains a
   fast-follow.
-- **Slash-command palette.** `Composer` input starting with `/` renders
-  `fancy-tui`'s `Command` above the input, filtered live — but selection
-  itself is driven by `App.tsx`'s own exact-match-on-Enter logic, not
-  `Command`'s internal `Button` focus/press handling, to avoid a
-  focus-contention problem: `Command`'s buttons and the `Composer` can't
-  usefully hold focus at the same time, and forcing the user to `Tab` into
-  the list to select would break the type-to-filter-then-Enter flow this is
-  meant to match (Claude Code's own slash-command UX). `Command` is used
-  purely for its visual rendering here. Known commands: `/quit`, `/exit`,
-  `/clear` (empties the visible scrollback — local only, the server's saved
-  history is untouched), `/help` (lists commands via a dismissible
-  `Callout`, not injected into the persisted transcript).
-- **Mushroom persona glyph.** Agent-role messages render a `fancy-tui`
-  `Avatar` (glyph `🍄`) alongside `Message` in `App.tsx`'s `StaticList`
-  render — `Message` itself is sealed with no avatar slot, so this is a
-  sibling in the same `Row`, not something injected inside it. `🍄` is the
-  practical fallback for Aion's actual brand mark
-  (`ui/dashboard/public/spore-seed-clear.svg`) — a terminal can't render
-  SVG/vector art at all, so an emoji is the only option; mushroom fits the
-  mycelium/spore branding already present in Aion's own voice.
-- **First-pass 0REALTALK reader** (`cli/src/chat-tui/realtalk-reader.ts`).
-  PRIME documents 0REALTALK as a "SYNAPTIC Programming Language" with a
-  layered PACK/UNPACK design, but every corpus file describing it is
-  explicitly WIP/MUSING status and states outright there's "no formal
-  compiler/interpreter" yet. This is deliberately Phase 1 only, matching
-  the corpus's own scoping (`evolution/musings/0realtalk-engine.md`):
-  *"0READER parses known patterns from lexicon... Validation = lexicon
-  membership."* `parseRealtalk()` is a pure, side-effect-free recognizer
-  against `core/0TERMS.md`'s LAW-status lexicon (32 terms, confidence ≥
-  0.9) and `core/0ACCESSOR.md`'s `<FRAME>STATION>ROLE` accessor grammar
-  (packed abbreviations follow the corpus's own shortest-unique-prefix
-  convention, e.g. `Op`/`Ob` for OPERATOR/OBSERVER — not invented). It
-  recognizes accessors, `|+value|` confidence notation, `:seg:seg:` impact
-  marks, `+$imp`/`-$imp` boon/burn, and known LAW terms, and decodes each
-  into a human-readable summary shown live in a `Callout` above the
-  Composer (mutually exclusive with the slash-command palette) — purely
-  informational, exactly like the confidence-preview it is. It does **not**
-  execute anything, validate alignment, or touch the corpus's own
-  still-open questions (what runs compiled 0REALTALK, whether it's "the
-  language of SENTIENCE") — those stay unresolved on purpose. What actually
-  gets sent to Aion is unchanged; this only decodes for the human typing it.
+- **Slash commands** (`/quit`, `/exit`, `/clear`, `/help`) — matched as the
+  user types `/`, selected by exact-match-on-Enter, rendered as plain
+  non-focusable text (see the focus-freeze rule above for why not a
+  `Command`/`Modal`). `/clear` empties the visible scrollback only (the
+  server's saved history is untouched); `/help` is a dismissible `Callout`,
+  not injected into the persisted transcript.
+- **0REALTALK shorthands + single-expression reader.** The stream layer
+  (triggers / `n>` / terminals / unpacker) is described in the rendering
+  section above. Separately, `realtalk-reader.ts`'s `parseRealtalk()` decodes
+  a whole-input *single* expression — accessor `<FRAME>STATION>ROLE`
+  (`core/0ACCESSOR.md`), `|+value|` confidence, `:seg:seg:` impact marks,
+  `+$imp`/`-$imp`, and LAW-status lexicon terms (`core/0TERMS.md`) — shown in
+  the `0REALTALK` `Callout`. It's deliberately Phase-1 recognition only, per
+  the corpus's own scoping (`evolution/musings/0realtalk-engine.md`: "0READER
+  parses known patterns from lexicon... Validation = lexicon membership") — it
+  does not execute, validate alignment, or resolve the corpus's open questions
+  (what runs compiled 0REALTALK, whether it's "the language of SENTIENCE").
 - No real token-by-token streaming — `chat:response` delivers the full
   answer in one frame (the gateway's `AnthropicClient` call is
   non-streaming today), same as the dashboard. Tool activity/thinking/
