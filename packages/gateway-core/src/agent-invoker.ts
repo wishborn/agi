@@ -32,6 +32,7 @@ import { splitThinking, ensureVisibleReply } from "./thinking-text.js";
 
 import {
   assembleSystemPromptWithBreakdown,
+  buildSystemWithCache,
   computeAvailableTools,
   estimateTokens,
 } from "./system-prompt.js";
@@ -723,7 +724,7 @@ export class AgentInvoker extends EventEmitter {
       ...(docTopicIndex !== undefined && Object.keys(docTopicIndex).length > 0 ? { docTopicIndex } : {}),
     };
 
-    const { prompt: baseSystemPrompt, breakdown: promptBreakdown } = assembleSystemPromptWithBreakdown(promptCtx);
+    const { prompt: baseSystemPrompt, breakdown: promptBreakdown, identityPrefix } = assembleSystemPromptWithBreakdown(promptCtx);
     let systemPrompt = baseSystemPrompt;
 
     // BuilderChat mode: prepend the builder system prompt
@@ -756,6 +757,15 @@ export class AgentInvoker extends EventEmitter {
     }
 
     const systemPromptTokens = estimateTokens(systemPrompt);
+
+    // Prefix-cache the stable identity head (task #804). Built AFTER any
+    // builder/help-mode prepend: buildSystemWithCache only emits a cache
+    // breakpoint when `systemPrompt` still starts with the identity block, so a
+    // prepend safely degrades to an uncached plain string. Reused verbatim by
+    // every invoke/continuation this turn (initial call + tool loop +
+    // auto-continue) so the identity prefix cache-hits across the whole turn.
+    // Non-Anthropic providers flatten it back to the identical string.
+    const systemForApi = buildSystemWithCache(systemPrompt, identityPrefix);
 
     // Assemble history
     const history = this.deps.sessionManager.assembleHistory(
@@ -898,7 +908,7 @@ export class AgentInvoker extends EventEmitter {
       let result: Awaited<ReturnType<typeof this.apiClient.invoke>>;
       try {
         result = await this.apiClient.invoke({
-          system: systemPrompt,
+          system: systemForApi,
           messages: apiMessages,
           tools: useTools ? providerTools : undefined,
           entityId: entity.id,
@@ -909,7 +919,7 @@ export class AgentInvoker extends EventEmitter {
         if (msg.includes("ECONNREFUSED") || msg.includes("fetch failed") || msg.includes("connection")) {
           await new Promise((r) => setTimeout(r, 2_000));
           result = await this.apiClient.invoke({
-            system: systemPrompt,
+            system: systemForApi,
             messages: apiMessages,
             tools: useTools ? providerTools : undefined,
             entityId: entity.id,
@@ -1057,7 +1067,7 @@ export class AgentInvoker extends EventEmitter {
 
         result = await this.apiClient.continueWithToolResults({
           original: {
-            system: systemPrompt,
+            system: systemForApi,
             messages: accumulatedMessages,
             tools: providerTools.length > 0 ? providerTools : undefined,
             entityId: entity.id,
@@ -1114,7 +1124,7 @@ export class AgentInvoker extends EventEmitter {
         );
 
         result = await this.apiClient.invoke({
-          system: systemPrompt,
+          system: systemForApi,
           messages: accumulatedMessages,
           tools: providerTools.length > 0 ? providerTools : undefined,
           entityId: entity.id,
@@ -1171,7 +1181,7 @@ export class AgentInvoker extends EventEmitter {
         );
 
         result = await this.apiClient.invoke({
-          system: systemPrompt,
+          system: systemForApi,
           messages: accumulatedMessages,
           tools: providerTools.length > 0 ? providerTools : undefined,
           entityId: entity.id,
@@ -1237,7 +1247,7 @@ export class AgentInvoker extends EventEmitter {
 
           const prevContentBlocks = result.contentBlocks;
           result = await this.apiClient.continueWithToolResults({
-            original: { system: systemPrompt, messages: accumulatedMessages, tools: providerTools.length > 0 ? providerTools : undefined, entityId: entity.id,  },
+            original: { system: systemForApi, messages: accumulatedMessages, tools: providerTools.length > 0 ? providerTools : undefined, entityId: entity.id,  },
             assistantContent: prevContentBlocks,
             toolResults,
           });

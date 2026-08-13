@@ -2,7 +2,10 @@
  * BAIF System Prompt Assembly — Task #114
  *
  * Constructs the system prompt for each Anthropic API invocation.
- * Prompt is rebuilt from live context on every call — never cached.
+ * Prompt is rebuilt from live context on every call; the byte-stable identity
+ * head is marked for Anthropic's prefix cache via buildSystemWithCache (task
+ * #804) so it isn't re-billed at full price each turn. See
+ * docs/agents/system-prompt-assembly.md § Prompt Caching.
  *
  * Template sections (in order):
  *   [IDENTITY] → [ENTITY_CONTEXT] → [COA_CONTEXT] →
@@ -19,6 +22,7 @@ import type { VerificationTier } from "@agi/entity-model";
 
 import type { GatewayState } from "./types.js";
 import type { StateCapabilities } from "./state-machine.js";
+import type { LLMSystem } from "./llm/types.js";
 import { KNOWLEDGE_DIR } from "./project-config-path.js";
 
 // ---------------------------------------------------------------------------
@@ -1420,7 +1424,7 @@ export interface SystemPromptTokenBreakdown {
 export function assembleSystemPromptWithBreakdown(
   ctx: SystemPromptContext,
   opts?: { historyTokens?: number; responseTokens?: number },
-): { prompt: string; breakdown: SystemPromptTokenBreakdown } {
+): { prompt: string; breakdown: SystemPromptTokenBreakdown; identityPrefix: string } {
   const rt = ctx.requestType ?? "chat";
   const isLocal = ctx.costMode === "local";
   const identitySections: string[] = [];
@@ -1573,5 +1577,42 @@ export function assembleSystemPromptWithBreakdown(
     response: opts?.responseTokens ?? 0,
   };
 
-  return { prompt, breakdown };
+  // identityPrefix — the byte-stable head of the prompt (persona / PRIME identity,
+  // always the FIRST section). This is the only run that is invariant across a
+  // session's turns: everything after it (tools list, operational state, entity,
+  // memory, skills) varies per request. Callers pass it to buildSystemWithCache
+  // to place an Anthropic prompt-cache breakpoint after it. See task #804.
+  const identityPrefix = identityContent;
+
+  return { prompt, breakdown, identityPrefix };
+}
+
+/**
+ * Split a fully-assembled system prompt into cache-aware blocks for prompt
+ * caching: the stable identity prefix (flagged for an Anthropic cache
+ * breakpoint) followed by the dynamic remainder.
+ *
+ * Returns the prompt unchanged as a plain string (no cache breakpoint) when:
+ *  - `cachePrefix` is empty; or
+ *  - the prompt doesn't start with `cachePrefix` + the section separator — e.g.
+ *    builder/help mode prepended text, so the identity block is no longer the
+ *    true prefix and caching it would be unsafe; or
+ *  - there's no dynamic remainder after the prefix.
+ *
+ * When it does split, the two block texts concatenate verbatim back to the
+ * original prompt (systemToText joins with no separator), so the effective
+ * system prompt stays byte-identical — only the cache breakpoint is added, which
+ * is what lets the prefix cache-hit across a session's turns and tool loops.
+ */
+export function buildSystemWithCache(fullPrompt: string, cachePrefix: string): LLMSystem {
+  if (cachePrefix.length === 0) return fullPrompt;
+  const SECTION_SEP = "\n\n"; // assembleSystemPrompt joins sections with "\n\n"
+  const head = cachePrefix + SECTION_SEP;
+  if (!fullPrompt.startsWith(head)) return fullPrompt;
+  const rest = fullPrompt.slice(head.length);
+  if (rest.length === 0) return fullPrompt;
+  return [
+    { text: head, cache: true },
+    { text: rest, cache: false },
+  ];
 }

@@ -58,6 +58,40 @@ export interface LLMToolResult {
 }
 
 // ---------------------------------------------------------------------------
+// System prompt types
+// ---------------------------------------------------------------------------
+
+/**
+ * A single system-prompt block. Providers that support prompt caching
+ * (Anthropic) emit a cache breakpoint at any block with `cache: true`; providers
+ * that don't (OpenAI, Ollama) concatenate the block texts and ignore the flag.
+ *
+ * Block texts are concatenated verbatim (no separator inserted) — a block that
+ * needs to be followed by a blank line must include the trailing "\n\n" itself.
+ * This keeps the effective system prompt byte-identical whether it's passed as a
+ * plain string or as blocks, which is what lets a cached prefix hit across turns.
+ */
+export interface LLMSystemBlock {
+  /** Raw text for this block. */
+  text: string;
+  /** Request a prompt-cache breakpoint at (and including) this block. */
+  cache?: boolean;
+}
+
+/** System prompt: either a plain string or an ordered list of cache-aware blocks. */
+export type LLMSystem = string | LLMSystemBlock[];
+
+/**
+ * Flatten a system prompt to its plain-text form. Used by providers without
+ * prompt-cache support and for token estimation. Block texts are joined with no
+ * separator (blocks carry their own trailing whitespace), so the result is
+ * byte-identical to the string that produced the blocks.
+ */
+export function systemToText(system: LLMSystem): string {
+  return typeof system === "string" ? system : system.map((b) => b.text).join("");
+}
+
+// ---------------------------------------------------------------------------
 // Response types
 // ---------------------------------------------------------------------------
 
@@ -98,8 +132,8 @@ export interface LLMResponse {
 // ---------------------------------------------------------------------------
 
 export interface LLMInvokeParams {
-  /** System prompt. */
-  system: string;
+  /** System prompt — plain string, or cache-aware blocks for prompt caching. */
+  system: LLMSystem;
   /** Conversation messages. */
   messages: LLMMessage[];
   /** Tool definitions for the model. */

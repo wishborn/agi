@@ -322,6 +322,35 @@ The assembled system prompt should follow this order, from most static to most d
 
 This ordering ensures that the most important instructions (identity, rules) are at the top where most LLMs pay closest attention, and dynamic context fills in below.
 
+## Prompt Caching (Anthropic prefix cache — task #804)
+
+The system prompt is still **rebuilt from live context on every call** — but the
+stable head is marked for Anthropic's prompt cache so it isn't re-billed at full
+price on every turn.
+
+- `assembleSystemPromptWithBreakdown()` returns an `identityPrefix`: the persona /
+  PRIME-identity block, which is the **first** section and the only run that is
+  byte-stable across a session's turns. Everything after it (tools list — which
+  flips between the full list and the compact hint — operational state, entity,
+  memory, skills) varies per request, so it must stay **outside** the cached
+  prefix or the cache would never hit.
+- `buildSystemWithCache(fullPrompt, identityPrefix)` splits the prompt into two
+  blocks — `{ text: identityPrefix + "\n\n", cache: true }` and the dynamic
+  remainder — and `AnthropicProvider.toAnthropicSystem()` emits a
+  `cache_control: { type: "ephemeral" }` breakpoint on the cached block.
+- The blocks concatenate **verbatim** back to the original string (`systemToText`
+  joins with no separator), so the effective prompt is byte-identical — the cache
+  is a pure cost optimization, not a behavior change. Non-Anthropic providers
+  (OpenAI, Ollama) flatten the blocks back to the same string and ignore the flag.
+- **Safety fallback:** builder-mode and help-mode *prepend* text, so the identity
+  block is no longer the true prefix. `buildSystemWithCache` detects this
+  (`fullPrompt` no longer starts with the prefix) and returns a plain string —
+  caching silently turns itself off rather than caching the wrong bytes.
+- The prefix is built **once per turn** and reused by every call in the turn
+  (initial invoke + tool loop + auto-continue), so a multi-round-trip turn
+  re-reads the cached identity instead of re-sending it. Tests:
+  `packages/gateway-core/src/system-cache.test.ts`.
+
 ## Files to Modify
 
 | File | Change |

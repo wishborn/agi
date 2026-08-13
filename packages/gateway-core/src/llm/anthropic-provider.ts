@@ -31,6 +31,7 @@ import type {
   LLMResponse,
   LLMInvokeParams,
   LLMToolContinuationParams,
+  LLMSystem,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -134,6 +135,29 @@ export function toAnthropicMessages(messages: LLMMessage[]): MessageParam[] {
   }
 
   return result;
+}
+
+/**
+ * Convert a provider-agnostic system prompt to the Anthropic `system` field.
+ *
+ * A plain string passes through unchanged (current behaviour). Blocks are mapped
+ * to text content blocks, with `cache_control: { type: "ephemeral" }` on any
+ * block flagged `cache: true` — this is the prefix-cache breakpoint. Empty blocks
+ * are dropped so the SDK never rejects a zero-length text block. If nothing
+ * remains, an empty string is returned.
+ */
+export function toAnthropicSystem(
+  system: LLMSystem,
+): string | Anthropic.Messages.TextBlockParam[] {
+  if (typeof system === "string") return system;
+  const blocks = system
+    .filter((b) => b.text.length > 0)
+    .map((b): Anthropic.Messages.TextBlockParam => ({
+      type: "text",
+      text: b.text,
+      ...(b.cache === true ? { cache_control: { type: "ephemeral" } } : {}),
+    }));
+  return blocks.length > 0 ? blocks : "";
 }
 
 /**
@@ -286,7 +310,7 @@ export class AnthropicProvider implements LLMProvider {
     const requestBody = {
       model,
       max_tokens: maxTokens,
-      system: params.system,
+      system: toAnthropicSystem(params.system),
       messages: anthropicMessages,
       ...(anthropicTools && anthropicTools.length > 0 ? { tools: anthropicTools } : {}),
       ...(params.thinking ? { thinking: params.thinking } : {}),
@@ -375,7 +399,7 @@ export class AnthropicProvider implements LLMProvider {
     const requestBody = {
       model,
       max_tokens: maxTokens,
-      system: params.original.system,
+      system: toAnthropicSystem(params.original.system),
       messages: anthropicMessages,
       ...(anthropicTools && anthropicTools.length > 0 ? { tools: anthropicTools } : {}),
       ...(params.original.thinking ? { thinking: params.original.thinking } : {}),

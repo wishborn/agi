@@ -13,6 +13,7 @@
  */
 
 import type { LLMProvider, LLMProviderConfig } from "./provider.js";
+import { systemToText } from "./types.js";
 import type {
   LLMMessage,
   LLMContentBlock,
@@ -469,7 +470,7 @@ export class OllamaProvider implements LLMProvider {
       }
     }
 
-    const messages = toOllamaMessages(params.system, params.messages, toolsPromptSuffix);
+    const messages = toOllamaMessages(systemToText(params.system), params.messages, toolsPromptSuffix);
     const response = await this.request(messages, ollamaTools, model);
     return fromOllamaResponse(response, this.usePromptFallback);
   }
@@ -495,7 +496,7 @@ export class OllamaProvider implements LLMProvider {
     }
 
     const messages = toOllamaMessages(
-      params.original.system,
+      systemToText(params.original.system),
       params.original.messages,
       toolsPromptSuffix,
     );

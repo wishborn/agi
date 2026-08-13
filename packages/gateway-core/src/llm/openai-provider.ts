@@ -11,6 +11,7 @@
  */
 
 import type { LLMProvider, LLMProviderConfig } from "./provider.js";
+import { systemToText } from "./types.js";
 import type {
   LLMMessage,
   LLMContentBlock,
@@ -518,7 +519,7 @@ export class OpenAIProvider implements LLMProvider {
   async invoke(params: LLMInvokeParams): Promise<LLMResponse> {
     const model = params.model ?? this.config.defaultModel;
     const maxTokens = params.maxTokens ?? this.config.maxTokens;
-    const messages = toOpenAIMessages(params.system, params.messages);
+    const messages = toOpenAIMessages(systemToText(params.system), params.messages);
     const tools = params.tools ? toOpenAITools(params.tools) : undefined;
 
     const completion = await this.request(messages, tools, model, maxTokens);
@@ -535,7 +536,7 @@ export class OpenAIProvider implements LLMProvider {
     const model = params.original.model ?? this.config.defaultModel;
     const maxTokens = params.original.maxTokens ?? this.config.maxTokens;
 
-    const messages = toOpenAIMessages(params.original.system, params.original.messages);
+    const messages = toOpenAIMessages(systemToText(params.original.system), params.original.messages);
 
     // Append assistant message with tool calls
     const toolCallBlocks = params.assistantContent.filter((b) => b.type === "tool_use");
